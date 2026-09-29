@@ -537,6 +537,7 @@ struct AddonState {
   int design_capacity = 0;
   int raw_max_capacity = 0;
   int raw_current_capacity = 0;
+  int nominal_capacity = 0;
   int cycle_count = -1;
 };
 
@@ -787,27 +788,39 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
       if (raw_props != nullptr) CFRelease(raw_props);
       // Entry terminated or re-registered: drop it and look it up again later.
       state->smart_battery.reset();
-      state->design_capacity = state->raw_max_capacity = state->raw_current_capacity = 0;
+      state->design_capacity = state->raw_max_capacity = state->raw_current_capacity = state->nominal_capacity = 0;
       state->cycle_count = -1;
     } else {
+      // Key layout differs across macOS releases. Recent ones (verified on an M4) publish the mAh
+      // values only inside "BatteryData" (RemainingCapacity, FullChargeCapacity,
+      // NominalChargeCapacity, DesignCapacity), while top-level MaxCapacity / CurrentCapacity are
+      // percentages and must not be used. Older releases expose AppleRaw* at the top level.
       const CFDictionaryRef dict = props.get();
       const CFStringRef nested = CFSTR("BatteryData");
       int value = 0;
       state->design_capacity = GetDictInt(dict, CFSTR("DesignCapacity"), value, nested) ? value : 0;
       state->cycle_count = GetDictInt(dict, CFSTR("CycleCount"), value, nested) ? value : -1;
+      state->raw_current_capacity = (GetDictInt(dict, CFSTR("AppleRawCurrentCapacity"), value) ||
+                                     GetDictInt(dict, CFSTR("RemainingCapacity"), value, nested))
+                                        ? value
+                                        : 0;
       state->raw_max_capacity = (GetDictInt(dict, CFSTR("AppleRawMaxCapacity"), value) ||
-                                 GetDictInt(dict, CFSTR("NominalChargeCapacity"), value))
+                                 GetDictInt(dict, CFSTR("FullChargeCapacity"), value, nested))
                                     ? value
                                     : 0;
-      state->raw_current_capacity = GetDictInt(dict, CFSTR("AppleRawCurrentCapacity"), value) ? value : 0;
+      state->nominal_capacity = GetDictInt(dict, CFSTR("NominalChargeCapacity"), value, nested) ? value : 0;
     }
   }
   const int raw_max_capacity = state->raw_max_capacity;
   const int raw_current_capacity = state->raw_current_capacity;
+  const int nominal_capacity = state->nominal_capacity;
 
+  // Health: nominal full-charge capacity vs design when available (the figure macOS reports as
+  // "Maximum Capacity"), otherwise the current full-charge capacity.
   double health_percent = -1.0;
-  if (state->design_capacity > 0 && raw_max_capacity > 0) {
-    health_percent = static_cast<double>(raw_max_capacity) / state->design_capacity * 100.0;
+  const int health_capacity = nominal_capacity > 0 ? nominal_capacity : raw_max_capacity;
+  if (state->design_capacity > 0 && health_capacity > 0) {
+    health_percent = static_cast<double>(health_capacity) / state->design_capacity * 100.0;
     if (health_percent > 100.0) health_percent = 100.0;
   }
 
@@ -820,6 +833,7 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
   if (state->design_capacity > 0) obj.Int("designCapacity", state->design_capacity);
   if (raw_max_capacity > 0) obj.Int("maxCapacity", raw_max_capacity);
   if (raw_current_capacity > 0) obj.Int("currentCapacity", raw_current_capacity);
+  if (nominal_capacity > 0) obj.Int("nominalCapacity", nominal_capacity);
   if (state->cycle_count >= 0) obj.Int("cycleCount", state->cycle_count);
   if (health_percent >= 0.0) obj.Double("healthPercent", health_percent);
   obj.Str("capacityUnit", "mAh");

@@ -261,12 +261,17 @@ export interface BatteryInfo {
   maxCapacity?: number;
 
   /**
+   * Nominal full charge capacity in mAh or mWh (optional; Darwin NominalChargeCapacity).
+   */
+  nominalCapacity?: number;
+
+  /**
    * Factory nominal design capacity in mAh or mWh.
    */
   designCapacity?: number;
 
   /**
-   * Battery health percentage: min(100, (maxCapacity / designCapacity) * 100).
+   * Battery health percentage: min(100, ((nominalCapacity ?? maxCapacity) / designCapacity) * 100).
    */
   healthPercent?: number;
 

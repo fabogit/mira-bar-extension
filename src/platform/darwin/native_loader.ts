@@ -50,6 +50,9 @@ export interface DarwinNativeAddon {
   /**
    * Queries IOKit power source and AppleSmartBattery registry for capacity, health, and cycles.
    *
+   * `currentCapacity` / `maxCapacity` are the remaining and full-charge capacity (their ratio matches `percent`);
+   * `nominalCapacity` is the nominal full-charge capacity used for `healthPercent` when available.
+   *
    * @returns Battery state, real-time and nominal capacity in mAh, cycle count, and health percentage.
    */
   getBatteryStats(): {
@@ -60,6 +63,7 @@ export interface DarwinNativeAddon {
     isCharging: boolean;
     currentCapacity?: number;
     maxCapacity?: number;
+    nominalCapacity?: number;
     designCapacity?: number;
     healthPercent?: number;
     cycleCount?: number;

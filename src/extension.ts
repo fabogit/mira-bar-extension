@@ -810,8 +810,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
             // 2. Battery Health (if available)
             if (cachedBattery.healthPercent !== undefined && cachedBattery.healthPercent > 0) {
-              const healthDetail = cachedBattery.designCapacity && cachedBattery.maxCapacity
-                ? `${cachedBattery.maxCapacity} / ${cachedBattery.designCapacity} ${unit}`
+              const healthCapacity = cachedBattery.nominalCapacity ?? cachedBattery.maxCapacity;
+              const healthDetail = cachedBattery.designCapacity && healthCapacity
+                ? `${healthCapacity} / ${cachedBattery.designCapacity} ${unit}`
                 : `${cachedBattery.healthPercent.toFixed(1)}%`;
               batRows.push([
                 'Battery Health',

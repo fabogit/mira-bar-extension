@@ -382,6 +382,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
           isCharging: batt.isCharging,
           currentCapacity: batt.currentCapacity,
           maxCapacity: batt.maxCapacity,
+          nominalCapacity: batt.nominalCapacity,
           designCapacity: batt.designCapacity,
           healthPercent: batt.healthPercent,
           cycleCount: batt.cycleCount,
