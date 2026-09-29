@@ -155,7 +155,7 @@
             "Live"
           ],
           "default": "Static",
-          "description": "Tooltip refresh mode: 'Static' updates tooltips only on manual click/refresh (preventing hover flicker); 'Live' continuously updates tooltips in real time on every polling tick."
+          "description": "Tooltip refresh mode: 'Static' regenerates tooltips every 5 seconds and on click (limits hover flicker); 'Live' regenerates them on every polling tick (at most once per second). Each tooltip shows the time of its last update."
         },
         "resmon.tooltip.cpuLayout": {
           "type": "string",

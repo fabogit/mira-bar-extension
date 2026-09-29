@@ -9,7 +9,17 @@ let disposed = false;
 let isUpdating = false;
 let pendingForceUpdate = false;
 let lastUpdateError = '';
-let tickCounter = 0;
+/** Slow metrics are sampled on a time basis, independent of the polling interval (a click forces all). */
+const BATTERY_REFRESH_MS = 5_000;
+const DISK_REFRESH_MS = 10_000;
+/** Tooltip regeneration: Static refreshes slowly to limit hover flicker; Live is throttled to 1 s. */
+const STATIC_TOOLTIP_REFRESH_MS = 5_000;
+const LIVE_TOOLTIP_REFRESH_MS = 1_000;
+
+let lastBatterySampleAt = 0;
+let lastDiskSampleAt = 0;
+let lastTooltipRefreshAt = 0;
+let tooltipUpdatedAt = '';
 let cachedBattery: BatteryInfo | null = null;
 let cachedDisks: DiskDriveInfo[] = [];
 
@@ -76,6 +86,17 @@ function formatMinutes(minutes: number): string {
   return `${mins}m`;
 }
 
+
+/**
+ * Formats a local wall-clock time as HH:MM:SS (24h), independent of the host locale.
+ *
+ * @param date - Time to format.
+ * @returns Formatted time string (e.g. '16:15:27').
+ */
+function formatClock(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
 
 /**
  * Renders a fixed-width Unicode progress bar (e.g. '[████░░░░]').
@@ -356,10 +377,10 @@ function getTooltipFooter(
     const prefix = extraCommand.prefix ?? 'CPU Layout';
     lines.push(`- **${prefix}**: [${extraCommand.label}](command:${extraCommand.command})`);
   }
-  lines.push(
-    '',
-    mode === 'Static' ? '*Click widget to refresh details*' : '*Auto-refreshing in real time*'
-  );
+  const refresh = mode === 'Static'
+    ? `refreshes every ${STATIC_TOOLTIP_REFRESH_MS / 1000} s, click widget to refresh now`
+    : 'auto-refreshing';
+  lines.push('', `*Updated at ${tooltipUpdatedAt} (${refresh})*`);
   return lines;
 }
 
@@ -440,12 +461,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
     try {
       const config = getConfig();
-      const updateTooltips = forceAll || config.tooltipMode === 'Live';
-
-      // Multi-rate polling decimation for slow-moving metrics (Battery and Disk)
-      const decimationRatio = Math.max(1, Math.ceil(1000 / config.updateFrequencyMs));
-      const shouldSampleSlow = forceAll || (tickCounter % decimationRatio === 0);
-      tickCounter = (tickCounter + 1) % 1_000_000;
+      const now = Date.now();
+      const tooltipRefreshMs = config.tooltipMode === 'Live' ? LIVE_TOOLTIP_REFRESH_MS : STATIC_TOOLTIP_REFRESH_MS;
+      const updateTooltips = forceAll || now - lastTooltipRefreshAt >= tooltipRefreshMs;
+      if (updateTooltips) {
+        lastTooltipRefreshAt = now;
+        tooltipUpdatedAt = formatClock(new Date(now));
+      }
 
       // 1. CPU Usage & 2. CPU Frequency (Linux) or System Load Average (macOS)
       const cpuUsage = platformProvider.sampleCpu();
@@ -759,8 +781,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 5. Battery (with Time Remaining estimation)
       if (config.showBattery && platformProvider.isBatteryAvailable()) {
-        if (shouldSampleSlow || cachedBattery === null) {
+        if (forceAll || cachedBattery === null || now - lastBatterySampleAt >= BATTERY_REFRESH_MS) {
           cachedBattery = platformProvider.sampleBattery();
+          lastBatterySampleAt = now;
         }
         if (cachedBattery) {
           const batStr = padNum(String(cachedBattery.percent), 3);
@@ -846,7 +869,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 6. Disk Space (asynchronous statfs with tick decimation)
       if (config.showDisk) {
-        if (shouldSampleSlow || cachedDisks.length === 0) {
+        if (forceAll || cachedDisks.length === 0 || now - lastDiskSampleAt >= DISK_REFRESH_MS) {
+          lastDiskSampleAt = now;
           const defaultWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
           cachedDisks = await diskProvider.sample(config.diskDrives, defaultWorkspace);
           // deactivate() may have disposed the widgets while statfs was pending.
@@ -965,7 +989,6 @@ export function activate(context: vscode.ExtensionContext): void {
   // Register refresh command
   context.subscriptions.push(
     vscode.commands.registerCommand('resmon.refresh', async () => {
-      tickCounter = 0;
       await update(true);
       scheduleNext();
     })
@@ -1032,7 +1055,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
         cachedBattery = null;
         cachedDisks = [];
-        tickCounter = 0;
         void update(true);
         scheduleNext();
       }
@@ -1056,5 +1078,7 @@ export function deactivate(): void {
   disposeWidgets();
   cachedBattery = null;
   cachedDisks = [];
-  tickCounter = 0;
+  lastBatterySampleAt = 0;
+  lastDiskSampleAt = 0;
+  lastTooltipRefreshAt = 0;
 }

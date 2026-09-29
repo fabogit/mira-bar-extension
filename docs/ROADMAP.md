@@ -91,36 +91,38 @@ Phase 1 restructured the codebase into a strict modular architecture, eliminated
 
 Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin native addon and in the extension lifecycle, and corrects the memory pressure metric. Every step is verified on Apple Silicon with `test/leak-darwin.mjs`, `lsmp`, `leaks` and an optional ASan build.
 
-- [ ] **Build & Test Baseline**:
+- [x] **Build & Test Baseline**:
   - `compile.sh` flags: `-mmacosx-version-min=11.0`, `NAPI_VERSION=8`, `-Wextra`, availability warnings, hidden visibility; `DEBUG=1` ASan variant.
   - Native leak & cost probe `test/leak-darwin.mjs` (µs/call, RSS growth, Mach host port refs).
-- [ ] **Leak Fixes**:
+- [x] **Leak Fixes**:
   - Host port acquired once and released (`mach_host_self()` send-right leak, 3 urefs per tick).
   - Polling timer can no longer be re-armed after `deactivate()`.
   - Recreated status bar items no longer accumulate in `context.subscriptions`.
-- [ ] **RAII Native Core**:
+- [x] **RAII Native Core**:
   - `CFRef<T>`, `IOObject`, `MachSendRight`, `VmRegion` wrappers; per-env `AddonState` with `napi_set_instance_data` finalizer.
   - Type-checked CoreFoundation getters; `napi_status` checked on every call.
-- [ ] **Per-Tick Overhead Reduction**:
+- [x] **Per-Tick Overhead Reduction**:
   - Hidden widgets are not sampled.
   - Cached `IOHIDEventSystemClient` and classified thermal sensors.
   - Battery presence cached; AppleSmartBattery keys read individually instead of copying the whole registry dictionary.
   - Zero-allocation CPU ticks (`Uint32Array` double buffer, wrap-safe 32-bit deltas).
-- [ ] **Correctness**:
+- [x] **Correctness**:
   - Memory pressure from `kern.memorystatus_level` / `kern.memorystatus_vm_pressure_level` (replaces `vm.memory_pressure`, which is not a percentage).
   - macOS 11 compatibility (`MACH_PORT_NULL` instead of `kIOMainPortDefault`).
   - Native loader no longer resolves `.node` files from `process.cwd()`.
-- [ ] **Thermal Sampling Off the Extension Host Thread**:
+- [x] **Thermal Sampling Off the Extension Host Thread**:
   - Measured on Apple M4: `getDieTemperature()` costs ~18 ms per call (24 tdie + NAND + battery sensors), above the 1 ms SLA.
-  - Profile per sensor with `native/darwin/tools/hid_bench.cc`, then choose between a native background sampler (non-blocking, one tick stale) and reduced/decimated sensor reads.
+  - Profiled with `native/darwin/tools/hid_bench.cc`: cost evenly spread (~0.6 ms per sensor IPC), no single slow sensor.
+  - Native background sampler (`ThermalSampler`): `getDieTemperature()` returns the latest reading without blocking; readings at most 5 s old (~0.3% of one core).
+  - Battery and disk sampled on a time basis (5 s / 10 s) instead of tick decimation; a click refreshes everything.
 - [ ] **Extension Lifecycle Refactor**:
   - `ResourceMonitor` class implementing `vscode.Disposable`; `update()` split into per-widget renderers; cached configuration; throttled Live tooltips.
 
 **Follow-ups (after the hardening work):**
 
-- [ ] **Static Tooltip Freshness**:
+- [x] **Static Tooltip Freshness**:
   - In `Static` mode tooltips are regenerated only on click/refresh, so hovering shows the values from the last refresh (or from the switch out of `Live`) while the status bar text keeps updating.
-  - Evaluate: slow periodic refresh in Static mode (e.g. every 10–15 s), refresh only when values change beyond a threshold, and an "updated at HH:MM:SS" line in the tooltip header. Applies to every widget (CPU, load, temperature, memory, battery, disk).
+  - VS Code exposes no hover event, so tooltips cannot be computed on hover. Static now regenerates tooltips every 5 s (and on click), Live at most once per second; every tooltip ends with "Updated at HH:MM:SS".
 - [ ] **Configurable Widget Order**:
   - New setting (e.g. `resmon.order`: ordered list of `cpu`, `freq`/`load`, `temp`, `mem`, `battery`, `disk`) mapped to status bar priorities, applied live on configuration change; unknown or missing entries fall back to the default order.
 
