@@ -162,9 +162,13 @@ bool IsCFString(CFTypeRef value) {
   return value != nullptr && CFGetTypeID(value) == CFStringGetTypeID();
 }
 
-bool ReadRegistryInt(io_registry_entry_t entry, CFStringRef key, int& out) {
-  CFRef<CFTypeRef> value(IORegistryEntryCreateCFProperty(entry, key, kCFAllocatorDefault, 0));
-  return GetInt(value.get(), out);
+/** Reads an int from `dict[key]`, falling back to `dict[nested][key]` (e.g. AppleSmartBattery "BatteryData"). */
+bool GetDictInt(CFDictionaryRef dict, CFStringRef key, int& out, CFStringRef nested = nullptr) {
+  if (GetInt(CFDictionaryGetValue(dict, key), out)) return true;
+  if (nested == nullptr) return false;
+  CFTypeRef inner = CFDictionaryGetValue(dict, nested);
+  return inner != nullptr && CFGetTypeID(inner) == CFDictionaryGetTypeID() &&
+         GetInt(CFDictionaryGetValue(static_cast<CFDictionaryRef>(inner), key), out);
 }
 
 template <typename T>
@@ -271,7 +275,7 @@ struct Sensor {
 };
 
 constexpr auto kThermalRescanInterval = std::chrono::seconds(60);
-constexpr auto kBatteryStaticRefresh = std::chrono::minutes(5);
+constexpr auto kBatteryRegistryRefresh = std::chrono::seconds(30);
 constexpr auto kBatteryLookupRetry = std::chrono::seconds(60);
 constexpr double kMinValidCelsius = 0.0;
 constexpr double kMaxValidCelsius = 130.0;
@@ -291,12 +295,15 @@ struct AddonState {
   std::vector<Sensor> sensors;
   Clock::time_point next_thermal_scan{};
 
-  // Battery: service looked up once (retried if missing); slow-changing keys cached.
+  // Battery: service looked up once (retried if missing). The mAh / cycle details change slowly
+  // and are refreshed from one registry snapshot every kBatteryRegistryRefresh.
   IOObject smart_battery;
   Clock::time_point next_battery_lookup{};
+  Clock::time_point battery_registry_expiry{};
   int design_capacity = 0;
+  int raw_max_capacity = 0;
+  int raw_current_capacity = 0;
   int cycle_count = -1;
-  Clock::time_point battery_static_expiry{};
 };
 
 void FinalizeState(napi_env /*env*/, void* data, void* /*hint*/) {
@@ -525,35 +532,44 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
     }
   }
 
-  // AppleSmartBattery: read individual keys instead of copying the whole registry dictionary.
+  // AppleSmartBattery details. Some keys (DesignCapacity, AppleRaw*) are only published in the
+  // serialized property table, not through IORegistryEntryCreateCFProperty, so take one full
+  // snapshot every kBatteryRegistryRefresh instead of per key (the old code copied it every tick).
   const Clock::time_point now = Clock::now();
   if (!state->smart_battery && now >= state->next_battery_lookup) {
     state->next_battery_lookup = now + kBatteryLookupRetry;
     // MACH_PORT_NULL == kIOMainPortDefault == kIOMasterPortDefault, and works on macOS 11.
     state->smart_battery.reset(IOServiceGetMatchingService(MACH_PORT_NULL, IOServiceMatching("AppleSmartBattery")));
-    state->battery_static_expiry = Clock::time_point{};
+    state->battery_registry_expiry = Clock::time_point{};
   }
 
-  int raw_max_capacity = 0;
-  int raw_current_capacity = 0;
-  if (state->smart_battery) {
-    const io_registry_entry_t battery = state->smart_battery.get();
-    if (now >= state->battery_static_expiry) {
-      int design = 0;
-      int cycles = -1;
-      state->design_capacity = ReadRegistryInt(battery, CFSTR("DesignCapacity"), design) ? design : 0;
-      state->cycle_count = ReadRegistryInt(battery, CFSTR("CycleCount"), cycles) ? cycles : -1;
-      state->battery_static_expiry = now + kBatteryStaticRefresh;
-    }
-    if (!ReadRegistryInt(battery, CFSTR("AppleRawMaxCapacity"), raw_max_capacity) &&
-        !ReadRegistryInt(battery, CFSTR("NominalChargeCapacity"), raw_max_capacity)) {
+  if (state->smart_battery && now >= state->battery_registry_expiry) {
+    state->battery_registry_expiry = now + kBatteryRegistryRefresh;
+    CFMutableDictionaryRef raw_props = nullptr;
+    const kern_return_t kr =
+        IORegistryEntryCreateCFProperties(state->smart_battery.get(), &raw_props, kCFAllocatorDefault, 0);
+    CFRef<CFMutableDictionaryRef> props(kr == KERN_SUCCESS ? raw_props : nullptr);
+    if (!props) {
+      if (raw_props != nullptr) CFRelease(raw_props);
       // Entry terminated or re-registered: drop it and look it up again later.
       state->smart_battery.reset();
-      raw_max_capacity = 0;
+      state->design_capacity = state->raw_max_capacity = state->raw_current_capacity = 0;
+      state->cycle_count = -1;
     } else {
-      ReadRegistryInt(battery, CFSTR("AppleRawCurrentCapacity"), raw_current_capacity);
+      const CFDictionaryRef dict = props.get();
+      const CFStringRef nested = CFSTR("BatteryData");
+      int value = 0;
+      state->design_capacity = GetDictInt(dict, CFSTR("DesignCapacity"), value, nested) ? value : 0;
+      state->cycle_count = GetDictInt(dict, CFSTR("CycleCount"), value, nested) ? value : -1;
+      state->raw_max_capacity = (GetDictInt(dict, CFSTR("AppleRawMaxCapacity"), value) ||
+                                 GetDictInt(dict, CFSTR("NominalChargeCapacity"), value))
+                                    ? value
+                                    : 0;
+      state->raw_current_capacity = GetDictInt(dict, CFSTR("AppleRawCurrentCapacity"), value) ? value : 0;
     }
   }
+  const int raw_max_capacity = state->raw_max_capacity;
+  const int raw_current_capacity = state->raw_current_capacity;
 
   double health_percent = -1.0;
   if (state->design_capacity > 0 && raw_max_capacity > 0) {

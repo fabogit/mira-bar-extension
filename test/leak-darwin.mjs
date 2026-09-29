@@ -2,7 +2,7 @@
 //
 // Calls every exported native function in a tight loop and reports, per function:
 //   - average cost per call (µs)             -> how much each tick blocks the Extension Host thread
-//   - RSS growth across batches (after GC)   -> steady growth after the first (warm-up) batch = native leak
+//   - RSS growth across batches (after GC)   -> growth in every batch after the warm-up = native leak
 //   - Mach port refs of this process (lsmp)   -> growth of the "host" send right = mach_host_self() leak
 //
 // Usage (on macOS, after `pnpm run compile:native`):
@@ -24,7 +24,8 @@ const addon = require(addonPath);
 const args = process.argv.slice(2);
 const ITERATIONS = Number(args.find((a) => /^\d+$/.test(a)) ?? 10000);
 const PAUSE = args.includes('--pause');
-const BATCHES = 5;
+const BATCHES = 6;
+const WARMUP_BATCHES = 2; // excluded from the leak verdict
 const TIME_BUDGET_MS = 30_000; // per function, so slow calls don't run forever
 const LEAK_THRESHOLD_BYTES_PER_CALL = 32;
 
@@ -80,7 +81,7 @@ for (const name of functions) {
 
   const rssSamples = [process.memoryUsage().rss];
   let calls = 0;
-  let callsInFirstBatch = 0;
+  let callsInWarmup = 0;
   const perBatch = Math.ceil(ITERATIONS / BATCHES);
   const t0 = process.hrtime.bigint();
 
@@ -93,17 +94,17 @@ for (const name of functions) {
     }
     gc();
     rssSamples.push(process.memoryUsage().rss);
-    if (b === 0) callsInFirstBatch = calls;
+    if (b === WARMUP_BATCHES - 1) callsInWarmup = calls;
   }
 
   const elapsedUs = Number(process.hrtime.bigint() - t0) / 1000;
   const growth = rssSamples[rssSamples.length - 1] - rssSamples[0];
-  // The first batch absorbs one-off V8/JIT/malloc warm-up (a step, then flat): judge only the
-  // growth after it. A real leak keeps growing batch after batch.
-  const steady = rssSamples.slice(1);
+  // The first batches absorb one-off V8/JIT/malloc warm-up (a step, then flat): judge only the
+  // growth after WARMUP_BATCHES. A real leak grows in every one of the remaining batches.
+  const steady = rssSamples.slice(WARMUP_BATCHES);
   const steadyGrowth = steady[steady.length - 1] - steady[0];
-  const steadyCalls = calls - callsInFirstBatch;
-  const growing = steady.every((v, i) => i === 0 || v >= steady[i - 1]) && steadyGrowth > 0;
+  const steadyCalls = calls - callsInWarmup;
+  const growing = steady.length > 1 && steady.every((v, i) => i === 0 || v > steady[i - 1]);
   const bytesPerCall = steadyCalls > 0 ? steadyGrowth / steadyCalls : 0;
   const suspicious = growing && bytesPerCall > LEAK_THRESHOLD_BYTES_PER_CALL;
 
