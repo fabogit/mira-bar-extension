@@ -19,6 +19,13 @@ interface CoreTicks {
 /** Counters per core in the native tick buffer: user, system, idle, nice (processor_cpu_load_info order). */
 const TICK_STATES = 4;
 
+/**
+ * Minimum ticks per core between two CPU samples (~50 ms at the 100 Hz Mach tick rate).
+ * Closer samples (activation, forced refresh right after a tick) would read 0% or 100% per core,
+ * so they return the previous result and keep accumulating the baseline instead.
+ */
+const MIN_TICKS_PER_CORE = 5;
+
 /** How often a missing battery is re-probed (desktop Macs never gain one; laptops may fail transiently). */
 const BATTERY_RECHECK_MS = 60_000;
 
@@ -147,7 +154,9 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
     if (this.nativeAddon) {
       const cores = this.readNativeTicks(this.nativeAddon);
       if (cores === 0) {
-        return this.sampleCpuFallback();
+        // Transient kernel failure: keep the last native result (with core types) rather than
+        // mixing in an os.cpus() delta against a stale baseline.
+        return this.lastCpuResult;
       }
 
       if (cores !== this.prevCoreCount) {
@@ -178,6 +187,11 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
         perCorePercent[i] = coreTotalDelta > 0
           ? Math.max(0, Math.min(100, (activeDelta / coreTotalDelta) * 100))
           : 0;
+      }
+
+      if (totalAllDelta < cores * MIN_TICKS_PER_CORE) {
+        // Too close to the previous sample: keep the baseline, do not swap.
+        return this.lastCpuResult;
       }
 
       this.swapTickBuffers(cores);

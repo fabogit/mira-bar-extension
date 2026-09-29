@@ -272,6 +272,7 @@ struct Sensor {
 
 constexpr auto kThermalRescanInterval = std::chrono::seconds(60);
 constexpr auto kBatteryStaticRefresh = std::chrono::minutes(5);
+constexpr auto kBatteryLookupRetry = std::chrono::seconds(60);
 constexpr double kMinValidCelsius = 0.0;
 constexpr double kMaxValidCelsius = 130.0;
 
@@ -290,9 +291,9 @@ struct AddonState {
   std::vector<Sensor> sensors;
   Clock::time_point next_thermal_scan{};
 
-  // Battery: service looked up once; slow-changing keys cached.
-  bool battery_lookup_done = false;
+  // Battery: service looked up once (retried if missing); slow-changing keys cached.
   IOObject smart_battery;
+  Clock::time_point next_battery_lookup{};
   int design_capacity = 0;
   int cycle_count = -1;
   Clock::time_point battery_static_expiry{};
@@ -362,7 +363,12 @@ napi_value GetCpuTicks(napi_env env, napi_callback_info info) {
                  static_cast<vm_size_t>(processor_info_count) * sizeof(integer_t));
 
   const size_t needed = static_cast<size_t>(processor_count) * CPU_STATE_MAX;
-  if (length >= needed && needed <= processor_info_count) {
+  if (needed > processor_info_count) {
+    // Malformed kernel reply: report failure rather than a stale buffer.
+    NAPI_CALL(env, napi_create_uint32(env, 0, &result));
+    return result;
+  }
+  if (length >= needed) {
     std::memcpy(data, processor_info, needed * sizeof(uint32_t));
   }
   NAPI_CALL(env, napi_create_uint32(env, processor_count, &result));
@@ -480,8 +486,21 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
   if (!blob) return BatteryUnavailable(env);
   CFRef<CFArrayRef> sources(IOPSCopyPowerSourcesList(blob.get()));
   if (!sources || CFArrayGetCount(sources.get()) == 0) return BatteryUnavailable(env);
-  // Get rule: desc is owned by blob, which stays alive until the end of this function.
-  CFDictionaryRef desc = IOPSGetPowerSourceDescription(blob.get(), CFArrayGetValueAtIndex(sources.get(), 0));
+  // Prefer the internal battery (a UPS can be listed too); fall back to the first source.
+  // Get rule: descriptions are owned by blob, which stays alive until the end of this function.
+  CFDictionaryRef desc = nullptr;
+  const CFIndex source_count = CFArrayGetCount(sources.get());
+  for (CFIndex i = 0; i < source_count; ++i) {
+    CFDictionaryRef candidate = IOPSGetPowerSourceDescription(blob.get(), CFArrayGetValueAtIndex(sources.get(), i));
+    if (candidate == nullptr) continue;
+    if (desc == nullptr) desc = candidate;
+    CFTypeRef type = CFDictionaryGetValue(candidate, CFSTR(kIOPSTypeKey));
+    if (IsCFString(type) &&
+        CFStringCompare(static_cast<CFStringRef>(type), CFSTR(kIOPSInternalBatteryType), 0) == kCFCompareEqualTo) {
+      desc = candidate;
+      break;
+    }
+  }
   if (desc == nullptr) return BatteryUnavailable(env);
 
   int capacity = 0;
@@ -507,17 +526,18 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
   }
 
   // AppleSmartBattery: read individual keys instead of copying the whole registry dictionary.
-  if (!state->battery_lookup_done) {
-    state->battery_lookup_done = true;
+  const Clock::time_point now = Clock::now();
+  if (!state->smart_battery && now >= state->next_battery_lookup) {
+    state->next_battery_lookup = now + kBatteryLookupRetry;
     // MACH_PORT_NULL == kIOMainPortDefault == kIOMasterPortDefault, and works on macOS 11.
     state->smart_battery.reset(IOServiceGetMatchingService(MACH_PORT_NULL, IOServiceMatching("AppleSmartBattery")));
+    state->battery_static_expiry = Clock::time_point{};
   }
 
   int raw_max_capacity = 0;
   int raw_current_capacity = 0;
   if (state->smart_battery) {
     const io_registry_entry_t battery = state->smart_battery.get();
-    const Clock::time_point now = Clock::now();
     if (now >= state->battery_static_expiry) {
       int design = 0;
       int cycles = -1;
@@ -525,10 +545,14 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
       state->cycle_count = ReadRegistryInt(battery, CFSTR("CycleCount"), cycles) ? cycles : -1;
       state->battery_static_expiry = now + kBatteryStaticRefresh;
     }
-    if (!ReadRegistryInt(battery, CFSTR("AppleRawMaxCapacity"), raw_max_capacity)) {
-      ReadRegistryInt(battery, CFSTR("NominalChargeCapacity"), raw_max_capacity);
+    if (!ReadRegistryInt(battery, CFSTR("AppleRawMaxCapacity"), raw_max_capacity) &&
+        !ReadRegistryInt(battery, CFSTR("NominalChargeCapacity"), raw_max_capacity)) {
+      // Entry terminated or re-registered: drop it and look it up again later.
+      state->smart_battery.reset();
+      raw_max_capacity = 0;
+    } else {
+      ReadRegistryInt(battery, CFSTR("AppleRawCurrentCapacity"), raw_current_capacity);
     }
-    ReadRegistryInt(battery, CFSTR("AppleRawCurrentCapacity"), raw_current_capacity);
   }
 
   double health_percent = -1.0;
@@ -556,9 +580,11 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
 // Thermal
 // ---------------------------------------------------------------------------
 
+/** Drops cached sensors and the HID client (it does not recover if the HID event server restarts). */
 void ResetThermalSensors(AddonState& state) {
   state.sensors.clear();       // raw refs first
   state.hid_services.reset();  // then their owner
+  state.hid_client.reset();    // then the client
 }
 
 /**
@@ -668,8 +694,9 @@ napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
   }
 
   if (tdie_count == 0) {
-    // Sensors went away (or never reported): force a rescan on a later tick.
+    // Sensors went away (e.g. HID event server restarted): rebuild everything on the next tick.
     ResetThermalSensors(*state);
+    state->next_thermal_scan = Clock::time_point{};
     return Null(env);
   }
 

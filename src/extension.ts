@@ -923,6 +923,7 @@ export function activate(context: vscode.ExtensionContext): void {
       } else {
         updateWidget(widgets.disk, '', '', false);
       }
+      lastUpdateError = '';
     } catch (err) {
       // Retain previous display state on transient read errors; log each distinct error once in a row.
       const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
