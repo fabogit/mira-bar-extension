@@ -7,6 +7,8 @@ import type { BatteryInfo, DiskDriveInfo } from './types.js';
 let updateTimer: NodeJS.Timeout | null = null;
 let disposed = false;
 let isUpdating = false;
+let pendingForceUpdate = false;
+let lastUpdateError = '';
 let tickCounter = 0;
 let cachedBattery: BatteryInfo | null = null;
 let cachedDisks: DiskDriveInfo[] = [];
@@ -403,6 +405,10 @@ export function activate(context: vscode.ExtensionContext): void {
   console.log('[Resource Monitor NG] Activated successfully');
 
   disposed = false;
+  pendingForceUpdate = false;
+  lastUpdateError = '';
+  const log = vscode.window.createOutputChannel('Resource Monitor NG', { log: true });
+  context.subscriptions.push(log);
   let currentConfig = getConfig();
   widgets = createWidgets(currentConfig.alignment, currentConfig.priority);
   context.subscriptions.push({ dispose: disposeWidgets });
@@ -420,7 +426,14 @@ export function activate(context: vscode.ExtensionContext): void {
    * @param forceAll - When true, bypasses tick decimation and forces all providers and tooltips to refresh.
    */
   async function update(forceAll = false): Promise<void> {
-    if (disposed || isUpdating || !widgets) {
+    if (disposed || !widgets) {
+      return;
+    }
+    if (isUpdating) {
+      // Do not drop an explicit refresh: run it as soon as the current tick completes.
+      if (forceAll) {
+        pendingForceUpdate = true;
+      }
       return;
     }
     isUpdating = true;
@@ -836,6 +849,10 @@ export function activate(context: vscode.ExtensionContext): void {
         if (shouldSampleSlow || cachedDisks.length === 0) {
           const defaultWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
           cachedDisks = await diskProvider.sample(config.diskDrives, defaultWorkspace);
+          // deactivate() may have disposed the widgets while statfs was pending.
+          if (disposed || !widgets) {
+            return;
+          }
         }
         if (cachedDisks.length > 0) {
           const formatMetric = (d: { freePercent: number; usedPercent: number; freeBytes: number; usedBytes: number; totalBytes: number }): string => {
@@ -906,10 +923,19 @@ export function activate(context: vscode.ExtensionContext): void {
       } else {
         updateWidget(widgets.disk, '', '', false);
       }
-    } catch {
-      // Retain previous display state on transient read errors
+    } catch (err) {
+      // Retain previous display state on transient read errors; log each distinct error once in a row.
+      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      if (!disposed && message !== lastUpdateError) {
+        lastUpdateError = message;
+        log.error(`Telemetry update failed: ${message}`);
+      }
     } finally {
       isUpdating = false;
+      if (pendingForceUpdate && !disposed) {
+        pendingForceUpdate = false;
+        void update(true);
+      }
     }
   }
 
