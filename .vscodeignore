@@ -11,3 +11,7 @@ native/**
 .agents/**
 docs/**
 .github/**
+.claude/**
+skills-lock.json
+pnpm-workspace.yaml
+**/.DS_Store
