@@ -85,7 +85,37 @@ Phase 1 restructured the codebase into a strict modular architecture, eliminated
 
 ---
 
-## 4. Phase 2: Linux Telemetry Modernization & Parity (v1.2.0) [IN PROGRESS]
+## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v1.1.1) [IN PROGRESS]
+
+> Branch: `fix/darwin-memory` (from `develop`) • **Status: In progress** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
+
+Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin native addon and in the extension lifecycle, and corrects the memory pressure metric. Every step is verified on Apple Silicon with `test/leak-darwin.mjs`, `lsmp`, `leaks` and an optional ASan build.
+
+- [ ] **Build & Test Baseline**:
+  - `compile.sh` flags: `-mmacosx-version-min=11.0`, `NAPI_VERSION=8`, `-Wextra`, availability warnings, hidden visibility; `DEBUG=1` ASan variant.
+  - Native leak & cost probe `test/leak-darwin.mjs` (µs/call, RSS growth, Mach host port refs).
+- [ ] **Leak Fixes**:
+  - Host port acquired once and released (`mach_host_self()` send-right leak, 3 urefs per tick).
+  - Polling timer can no longer be re-armed after `deactivate()`.
+  - Recreated status bar items no longer accumulate in `context.subscriptions`.
+- [ ] **RAII Native Core**:
+  - `CFRef<T>`, `IOObject`, `MachSendRight`, `VmRegion` wrappers; per-env `AddonState` with `napi_set_instance_data` finalizer.
+  - Type-checked CoreFoundation getters; `napi_status` checked on every call.
+- [ ] **Per-Tick Overhead Reduction**:
+  - Hidden widgets are not sampled.
+  - Cached `IOHIDEventSystemClient` and classified thermal sensors.
+  - Battery presence cached; AppleSmartBattery keys read individually instead of copying the whole registry dictionary.
+  - Zero-allocation CPU ticks (`Uint32Array` double buffer, wrap-safe 32-bit deltas).
+- [ ] **Correctness**:
+  - Memory pressure from `kern.memorystatus_level` / `kern.memorystatus_vm_pressure_level` (replaces `vm.memory_pressure`, which is not a percentage).
+  - macOS 11 compatibility (`MACH_PORT_NULL` instead of `kIOMainPortDefault`).
+  - Native loader no longer resolves `.node` files from `process.cwd()`.
+- [ ] **Extension Lifecycle Refactor**:
+  - `ResourceMonitor` class implementing `vscode.Disposable`; `update()` split into per-widget renderers; cached configuration; throttled Live tooltips.
+
+---
+
+## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.2.0) [IN PROGRESS]
 
 > Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/3) • **Status: Open** (Active Target)
 
@@ -107,7 +137,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 ---
 
-## 5. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.3.0) [PLANNED]
+## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.3.0) [PLANNED]
 
 > Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/4) • **Status: Open** (Future Roadmap)
 
@@ -131,7 +161,7 @@ Phase 3 introduces native Windows support through direct Win32 API bindings, adh
 
 ---
 
-## 6. Phase 4: Internationalization & Localization (v1.4.0) [NICE TO HAVE]
+## 7. Phase 4: Internationalization & Localization (v1.4.0) [NICE TO HAVE]
 
 > Milestone: [**`v1.4.0 - Internationalization & Localization`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/5) • **Status: Open** (Backlog)
 
