@@ -5,6 +5,9 @@
 //   - RSS growth across batches (after GC)   -> growth in every batch after the warm-up = native leak
 //   - Mach port refs of this process (lsmp)   -> growth of the "host" send right = mach_host_self() leak
 //
+// getDieTemperature() returns the latest reading of a native background sampler, so its µs/call is the
+// cached path; the HID sampling cost itself is measured by native/darwin/tools/hid_bench.cc.
+//
 // Usage (on macOS, after `pnpm run compile:native`):
 //   node --expose-gc test/leak-darwin.mjs            # default: up to 10000 calls / function
 //   node --expose-gc test/leak-darwin.mjs 50000      # custom iteration count

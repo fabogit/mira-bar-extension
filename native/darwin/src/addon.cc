@@ -6,7 +6,8 @@
 //     every vm_allocate'd kernel buffer by VmRegion.
 //   - Long-lived handles (host port, HID client, thermal sensors, battery service) live in a
 //     per-env AddonState, freed by the napi_set_instance_data finalizer.
-//   - All entry points run on the JS thread, so AddonState needs no locking.
+//   - All entry points run on the JS thread. The only other thread is ThermalSampler's worker,
+//     which owns the HID client exclusively and shares one ThermalReading under a mutex.
 
 #include <node_api.h>
 #include <mach/mach.h>
@@ -19,12 +20,16 @@
 #include <IOKit/IOKitLib.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -280,6 +285,238 @@ constexpr auto kBatteryLookupRetry = std::chrono::seconds(60);
 constexpr double kMinValidCelsius = 0.0;
 constexpr double kMaxValidCelsius = 130.0;
 
+/** One full thermal pass: SoC die average / peak, NAND and battery temperatures. */
+struct ThermalReading {
+  bool valid = false;
+  double avg_celsius = 0.0;
+  double peak_celsius = 0.0;
+  std::string peak_sensor;
+  int die_count = 0;
+  double nand_celsius = -1.0;
+  double battery_celsius = -1.0;
+  Clock::time_point taken{};
+};
+
+/**
+ * Owns the IOHID client and the classified temperature sensors. Used from a single thread
+ * (ThermalSampler's worker), so it needs no locking.
+ *
+ * Each IOHIDServiceClientCopyEvent is an IPC round trip to the HID event server: measured on an
+ * M4 at ~0.6 ms per tdie sensor, ~16 ms for the 26 sensors read per pass (hid_bench.cc).
+ */
+class ThermalHid {
+ public:
+  ThermalHid() = default;
+  ThermalHid(const ThermalHid&) = delete;
+  ThermalHid& operator=(const ThermalHid&) = delete;
+
+  ThermalReading Sample() {
+    ThermalReading reading;
+    reading.taken = Clock::now();
+    if (!EnsureSensors()) return reading;
+
+    double sum_die = 0.0;
+    const Sensor* peak = nullptr;
+    for (const Sensor& sensor : sensors_) {
+      switch (sensor.kind) {
+        case SensorKind::Die: {
+          const double temp = ReadCelsius(sensor.service);
+          if (temp > 0.0) {
+            sum_die += temp;
+            ++reading.die_count;
+            if (temp > reading.peak_celsius) {
+              reading.peak_celsius = temp;
+              peak = &sensor;
+            }
+          }
+          break;
+        }
+        case SensorKind::Nand:
+          if (reading.nand_celsius < 0.0) reading.nand_celsius = ReadCelsius(sensor.service);
+          break;
+        case SensorKind::Battery:
+          if (reading.battery_celsius < 0.0) reading.battery_celsius = ReadCelsius(sensor.service);
+          break;
+      }
+    }
+
+    if (reading.die_count == 0) {
+      // Sensors went away (e.g. HID event server restarted): rebuild everything on the next pass.
+      Reset();
+      next_scan_ = Clock::time_point{};
+      return reading;
+    }
+    reading.valid = true;
+    reading.avg_celsius = sum_die / reading.die_count;
+    reading.peak_sensor = peak != nullptr ? peak->name : "tdie";
+    return reading;
+  }
+
+ private:
+  /** Drops cached sensors and the HID client (it does not recover if the HID event server restarts). */
+  void Reset() {
+    sensors_.clear();    // raw refs first
+    services_.reset();   // then their owner
+    client_.reset();     // then the client
+  }
+
+  /**
+   * Creates the HID client and classifies the temperature services by product name. Rescans at
+   * most every kThermalRescanInterval, so Macs without sensors do not pay for a full scan per pass.
+   */
+  bool EnsureSensors() {
+    if (!sensors_.empty()) return true;
+
+    const Clock::time_point now = Clock::now();
+    if (now < next_scan_) return false;
+    next_scan_ = now + kThermalRescanInterval;
+
+    if (!client_) {
+      CFRef<IOHIDEventSystemClientRef> client(IOHIDEventSystemClientCreate(kCFAllocatorDefault));
+      if (!client) return false;
+
+      int page = 0xff00;  // kHIDPage_AppleVendor
+      int usage = 5;      // kHIDUsage_AppleVendor_TemperatureSensor
+      CFRef<CFNumberRef> page_num(CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &page));
+      CFRef<CFNumberRef> usage_num(CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &usage));
+      if (!page_num || !usage_num) return false;
+
+      const void* keys[2] = {CFSTR("PrimaryUsagePage"), CFSTR("PrimaryUsage")};
+      const void* values[2] = {page_num.get(), usage_num.get()};
+      CFRef<CFDictionaryRef> match(CFDictionaryCreate(kCFAllocatorDefault, keys, values, 2,
+                                                      &kCFTypeDictionaryKeyCallBacks,
+                                                      &kCFTypeDictionaryValueCallBacks));
+      if (!match) return false;
+      IOHIDEventSystemClientSetMatching(client.get(), match.get());
+      client_ = std::move(client);
+    }
+
+    services_.reset(IOHIDEventSystemClientCopyServices(client_.get()));
+    if (!services_) return false;
+
+    bool has_die = false;
+    const CFIndex count = CFArrayGetCount(services_.get());
+    for (CFIndex i = 0; i < count; ++i) {
+      auto service = static_cast<IOHIDServiceClientRef>(const_cast<void*>(CFArrayGetValueAtIndex(services_.get(), i)));
+      if (service == nullptr) continue;
+
+      CFRef<CFTypeRef> product(IOHIDServiceClientCopyProperty(service, CFSTR("Product")));
+      char name[128] = {0};
+      if (!GetUtf8(product.get(), name, sizeof(name))) continue;
+
+      // tdev/tcal/als sensors are skipped: they are not SoC die readings (and cost ~1.5 ms each).
+      if (std::strstr(name, "tdie") != nullptr) {
+        sensors_.push_back({service, SensorKind::Die, name});
+        has_die = true;
+      } else if (std::strstr(name, "NAND") != nullptr || std::strstr(name, "nand") != nullptr) {
+        sensors_.push_back({service, SensorKind::Nand, name});
+      } else if (std::strstr(name, "gas gauge") != nullptr || std::strstr(name, "battery") != nullptr) {
+        sensors_.push_back({service, SensorKind::Battery, name});
+      }
+    }
+
+    if (!has_die) {
+      Reset();
+      return false;
+    }
+    return true;
+  }
+
+  /** Returns the sensor temperature in °C, or -1 when unreadable or out of range. */
+  static double ReadCelsius(IOHIDServiceClientRef service) {
+    CFRef<IOHIDEventRef> event(IOHIDServiceClientCopyEvent(service, kIOHIDEventTypeTemperature, 0, 0));
+    if (!event) return -1.0;
+    const double temp = IOHIDEventGetFloatValue(event.get(), IOHIDEventFieldBase(kIOHIDEventTypeTemperature));
+    return (temp > kMinValidCelsius && temp < kMaxValidCelsius) ? temp : -1.0;
+  }
+
+  // Declaration order matters: sensors_ (raw refs) are destroyed before services_, then client_.
+  CFRef<IOHIDEventSystemClientRef> client_;
+  CFRef<CFArrayRef> services_;
+  std::vector<Sensor> sensors_;
+  Clock::time_point next_scan_{};
+};
+
+/**
+ * Runs ThermalHid passes on a dedicated background thread so the JS thread never blocks on HID IPC.
+ *
+ * Get() returns the latest reading immediately and, if it is older than `max_age`, asks the worker
+ * for a new pass (requests coalesce: at most one pass runs at a time). Only the very first call
+ * waits, up to kFirstReadingWait, so the first tick can already show a temperature. The worker is
+ * started lazily and joined in the destructor (N-API instance-data finalizer).
+ */
+class ThermalSampler {
+ public:
+  ThermalSampler() = default;
+  ThermalSampler(const ThermalSampler&) = delete;
+  ThermalSampler& operator=(const ThermalSampler&) = delete;
+
+  ~ThermalSampler() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stop_ = true;
+    }
+    wake_.notify_one();
+    if (worker_.joinable()) worker_.join();  // waits for at most one in-flight pass (~20 ms)
+  }
+
+  /** JS thread only. */
+  ThermalReading Get(Clock::duration max_age) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!started_) {
+      started_ = true;
+      try {
+        worker_ = std::thread([this] { Run(); });
+      } catch (const std::system_error&) {
+        return ThermalReading{};  // no thread available: report "no temperature" rather than crash
+      }
+    }
+    if (!worker_.joinable()) return ThermalReading{};
+
+    const bool stale = !has_reading_ || Clock::now() - reading_.taken >= max_age;
+    if (stale && !busy_ && !requested_) {
+      requested_ = true;
+      wake_.notify_one();
+    }
+    if (!has_reading_) {
+      done_.wait_for(lock, kFirstReadingWait, [this] { return has_reading_; });
+    }
+    return reading_;
+  }
+
+ private:
+  static constexpr auto kFirstReadingWait = std::chrono::milliseconds(250);
+
+  void Run() {
+    ThermalHid hid;  // lives and dies on this thread
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (;;) {
+      wake_.wait(lock, [this] { return stop_ || requested_; });
+      if (stop_) return;
+      requested_ = false;
+      busy_ = true;
+      lock.unlock();
+      ThermalReading reading = hid.Sample();  // HID IPC runs without holding the lock
+      lock.lock();
+      busy_ = false;
+      reading_ = std::move(reading);
+      has_reading_ = true;
+      done_.notify_all();
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable wake_;
+  std::condition_variable done_;
+  bool started_ = false;
+  bool stop_ = false;
+  bool requested_ = false;
+  bool busy_ = false;
+  bool has_reading_ = false;
+  ThermalReading reading_;
+  std::thread worker_;
+};
+
 struct AddonState {
   // Acquired once: fixes the mach_host_self() send-right leak (3 urefs per tick before).
   MachSendRight host{mach_host_self()};
@@ -288,12 +525,9 @@ struct AddonState {
   vm_size_t page_size = 0;
   uint64_t total_ram = 0;
 
-  // Thermal: client and classified sensors are built once and reused every tick.
-  // Declaration order matters: sensors (raw refs) are destroyed before hid_services.
-  CFRef<IOHIDEventSystemClientRef> hid_client;
-  CFRef<CFArrayRef> hid_services;
-  std::vector<Sensor> sensors;
-  Clock::time_point next_thermal_scan{};
+  // Thermal: sampled on a background thread (see ThermalSampler). Destroyed first among the
+  // members that matter, joining the worker before anything else is torn down.
+  ThermalSampler thermal;
 
   // Battery: service looked up once (retried if missing). The mAh / cycle details change slowly
   // and are refreshed from one registry snapshot every kBatteryRegistryRefresh.
@@ -596,138 +830,50 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
 // Thermal
 // ---------------------------------------------------------------------------
 
-/** Drops cached sensors and the HID client (it does not recover if the HID event server restarts). */
-void ResetThermalSensors(AddonState& state) {
-  state.sensors.clear();       // raw refs first
-  state.hid_services.reset();  // then their owner
-  state.hid_client.reset();    // then the client
-}
+constexpr double kDefaultThermalMaxAgeMs = 5000.0;
 
 /**
- * Creates the HID client (once) and classifies the temperature services by product name.
- * Rescans at most every kThermalRescanInterval, so Macs without sensors do not pay for a
- * full scan on every tick.
+ * getDieTemperature(maxAgeMs = 5000): returns the latest SoC die average / peak, NAND and battery
+ * temperatures, or null if unavailable. Never blocks on HID IPC after the first call: a new pass
+ * runs in the background when the latest reading is older than `maxAgeMs`, so values can be up to
+ * maxAgeMs + one pass (~20 ms) old.
  */
-bool EnsureThermalSensors(AddonState& state) {
-  if (!state.sensors.empty()) return true;
-
-  const Clock::time_point now = Clock::now();
-  if (now < state.next_thermal_scan) return false;
-  state.next_thermal_scan = now + kThermalRescanInterval;
-
-  if (!state.hid_client) {
-    CFRef<IOHIDEventSystemClientRef> client(IOHIDEventSystemClientCreate(kCFAllocatorDefault));
-    if (!client) return false;
-
-    int page = 0xff00;  // kHIDPage_AppleVendor
-    int usage = 5;      // kHIDUsage_AppleVendor_TemperatureSensor
-    CFRef<CFNumberRef> page_num(CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &page));
-    CFRef<CFNumberRef> usage_num(CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &usage));
-    if (!page_num || !usage_num) return false;
-
-    const void* keys[2] = {CFSTR("PrimaryUsagePage"), CFSTR("PrimaryUsage")};
-    const void* values[2] = {page_num.get(), usage_num.get()};
-    CFRef<CFDictionaryRef> match(CFDictionaryCreate(kCFAllocatorDefault, keys, values, 2,
-                                                    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
-    if (!match) return false;
-    IOHIDEventSystemClientSetMatching(client.get(), match.get());
-    state.hid_client = std::move(client);
-  }
-
-  state.hid_services.reset(IOHIDEventSystemClientCopyServices(state.hid_client.get()));
-  if (!state.hid_services) return false;
-
-  bool has_die = false;
-  const CFIndex count = CFArrayGetCount(state.hid_services.get());
-  for (CFIndex i = 0; i < count; ++i) {
-    auto service = static_cast<IOHIDServiceClientRef>(
-        const_cast<void*>(CFArrayGetValueAtIndex(state.hid_services.get(), i)));
-    if (service == nullptr) continue;
-
-    CFRef<CFTypeRef> product(IOHIDServiceClientCopyProperty(service, CFSTR("Product")));
-    char name[128] = {0};
-    if (!GetUtf8(product.get(), name, sizeof(name))) continue;
-
-    if (std::strstr(name, "tdie") != nullptr) {
-      state.sensors.push_back({service, SensorKind::Die, name});
-      has_die = true;
-    } else if (std::strstr(name, "NAND") != nullptr || std::strstr(name, "nand") != nullptr) {
-      state.sensors.push_back({service, SensorKind::Nand, name});
-    } else if (std::strstr(name, "gas gauge") != nullptr || std::strstr(name, "battery") != nullptr) {
-      state.sensors.push_back({service, SensorKind::Battery, name});
-    }
-  }
-
-  if (!has_die) {
-    ResetThermalSensors(state);
-    return false;
-  }
-  return true;
-}
-
-/** Returns the sensor temperature in °C, or -1 when unreadable or out of range. */
-double ReadCelsius(IOHIDServiceClientRef service) {
-  CFRef<IOHIDEventRef> event(IOHIDServiceClientCopyEvent(service, kIOHIDEventTypeTemperature, 0, 0));
-  if (!event) return -1.0;
-  const double temp = IOHIDEventGetFloatValue(event.get(), IOHIDEventFieldBase(kIOHIDEventTypeTemperature));
-  return (temp > kMinValidCelsius && temp < kMaxValidCelsius) ? temp : -1.0;
-}
-
-/** Returns SoC die average / peak, NAND and battery temperatures via IOHIDEventSystemClient. */
 napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
-  AddonState* state = GetState(env, info);
+  size_t argc = 1;
+  napi_value argv[1] = {nullptr};
+  AddonState* state = GetState(env, info, &argc, argv);
   if (state == nullptr) return nullptr;
-  if (!EnsureThermalSensors(*state)) return Null(env);
 
-  double sum_tdie = 0.0;
-  double max_tdie = 0.0;
-  const char* max_sensor_name = "tdie";
-  int tdie_count = 0;
-  double nand_temp = -1.0;
-  double battery_temp = -1.0;
-
-  for (const Sensor& sensor : state->sensors) {
-    switch (sensor.kind) {
-      case SensorKind::Die: {
-        const double temp = ReadCelsius(sensor.service);
-        if (temp > 0.0) {
-          sum_tdie += temp;
-          ++tdie_count;
-          if (temp > max_tdie) {
-            max_tdie = temp;
-            max_sensor_name = sensor.name.c_str();
-          }
-        }
-        break;
-      }
-      case SensorKind::Nand:
-        if (nand_temp < 0.0) nand_temp = ReadCelsius(sensor.service);
-        break;
-      case SensorKind::Battery:
-        if (battery_temp < 0.0) battery_temp = ReadCelsius(sensor.service);
-        break;
+  double max_age_ms = kDefaultThermalMaxAgeMs;
+  if (argc >= 1) {
+    napi_valuetype type = napi_undefined;
+    NAPI_CALL(env, napi_typeof(env, argv[0], &type));
+    if (type == napi_number) {
+      NAPI_CALL(env, napi_get_value_double(env, argv[0], &max_age_ms));
+    } else if (type != napi_undefined) {
+      napi_throw_type_error(env, nullptr, "getDieTemperature(maxAgeMs): maxAgeMs must be a number");
+      return nullptr;
     }
   }
+  if (!(max_age_ms >= 0.0)) max_age_ms = 0.0;  // also catches NaN
+  if (max_age_ms > 3600e3) max_age_ms = 3600e3;
 
-  if (tdie_count == 0) {
-    // Sensors went away (e.g. HID event server restarted): rebuild everything on the next tick.
-    ResetThermalSensors(*state);
-    state->next_thermal_scan = Clock::time_point{};
-    return Null(env);
-  }
+  const ThermalReading reading = state->thermal.Get(
+      std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(max_age_ms)));
+  if (!reading.valid) return Null(env);
 
   char label[64];
-  std::snprintf(label, sizeof(label), "%d sensors (max %.1f C)", tdie_count, max_tdie);
+  std::snprintf(label, sizeof(label), "%d sensors (max %.1f C)", reading.die_count, reading.peak_celsius);
 
   JsObject obj(env);
-  obj.Double("tempCelsius", sum_tdie / tdie_count)
-      .Double("peakCelsius", max_tdie)
-      .Str("peakSensor", max_sensor_name)
-      .Int("dieCount", tdie_count)
+  obj.Double("tempCelsius", reading.avg_celsius)
+      .Double("peakCelsius", reading.peak_celsius)
+      .Str("peakSensor", reading.peak_sensor.c_str())
+      .Int("dieCount", reading.die_count)
       .Str("sensorName", "Apple Silicon Die")
       .Str("sensorLabel", label);
-  if (nand_temp > 0.0) obj.Double("nandCelsius", nand_temp);
-  if (battery_temp > 0.0) obj.Double("batteryCelsius", battery_temp);
+  if (reading.nand_celsius > 0.0) obj.Double("nandCelsius", reading.nand_celsius);
+  if (reading.battery_celsius > 0.0) obj.Double("batteryCelsius", reading.battery_celsius);
   return obj.Finish();
 }
 

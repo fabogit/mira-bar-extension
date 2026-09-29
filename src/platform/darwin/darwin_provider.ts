@@ -26,6 +26,12 @@ const TICK_STATES = 4;
  */
 const MIN_TICKS_PER_CORE = 5;
 
+/**
+ * Maximum age of a temperature reading. A full HID pass costs ~16 ms of IPC on an M4 and runs on a
+ * native background thread; refreshing every 5 s keeps it around 0.3% of one core.
+ */
+const TEMP_MAX_AGE_MS = 5_000;
+
 /** How often a missing battery is re-probed (desktop Macs never gain one; laptops may fail transiently). */
 const BATTERY_RECHECK_MS = 60_000;
 
@@ -297,12 +303,13 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
 
   /**
    * Samples Apple Silicon SoC die, NAND flash, and battery temperatures via IOHIDEventSystemClient.
+   * Non-blocking: returns the latest background reading, at most TEMP_MAX_AGE_MS (+ one pass) old.
    *
    * @returns Synthesized thermal metrics in degrees Celsius, or `null` if unprivileged HID is unavailable.
    */
   public sampleTemp(): CpuTempInfo | null {
     if (this.nativeAddon) {
-      return this.nativeAddon.getDieTemperature();
+      return this.nativeAddon.getDieTemperature(TEMP_MAX_AGE_MS);
     }
     return null;
   }

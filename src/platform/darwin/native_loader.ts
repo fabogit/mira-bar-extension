@@ -67,11 +67,15 @@ export interface DarwinNativeAddon {
   };
 
   /**
-   * Queries unprivileged IOHIDEventSystemClient for SoC die, NAND SSD, and battery temperatures.
+   * Returns the latest SoC die, NAND SSD and battery temperatures from IOHIDEventSystemClient.
    *
+   * Sensors are read on a native background thread (~16 ms per pass on an M4), so this call does
+   * not block after the first one: a new pass starts when the latest reading is older than `maxAgeMs`.
+   *
+   * @param maxAgeMs - Maximum age of the returned reading before a background refresh is requested (default 5000).
    * @returns Synthesized thermal metrics in degrees Celsius, or `null` if sensors are inaccessible.
    */
-  getDieTemperature(): {
+  getDieTemperature(maxAgeMs?: number): {
     tempCelsius: number;
     peakCelsius: number;
     peakSensor: string;
