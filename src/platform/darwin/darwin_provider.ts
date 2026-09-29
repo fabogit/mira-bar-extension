@@ -16,6 +16,18 @@ interface CoreTicks {
   nice: number;
 }
 
+/** Counters per core in the native tick buffer: user, system, idle, nice (processor_cpu_load_info order). */
+const TICK_STATES = 4;
+
+/** How often a missing battery is re-probed (desktop Macs never gain one; laptops may fail transiently). */
+const BATTERY_RECHECK_MS = 60_000;
+
+const PRESSURE_LEVELS: Record<number, MemoryInfo['pressureLevel']> = {
+  1: 'Normal',
+  2: 'Warning',
+  4: 'Critical',
+};
+
 /**
  * macOS Apple Silicon (M-Series) telemetry provider.
  *
@@ -26,30 +38,48 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
   public readonly platformName = 'darwin' as const;
 
   private nativeAddon: DarwinNativeAddon | null;
-  private prevTicks: CoreTicks[] | null = null;
-  private lastCpuResult: CpuUsageInfo = { overallPercent: 0, perCorePercent: [] };
   private topology: { model: string; totalCores: number; pCores: number; eCores: number };
+  private lastCpuResult: CpuUsageInfo = { overallPercent: 0, perCorePercent: [] };
+
+  /** Core architecture per logical core, computed once (E-cores are indexed first on Apple Silicon). */
+  private readonly coreTypes: ('P' | 'E')[] | undefined;
+
+  /** Double-buffered native tick counters: swapped every sample, never reallocated unless cores change. */
+  private curTicks = new Uint32Array(0);
+  private prevTicks = new Uint32Array(0);
+  private prevCoreCount = 0;
+
+  /** Previous os.cpus() sample, used only when the native addon is unavailable. */
+  private prevFallbackTicks: CoreTicks[] | null = null;
+
+  private batteryPresent = false;
+  private batteryRecheckAt = 0;
 
   constructor() {
     this.nativeAddon = loadDarwinNativeAddon();
     if (this.nativeAddon) {
       this.topology = this.nativeAddon.getCpuTopology();
-      this.prevTicks = this.nativeAddon.getCpuTicks();
       const coreTypes: ('P' | 'E')[] = [];
-      const perCorePercent: number[] = [];
       for (let i = 0; i < this.topology.totalCores; i++) {
-        perCorePercent.push(0);
         if (this.topology.eCores > 0 && i < this.topology.eCores) {
           coreTypes.push('E');
         } else if (this.topology.pCores > 0) {
           coreTypes.push('P');
         }
       }
+      this.coreTypes = coreTypes.length > 0 ? coreTypes : undefined;
       this.lastCpuResult = {
         overallPercent: 0,
-        perCorePercent,
-        coreTypes: coreTypes.length > 0 ? coreTypes : undefined,
+        perCorePercent: new Array<number>(this.topology.totalCores).fill(0),
+        coreTypes: this.coreTypes,
       };
+      // Prime the tick baseline so the first real sample already has a delta.
+      const cores = this.readNativeTicks(this.nativeAddon);
+      if (cores > 0) {
+        this.swapTickBuffers(cores);
+      }
+      this.batteryPresent = this.nativeAddon.getBatteryStats().isAvailable;
+      this.batteryRecheckAt = Date.now() + BATTERY_RECHECK_MS;
     } else {
       const cpus = os.cpus();
       this.topology = {
@@ -58,7 +88,8 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
         pCores: 0,
         eCores: 0,
       };
-      this.prevTicks = cpus.map((c) => ({
+      this.coreTypes = undefined;
+      this.prevFallbackTicks = cpus.map((c) => ({
         user: c.times.user,
         system: c.times.sys,
         idle: c.times.idle,
@@ -66,9 +97,33 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
       }));
       this.lastCpuResult = {
         overallPercent: 0,
-        perCorePercent: new Array(this.topology.totalCores).fill(0),
+        perCorePercent: new Array<number>(this.topology.totalCores).fill(0),
       };
     }
+  }
+
+  /**
+   * Reads native tick counters into `curTicks`, growing both buffers if the core count exceeds them.
+   *
+   * @returns Logical core count, or 0 if the kernel query failed.
+   */
+  private readNativeTicks(addon: DarwinNativeAddon): number {
+    let cores = addon.getCpuTicks(this.curTicks);
+    if (cores * TICK_STATES > this.curTicks.length) {
+      this.curTicks = new Uint32Array(cores * TICK_STATES);
+      this.prevTicks = new Uint32Array(cores * TICK_STATES);
+      this.prevCoreCount = 0;
+      cores = addon.getCpuTicks(this.curTicks);
+    }
+    return cores;
+  }
+
+  /** Makes the sample just read the baseline for the next one, without copying. */
+  private swapTickBuffers(cores: number): void {
+    const previous = this.prevTicks;
+    this.prevTicks = this.curTicks;
+    this.curTicks = previous;
+    this.prevCoreCount = cores;
   }
 
   /**
@@ -90,29 +145,29 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
    */
   public sampleCpu(): CpuUsageInfo | null {
     if (this.nativeAddon) {
-      const currentTicks = this.nativeAddon.getCpuTicks();
-      if (!currentTicks || currentTicks.length === 0) {
+      const cores = this.readNativeTicks(this.nativeAddon);
+      if (cores === 0) {
         return this.sampleCpuFallback();
       }
 
-      if (!this.prevTicks || this.prevTicks.length !== currentTicks.length) {
-        this.prevTicks = currentTicks;
+      if (cores !== this.prevCoreCount) {
+        this.swapTickBuffers(cores);
         return this.lastCpuResult;
       }
 
+      const cur = this.curTicks;
+      const prev = this.prevTicks;
       let totalActiveDelta = 0;
       let totalAllDelta = 0;
-      const perCorePercent: number[] = [];
-      const coreTypes: ('P' | 'E')[] = [];
+      const perCorePercent = new Array<number>(cores);
 
-      for (let i = 0; i < currentTicks.length; i++) {
-        const cur = currentTicks[i]!;
-        const prev = this.prevTicks[i]!;
-
-        const uDelta = Math.max(0, cur.user - prev.user);
-        const sDelta = Math.max(0, cur.system - prev.system);
-        const nDelta = Math.max(0, cur.nice - prev.nice);
-        const iDelta = Math.max(0, cur.idle - prev.idle);
+      for (let i = 0; i < cores; i++) {
+        const base = i * TICK_STATES;
+        // Mach counters are 32-bit and wrap: `>>> 0` yields the correct modular delta.
+        const uDelta = (cur[base]! - prev[base]!) >>> 0;
+        const sDelta = (cur[base + 1]! - prev[base + 1]!) >>> 0;
+        const iDelta = (cur[base + 2]! - prev[base + 2]!) >>> 0;
+        const nDelta = (cur[base + 3]! - prev[base + 3]!) >>> 0;
 
         const activeDelta = uDelta + sDelta + nDelta;
         const coreTotalDelta = activeDelta + iDelta;
@@ -120,21 +175,12 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
         totalActiveDelta += activeDelta;
         totalAllDelta += coreTotalDelta;
 
-        const coreUsage = coreTotalDelta > 0
+        perCorePercent[i] = coreTotalDelta > 0
           ? Math.max(0, Math.min(100, (activeDelta / coreTotalDelta) * 100))
           : 0;
-
-        perCorePercent.push(coreUsage);
-
-        // Map core architecture: on Apple Silicon, E-cores are indexed first (0..eCores-1), followed by P-cores
-        if (this.topology.eCores > 0 && i < this.topology.eCores) {
-          coreTypes.push('E');
-        } else if (this.topology.pCores > 0) {
-          coreTypes.push('P');
-        }
       }
 
-      this.prevTicks = currentTicks;
+      this.swapTickBuffers(cores);
 
       // Handle wake-from-sleep or clock skew
       let overallPercent = this.lastCpuResult.overallPercent;
@@ -145,7 +191,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
       this.lastCpuResult = {
         overallPercent,
         perCorePercent,
-        coreTypes: coreTypes.length > 0 ? coreTypes : undefined,
+        coreTypes: this.coreTypes,
       };
 
       return this.lastCpuResult;
@@ -172,8 +218,8 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
       nice: c.times.nice,
     }));
 
-    if (!this.prevTicks || this.prevTicks.length !== currentTicks.length) {
-      this.prevTicks = currentTicks;
+    if (!this.prevFallbackTicks || this.prevFallbackTicks.length !== currentTicks.length) {
+      this.prevFallbackTicks = currentTicks;
       return this.lastCpuResult;
     }
 
@@ -183,7 +229,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
 
     for (let i = 0; i < currentTicks.length; i++) {
       const cur = currentTicks[i]!;
-      const prev = this.prevTicks[i]!;
+      const prev = this.prevFallbackTicks[i]!;
 
       const activeDelta = Math.max(0, (cur.user - prev.user) + (cur.system - prev.system) + (cur.nice - prev.nice));
       const idleDelta = Math.max(0, cur.idle - prev.idle);
@@ -196,7 +242,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
       perCorePercent.push(coreUsage);
     }
 
-    this.prevTicks = currentTicks;
+    this.prevFallbackTicks = currentTicks;
 
     let overallPercent = this.lastCpuResult.overallPercent;
     if (totalAllDelta > 0) {
@@ -274,7 +320,8 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
           wiredBytes: stats.wiredBytes,
           compressedBytes: stats.compressedBytes,
           inactiveBytes: stats.inactiveBytes,
-          pressurePercent: stats.pressurePercent,
+          pressurePercent: stats.pressurePercent >= 0 ? stats.pressurePercent : undefined,
+          pressureLevel: PRESSURE_LEVELS[stats.pressureLevel],
         };
       }
     }
@@ -305,6 +352,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
   public sampleBattery(): BatteryInfo | null {
     if (this.nativeAddon) {
       const batt = this.nativeAddon.getBatteryStats();
+      this.batteryPresent = batt.isAvailable;
       if (batt.isAvailable) {
         return {
           percent: batt.percent,
@@ -324,14 +372,21 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
   }
 
   /**
-   * Checks whether battery hardware is present and reporting to the IOKit registry.
+   * Checks whether battery hardware is present, without querying IOKit on every tick.
+   *
+   * The result is cached; a missing battery is re-probed at most every BATTERY_RECHECK_MS.
    *
    * @returns `true` if battery is detected, `false` on desktop Macs (Mac mini, Mac Studio, Mac Pro).
    */
   public isBatteryAvailable(): boolean {
-    if (this.nativeAddon) {
-      return this.nativeAddon.getBatteryStats().isAvailable;
+    if (!this.nativeAddon || this.batteryPresent) {
+      return this.batteryPresent;
     }
-    return false;
+    const now = Date.now();
+    if (now >= this.batteryRecheckAt) {
+      this.batteryRecheckAt = now + BATTERY_RECHECK_MS;
+      this.batteryPresent = this.nativeAddon.getBatteryStats().isAvailable;
+    }
+    return this.batteryPresent;
   }
 }

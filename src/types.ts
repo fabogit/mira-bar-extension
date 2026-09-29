@@ -181,9 +181,14 @@ export interface MemoryInfo {
   inactiveBytes?: number;
 
   /**
-   * System memory pressure index (0..100; e.g. Darwin vm.memory_pressure; optional).
+   * Memory pressure in percent (0..100; Darwin: 100 - kern.memorystatus_level; optional).
    */
   pressurePercent?: number;
+
+  /**
+   * Kernel memory pressure state (optional; Darwin: kern.memorystatus_vm_pressure_level).
+   */
+  pressureLevel?: 'Normal' | 'Warning' | 'Critical';
 }
 
 /**

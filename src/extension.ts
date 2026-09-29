@@ -696,7 +696,8 @@ export function activate(context: vscode.ExtensionContext): void {
           ];
 
           if (mem.pressurePercent !== undefined) {
-            const pressureLabel = mem.pressurePercent < 60 ? 'Normal' : mem.pressurePercent < 80 ? 'Warning' : 'Critical';
+            const pressureLabel = mem.pressureLevel
+              ?? (mem.pressurePercent < 60 ? 'Normal' : mem.pressurePercent < 80 ? 'Warning' : 'Critical');
             statusRows.push([
               'Pressure',
               `${renderBar(mem.pressurePercent, 6, false)}  ${mem.pressurePercent.toFixed(1).padStart(5, ' ')}%`,

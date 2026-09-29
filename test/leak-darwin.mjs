@@ -2,7 +2,7 @@
 //
 // Calls every exported native function in a tight loop and reports, per function:
 //   - average cost per call (µs)             -> how much each tick blocks the Extension Host thread
-//   - RSS growth across batches (after GC)   -> steady linear growth = native leak
+//   - RSS growth across batches (after GC)   -> steady growth after the first (warm-up) batch = native leak
 //   - Mach port refs of this process (lsmp)   -> growth of the "host" send right = mach_host_self() leak
 //
 // Usage (on macOS, after `pnpm run compile:native`):
@@ -56,6 +56,8 @@ function kb(bytes) {
 }
 
 const functions = ['getCpuTicks', 'getCpuTopology', 'getMemoryStats', 'getBatteryStats', 'getDieTemperature'];
+// getCpuTicks(out) fills a caller-owned buffer (4 counters per core); 256 cores is plenty.
+const argsFor = { getCpuTicks: [new Uint32Array(256 * 4)] };
 
 console.log(`Addon: ${addonPath}`);
 console.log(`PID:   ${process.pid}`);
@@ -65,11 +67,12 @@ const portsBefore = hostPortLines();
 const results = [];
 
 for (const name of functions) {
-  const fn = addon[name];
-  if (typeof fn !== 'function') {
+  if (typeof addon[name] !== 'function') {
     console.log(`- ${name}: not exported, skipped`);
     continue;
   }
+  const args = argsFor[name] ?? [];
+  const fn = () => addon[name](...args);
 
   // Warm-up: lets malloc zones / CF caches settle before measuring.
   for (let i = 0; i < 200; i++) fn();
@@ -77,6 +80,7 @@ for (const name of functions) {
 
   const rssSamples = [process.memoryUsage().rss];
   let calls = 0;
+  let callsInFirstBatch = 0;
   const perBatch = Math.ceil(ITERATIONS / BATCHES);
   const t0 = process.hrtime.bigint();
 
@@ -89,20 +93,26 @@ for (const name of functions) {
     }
     gc();
     rssSamples.push(process.memoryUsage().rss);
+    if (b === 0) callsInFirstBatch = calls;
   }
 
   const elapsedUs = Number(process.hrtime.bigint() - t0) / 1000;
   const growth = rssSamples[rssSamples.length - 1] - rssSamples[0];
-  const monotonic = rssSamples.every((v, i) => i === 0 || v >= rssSamples[i - 1]);
-  const bytesPerCall = growth / calls;
-  const suspicious = monotonic && bytesPerCall > LEAK_THRESHOLD_BYTES_PER_CALL;
+  // The first batch absorbs one-off V8/JIT/malloc warm-up (a step, then flat): judge only the
+  // growth after it. A real leak keeps growing batch after batch.
+  const steady = rssSamples.slice(1);
+  const steadyGrowth = steady[steady.length - 1] - steady[0];
+  const steadyCalls = calls - callsInFirstBatch;
+  const growing = steady.every((v, i) => i === 0 || v >= steady[i - 1]) && steadyGrowth > 0;
+  const bytesPerCall = steadyCalls > 0 ? steadyGrowth / steadyCalls : 0;
+  const suspicious = growing && bytesPerCall > LEAK_THRESHOLD_BYTES_PER_CALL;
 
   results.push({
     function: name,
     calls,
     'µs/call': (elapsedUs / calls).toFixed(1),
     'RSS Δ (KB)': kb(growth),
-    'B/call': bytesPerCall.toFixed(1),
+    'B/call (steady)': bytesPerCall.toFixed(1),
     trend: rssSamples.map((v) => kb(v - rssSamples[0])).join(' → '),
     verdict: suspicious ? 'LEAK?' : 'ok',
   });
