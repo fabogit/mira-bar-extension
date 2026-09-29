@@ -5,6 +5,7 @@ import { DiskProvider } from './disk/disk_provider.js';
 import type { BatteryInfo, DiskDriveInfo } from './types.js';
 
 let updateTimer: NodeJS.Timeout | null = null;
+let disposed = false;
 let isUpdating = false;
 let tickCounter = 0;
 let cachedBattery: BatteryInfo | null = null;
@@ -20,6 +21,19 @@ interface StatusBarWidgets {
 }
 
 let widgets: StatusBarWidgets | null = null;
+
+/**
+ * Disposes the currently active status bar widgets, if any.
+ * Registered once in `context.subscriptions`, so recreated widgets never accumulate there.
+ */
+function disposeWidgets(): void {
+  if (widgets) {
+    for (const item of Object.values(widgets)) {
+      item.dispose();
+    }
+    widgets = null;
+  }
+}
 const visibleSet = new WeakSet<vscode.StatusBarItem>();
 
 /**
@@ -350,13 +364,11 @@ function getTooltipFooter(
 /**
  * Creates individual StatusBarItem widgets with sequential priorities.
  *
- * @param context - Extension context for subscriptions.
  * @param alignment - Status bar alignment side (Left or Right).
  * @param basePriority - Base priority number for positioning.
  * @returns Object holding all 6 StatusBarItem instances.
  */
 function createWidgets(
-  context: vscode.ExtensionContext,
   alignment: 'Left' | 'Right',
   basePriority: number
 ): StatusBarWidgets {
@@ -374,7 +386,6 @@ function createWidgets(
 
   for (const item of Object.values(w)) {
     item.command = 'resmon.refresh';
-    context.subscriptions.push(item);
   }
 
   return w;
@@ -391,8 +402,10 @@ function createWidgets(
 export function activate(context: vscode.ExtensionContext): void {
   console.log('[Resource Monitor NG] Activated successfully');
 
+  disposed = false;
   let currentConfig = getConfig();
-  widgets = createWidgets(context, currentConfig.alignment, currentConfig.priority);
+  widgets = createWidgets(currentConfig.alignment, currentConfig.priority);
+  context.subscriptions.push({ dispose: disposeWidgets });
 
   const platformProvider = createPlatformProvider();
   const diskProvider = new DiskProvider();
@@ -407,7 +420,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * @param forceAll - When true, bypasses tick decimation and forces all providers and tooltips to refresh.
    */
   async function update(forceAll = false): Promise<void> {
-    if (isUpdating || !widgets) {
+    if (disposed || isUpdating || !widgets) {
       return;
     }
     isUpdating = true;
@@ -577,8 +590,8 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       // 3. CPU & System Temperature (4-metric synthesis on Darwin)
-      const cpuTemp = platformProvider.sampleTemp();
-      if (cpuTemp && config.showCpuTemp) {
+      const cpuTemp = config.showCpuTemp ? platformProvider.sampleTemp() : null;
+      if (cpuTemp) {
         const tempStr = padNum(cpuTemp.tempCelsius.toFixed(2), 5);
         let tempMd: string | null = null;
         if (updateTooltips) {
@@ -731,7 +744,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       // 5. Battery (with Time Remaining estimation)
-      if (platformProvider.isBatteryAvailable() && config.showBattery) {
+      if (config.showBattery && platformProvider.isBatteryAvailable()) {
         if (shouldSampleSlow || cachedBattery === null) {
           cachedBattery = platformProvider.sampleBattery();
         }
@@ -903,13 +916,20 @@ export function activate(context: vscode.ExtensionContext): void {
    * Schedules the subsequent update tick using an unreferenced timer.
    */
   function scheduleNext(): void {
-    const config = getConfig();
     if (updateTimer) {
       clearTimeout(updateTimer);
+      updateTimer = null;
     }
+    if (disposed) {
+      return;
+    }
+    const config = getConfig();
     updateTimer = setTimeout(async () => {
       await update();
-      scheduleNext();
+      // deactivate() may have run while update() was awaiting: never re-arm after dispose.
+      if (!disposed) {
+        scheduleNext();
+      }
     }, config.updateFrequencyMs);
     updateTimer.unref();
   }
@@ -977,13 +997,9 @@ export function activate(context: vscode.ExtensionContext): void {
           newConfig.alignment !== currentConfig.alignment
         ) {
           // Dispose and recreate widgets if layout alignment or base priority changed
-          if (widgets) {
-            for (const item of Object.values(widgets)) {
-              item.dispose();
-            }
-          }
+          disposeWidgets();
           currentConfig = newConfig;
-          widgets = createWidgets(context, currentConfig.alignment, currentConfig.priority);
+          widgets = createWidgets(currentConfig.alignment, currentConfig.priority);
         }
 
         cachedBattery = null;
@@ -1004,16 +1020,12 @@ export function activate(context: vscode.ExtensionContext): void {
  * Cleans up extension resources and timer handles when the extension is deactivated.
  */
 export function deactivate(): void {
+  disposed = true;
   if (updateTimer) {
     clearTimeout(updateTimer);
     updateTimer = null;
   }
-  if (widgets) {
-    for (const item of Object.values(widgets)) {
-      item.dispose();
-    }
-    widgets = null;
-  }
+  disposeWidgets();
   cachedBattery = null;
   cachedDisks = [];
   tickCounter = 0;
