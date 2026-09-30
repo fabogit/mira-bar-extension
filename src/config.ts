@@ -31,11 +31,40 @@ export function readWidgetOrder(raw: unknown): TooltipSection[] {
   return order;
 }
 
+/** Bounds of every interval (status bar and tooltip), in milliseconds. */
+export const MIN_INTERVAL_MS = 200;
+export const MAX_INTERVAL_MS = 3_600_000;
+
 /**
- * Default refresh interval per section, in milliseconds. It sets how fresh each section is: the Static
- * tooltip auto-refresh interval and, for battery, disk and temperature, also how often they are sampled.
+ * Measured minimum status bar interval per section, in milliseconds: the interval at which reading the
+ * section's source costs its share of the project budget (0.5% of one core, shared by the 6 sections,
+ * so all of them at their minimum stay within it). Each read happens at the status bar interval, so
+ * the minimum applies there; tooltips only reuse the latest reading.
+ *
+ * Source: test/bench-darwin.mjs on an Apple M4 (see docs/ARCHITECTURE.md, "Refresh floors"). Values
+ * below MIN_INTERVAL_MS mean the source is cheap enough for the UI minimum.
  */
-export const DEFAULT_SECTION_REFRESH_MS: Readonly<Record<TooltipSection, number>> = {
+export const MEASURED_MIN_STATUS_BAR_MS: Readonly<Record<TooltipSection, number>> = {
+  cpu: MIN_INTERVAL_MS,
+  freq: MIN_INTERVAL_MS,
+  temp: 2000,
+  mem: MIN_INTERVAL_MS,
+  battery: 2000,
+  disk: 2000,
+};
+
+/** Default status bar interval per section: how often it reads its source and updates its text. */
+export const DEFAULT_STATUS_BAR_MS: Readonly<Record<TooltipSection, number>> = {
+  cpu: 2000,
+  freq: 2000,
+  temp: 5000,
+  mem: 2000,
+  battery: 10_000,
+  disk: 10_000,
+};
+
+/** Default tooltip interval per section (Static mode with auto-refresh). */
+export const DEFAULT_TOOLTIP_MS: Readonly<Record<TooltipSection, number>> = {
   cpu: 5000,
   freq: 5000,
   temp: 5000,
@@ -44,33 +73,7 @@ export const DEFAULT_SECTION_REFRESH_MS: Readonly<Record<TooltipSection, number>
   disk: 10_000,
 };
 
-export const MIN_SECTION_REFRESH_MS = 200;
-export const MAX_SECTION_REFRESH_MS = 3_600_000;
-/** A full temperature pass costs ~16 ms of HID IPC (Apple M4), so it is never sampled more often than every 2 s. */
-export const MIN_TEMP_REFRESH_MS = 2000;
-/**
- * Battery (IOPowerSources / IOKit) and disk (statfs) values change slowly: they are not read more often
- * than every 2 s unless resmon.allowFastBatteryDiskRefresh unlocks the 200 ms minimum.
- */
-export const MIN_BATTERY_DISK_REFRESH_MS = 2000;
-
-/**
- * Minimum refresh interval of a section.
- *
- * @param section - Status bar section.
- * @param allowFastBatteryDisk - resmon.allowFastBatteryDiskRefresh.
- */
-export function minSectionRefreshMs(section: TooltipSection, allowFastBatteryDisk: boolean): number {
-  if (section === 'temp') {
-    return MIN_TEMP_REFRESH_MS;
-  }
-  if ((section === 'battery' || section === 'disk') && !allowFastBatteryDisk) {
-    return MIN_BATTERY_DISK_REFRESH_MS;
-  }
-  return MIN_SECTION_REFRESH_MS;
-}
-
-/** Status bar tick bounds, in milliseconds. */
+/** Bounds of the pre-release single status bar interval (resmon.updatefrequencyms, now a fallback). */
 export const MIN_UPDATE_FREQUENCY_MS = 200;
 export const MAX_UPDATE_FREQUENCY_MS = 15_000;
 
@@ -79,55 +82,90 @@ export const MIN_PRIORITY = -10_000;
 export const MAX_PRIORITY = 10_000;
 
 /**
- * Validates the per-section refresh object from settings, falling back to defaults for missing or
- * invalid entries and clamping values to [minimum, 1 h] in whole milliseconds. Minimums: 200 ms;
- * temperature 2 s; battery and disk 2 s unless `allowFastBatteryDisk`. A stored value below a locked
- * minimum is kept in settings and applies again if the minimum is unlocked.
+ * Minimum status bar interval of a section.
+ *
+ * @param section - Status bar section.
+ * @param allowFast - resmon.allowFastRefresh: lowers every minimum to MIN_INTERVAL_MS.
  */
-export function readSectionRefreshMs(raw: unknown, allowFastBatteryDisk = false): Record<TooltipSection, number> {
-  const result = { ...DEFAULT_SECTION_REFRESH_MS };
-  if (raw !== null && typeof raw === 'object') {
-    const values = raw as Record<string, unknown>;
-    for (const section of TOOLTIP_SECTIONS) {
-      const value = values[section];
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        const min = minSectionRefreshMs(section, allowFastBatteryDisk);
-        result[section] = Math.round(Math.min(MAX_SECTION_REFRESH_MS, Math.max(min, value)));
-      }
-    }
+export function minStatusBarMs(section: TooltipSection, allowFast: boolean): number {
+  return allowFast ? MIN_INTERVAL_MS : Math.max(MIN_INTERVAL_MS, MEASURED_MIN_STATUS_BAR_MS[section]);
+}
+
+/**
+ * Validates a per-section interval object: missing or invalid entries take `fallback[section]`, and
+ * values are rounded and clamped to [min(section), MAX_INTERVAL_MS].
+ *
+ * @param raw - Untrusted value (settings or panel).
+ * @param fallback - Value per section when `raw` has none.
+ * @param min - Minimum per section.
+ */
+export function readIntervals(
+  raw: unknown,
+  fallback: Readonly<Record<TooltipSection, number>>,
+  min: (section: TooltipSection) => number = () => MIN_INTERVAL_MS
+): Record<TooltipSection, number> {
+  const values = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const result = {} as Record<TooltipSection, number>;
+  for (const section of TOOLTIP_SECTIONS) {
+    const value = values[section];
+    const chosen = typeof value === 'number' && Number.isFinite(value) ? value : fallback[section];
+    result[section] = Math.round(Math.min(MAX_INTERVAL_MS, Math.max(min(section), chosen)));
   }
   return result;
 }
 
-/**
- * Raw per-section refresh value: resmon.refreshMs when the user set it, otherwise the deprecated
- * resmon.refreshSeconds (pre-release, seconds) converted to milliseconds, otherwise the default.
- */
-function rawSectionRefresh(config: vscode.WorkspaceConfiguration): unknown {
-  const inspected = config.inspect<unknown>('refreshMs');
-  const userMs = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
-  if (userMs !== undefined) {
-    return userMs;
-  }
-  const legacy = config.get<unknown>('refreshSeconds');
-  if (legacy !== null && typeof legacy === 'object' && !Array.isArray(legacy)) {
-    const converted: Record<string, number> = {};
-    for (const [section, seconds] of Object.entries(legacy as Record<string, unknown>)) {
-      if (typeof seconds === 'number' && Number.isFinite(seconds)) {
-        converted[section] = seconds * 1000;
-      }
+/** Value the user set for a key (any scope), or undefined when only the default applies. */
+function userValue(config: vscode.WorkspaceConfiguration, key: string): unknown {
+  const inspected = config.inspect<unknown>(key);
+  return inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
+}
+
+/** Pre-release per-section values (resmon.refreshMs, or resmon.refreshSeconds in seconds), if set. */
+function legacySectionMs(config: vscode.WorkspaceConfiguration): Partial<Record<TooltipSection, number>> {
+  const out: Partial<Record<TooltipSection, number>> = {};
+  const ms = userValue(config, 'refreshMs');
+  const seconds = userValue(config, 'refreshSeconds');
+  for (const section of TOOLTIP_SECTIONS) {
+    const m = ms !== null && typeof ms === 'object' ? (ms as Record<string, unknown>)[section] : undefined;
+    const sec = seconds !== null && typeof seconds === 'object' ? (seconds as Record<string, unknown>)[section] : undefined;
+    if (typeof m === 'number' && Number.isFinite(m)) {
+      out[section] = m;
+    } else if (typeof sec === 'number' && Number.isFinite(sec)) {
+      out[section] = sec * 1000;
     }
-    return converted;
   }
-  return config.get<unknown>('refreshMs');
+  return out;
 }
 
 /**
- * Per-section refresh as stored by the user, clamped only to the fixed floors (200 ms, temperature
- * 2000 ms): values below the battery / disk lock are kept, for the settings panel.
+ * Stored per-section intervals with their fallbacks, before any minimum is applied:
+ * - status bar: resmon.statusBarMs; else, for CPU, load and memory, the older single interval
+ *   resmon.updatefrequencyms; for temperature, battery and disk, the pre-release resmon.refreshMs
+ *   (their sampling interval then), else the default or updatefrequencyms if slower; else the default.
+ * - tooltip: resmon.tooltipMs; else resmon.refreshMs / resmon.refreshSeconds; else the default.
  */
-export function readStoredSectionRefreshMs(): Record<TooltipSection, number> {
-  return readSectionRefreshMs(rawSectionRefresh(vscode.workspace.getConfiguration('resmon')), true);
+export function readStoredIntervals(
+  config: vscode.WorkspaceConfiguration = vscode.workspace.getConfiguration('resmon')
+): { statusBarMs: Record<TooltipSection, number>; tooltipMs: Record<TooltipSection, number> } {
+  const legacy = legacySectionMs(config);
+  const tick = userValue(config, 'updatefrequencyms');
+  const barFallback = { ...DEFAULT_STATUS_BAR_MS };
+  for (const section of ['cpu', 'freq', 'mem'] as const) {
+    if (typeof tick === 'number' && Number.isFinite(tick)) {
+      barFallback[section] = Math.min(MAX_UPDATE_FREQUENCY_MS, Math.max(MIN_UPDATE_FREQUENCY_MS, tick));
+    }
+  }
+  for (const section of ['temp', 'battery', 'disk'] as const) {
+    // Released versions read these on the single tick too: a slower tick keeps them at least that slow.
+    const slowTick = typeof tick === 'number' && Number.isFinite(tick) ? Math.max(barFallback[section], tick) : barFallback[section];
+    barFallback[section] = legacy[section] ?? slowTick;
+  }
+  const tipFallback = { ...DEFAULT_TOOLTIP_MS, ...legacy };
+  // userValue, not get(): get() returns the package.json default object, which would hide the fallbacks.
+  return {
+    statusBarMs: readIntervals(userValue(config, 'statusBarMs'), barFallback),
+    tooltipMs: readIntervals(userValue(config, 'tooltipMs'), tipFallback),
+  };
 }
 
 /**
@@ -154,11 +192,6 @@ export interface ResMonConfig {
   diskFormat: DiskSpaceFormat;
   /** Explicit filesystem mount points to monitor. Empty means active workspace or root. */
   diskDrives: string[];
-  /**
-   * Status bar tick in milliseconds (200-15000): the clock of the extension. Battery, disk and
-   * temperature are sampled at their section interval (sectionRefreshMs), on this tick.
-   */
-  updateFrequencyMs: number;
   /** Display unit for CPU frequency (GHz, MHz, KHz, Hz). */
   freqUnit: FreqUnit;
   /** Display unit for memory metrics (GB, MB, KB, B). */
@@ -167,18 +200,22 @@ export interface ResMonConfig {
   priority: number;
   /** Status bar alignment side ('Left' | 'Right'). */
   alignment: 'Left' | 'Right';
-  /** Tooltip refresh mode: 'Static' (on click, plus optional timed auto-refresh) or 'Live' (every tick). */
+  /** Tooltip mode: 'Static' (on click, plus optional auto-refresh at tooltipMs) or 'Live' (with every read). */
   tooltipMode: 'Static' | 'Live';
-  /** Static mode: whether tooltips auto-refresh at the per-section intervals (sectionRefreshMs). */
+  /** Static mode: whether tooltips refresh automatically at tooltipMs (otherwise only on click). */
   tooltipAutoRefresh: boolean;
   /**
-   * Effective refresh interval per section, in milliseconds (minimums applied, including the battery /
-   * disk lock): Static tooltip auto-refresh interval and, for battery, disk and temperature, their
-   * sampling interval (both tooltip modes).
+   * Effective status bar interval per section (ms, minimums applied): how often the section reads its
+   * source and updates its text. Live tooltips follow it.
    */
-  sectionRefreshMs: Record<TooltipSection, number>;
-  /** Unlocks battery and disk refresh below 2000 ms (performance impact). */
-  allowFastBatteryDiskRefresh: boolean;
+  statusBarMs: Record<TooltipSection, number>;
+  /**
+   * Effective Static tooltip interval per section (ms): the stored value, never shorter than the
+   * section's status bar interval (a tooltip can only show what was read).
+   */
+  tooltipMs: Record<TooltipSection, number>;
+  /** Lowers every measured minimum to MIN_INTERVAL_MS (performance impact, see package.json). */
+  allowFastRefresh: boolean;
   /** CPU core breakdown layout in tooltip: 'Table' (compact side-by-side grid) or 'List' (vertical clusters). */
   cpuTooltipLayout: 'Table' | 'List';
   /** Multi-disk status bar display mode: 'All' or 'MostFull'. */
@@ -194,6 +231,11 @@ export interface ResMonConfig {
  */
 export function getConfig(): ResMonConfig {
   const config = vscode.workspace.getConfiguration('resmon');
+  const allowFastSetting = userValue(config, 'allowFastRefresh') ?? userValue(config, 'allowFastBatteryDiskRefresh');
+  const allowFastRefresh = allowFastSetting === true;
+  const stored = readStoredIntervals(config);
+  const statusBarMs = readIntervals(stored.statusBarMs, DEFAULT_STATUS_BAR_MS, (s) => minStatusBarMs(s, allowFastRefresh));
+  const tooltipMs = readIntervals(stored.tooltipMs, DEFAULT_TOOLTIP_MS, (s) => statusBarMs[s]);
 
   return {
     showCpuUsage: config.get<boolean>('show.cpuusage', true),
@@ -207,18 +249,15 @@ export function getConfig(): ResMonConfig {
     diskFormat: config.get<DiskSpaceFormat>('disk.format', 'PercentRemaining'),
     diskDrives: config.get<string[]>('disk.drives', []),
     diskMultiDisplay: config.get<'All' | 'MostFull'>('disk.multiDisplay', 'All'),
-    updateFrequencyMs: Math.min(
-      MAX_UPDATE_FREQUENCY_MS,
-      Math.max(MIN_UPDATE_FREQUENCY_MS, config.get<number>('updatefrequencyms', 2000))
-    ),
     freqUnit: config.get<FreqUnit>('freq.unit', 'GHz'),
     memUnit: config.get<MemUnit>('mem.unit', 'GB'),
     priority: Math.min(MAX_PRIORITY, Math.max(MIN_PRIORITY, config.get<number>('priority', 100))),
     alignment: config.get<'Left' | 'Right'>('alignment', 'Left'),
     tooltipMode: config.get<'Static' | 'Live'>('tooltip.mode', 'Static'),
     tooltipAutoRefresh: config.get<boolean>('tooltip.autoRefresh', true),
-    sectionRefreshMs: readSectionRefreshMs(rawSectionRefresh(config), config.get<boolean>('allowFastBatteryDiskRefresh', false)),
-    allowFastBatteryDiskRefresh: config.get<boolean>('allowFastBatteryDiskRefresh', false),
+    statusBarMs,
+    tooltipMs,
+    allowFastRefresh,
     cpuTooltipLayout: config.get<'Table' | 'List'>('tooltip.cpuLayout', 'Table'),
     loadFormat: config.get<'Percent' | 'Value'>('loadFormat', 'Percent'),
   };

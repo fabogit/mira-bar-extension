@@ -51,7 +51,8 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
 
   /**
    * Samples CPU package temperature in degrees Celsius from /sys/class/hwmon/ or thermal zones.
-   * Readings younger than `maxAgeMs` are served from cache, as on macOS (resmon.refreshMs.temp).
+   * Readings younger than `maxAgeMs` are served from cache (the monitor passes half the temperature
+   * status bar interval, resmon.statusBarMs.temp), with their age in `ageMs`.
    *
    * @param maxAgeMs - Maximum age of a cached reading (default 0: always read).
    * @returns CpuTempInfo reading and driver name, or `null` if no hwmon sensors exist.
@@ -59,7 +60,7 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
   public sampleTemp(maxAgeMs = 0): CpuTempInfo | null {
     const now = Date.now();
     if (this.lastTempAt !== 0 && now - this.lastTempAt < maxAgeMs) {
-      return this.lastTemp;
+      return this.lastTemp ? { ...this.lastTemp, ageMs: now - this.lastTempAt } : null;
     }
     const reading = this.temp.sample();
     this.lastTemp = reading ? { ...reading, sampleSeq: ++this.tempSeq } : null;

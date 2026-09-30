@@ -117,6 +117,9 @@ export interface CpuTempInfo {
 
   /** Sequence number of the sensor reading: it changes exactly when a new reading is taken. */
   sampleSeq?: number;
+
+  /** Age of the reading in milliseconds when it was returned (readings may be cached). */
+  ageMs?: number;
 }
 
 /**

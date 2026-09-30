@@ -91,6 +91,8 @@ export interface DarwinNativeAddon {
     batteryCelsius?: number;
     /** Number of the background pass that produced this reading (1, 2, ...): changes with every new reading. */
     sampleSeq: number;
+    /** Age of the reading in ms when returned. */
+    ageMs: number;
     /** Wall time of that pass in ms (HID IPC included). */
     passWallMs: number;
     /** CPU time of the worker thread for that pass in ms (the HID server's share is not included). */

@@ -75,6 +75,7 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
   * NAND Flash SSD thermal sensor.
   * Battery cell temperature sensor.
 * **Cost & Background Sampler**: one pass costs ~16-18 ms on an M4, evenly spread (~0.6 ms of IPC per sensor, measured with `native/darwin/tools/hid_bench.cc`). The client and the classified sensor list are cached, and a native worker thread (`ThermalSampler`) performs the passes. `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and wakes the worker when it is older than `maxAgeMs`; only the very first call waits for a reading. The worker is joined when the addon is unloaded.
+* **Freshness**: the monitor requests the pass 100 ms before each temperature read (`requestTempRefresh`, i.e. `getDieTemperature(0)`), so the read shows a reading taken just before it. Each reading reports `sampleSeq`, `ageMs` (the tooltip shows the time of the pass) and the cost of its pass (`passWallMs`, `passCpuMs`), used by `test/bench-darwin.mjs`.
 
 ---
 
@@ -83,8 +84,11 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
 ```
 resource-monitor/
 ├── src/
-│   ├── extension.ts               # Status bar widgets, polling loop, tooltips, commands
-│   ├── config.ts                  # ResMonConfig, settings parsing, refresh limits, widget order
+│   ├── extension.ts               # Activation, commands, settings listener
+│   ├── monitor.ts                 # ResourceMonitor: widgets and per-section scheduler
+│   ├── sections.ts                # Status bar text and tooltip of each section (pure renderers)
+│   ├── format.ts                  # Formatting helpers (bars, ASCII tables, durations)
+│   ├── config.ts                  # ResMonConfig, intervals and measured minimums, widget order
 │   ├── types.ts                   # BatteryInfo, CpuUsageInfo, MemoryInfo, etc.
 │   ├── settings/
 │   │   ├── schema.ts              # Editable settings whitelist, validation, read/write
@@ -110,6 +114,10 @@ resource-monitor/
 ├── test/
 │   ├── smoke-darwin.mjs           # Native assertions on macOS
 │   ├── leak-darwin.mjs            # Native leak & cost probe (µs/call, RSS, Mach ports)
+│   ├── bench-darwin.mjs           # Cost per read and refresh period of each source (refresh minimums)
+│   ├── bench-extension.mjs        # Extension CPU per configuration and per section
+│   ├── extension.test.mjs         # Extension behaviour outside VS Code
+│   ├── harness/                   # Stand-in vscode module and bundle loader
 │   ├── smoke-linux.ts             # Linux smoke test
 │   └── integration.ts             # Cross-platform provider integration test
 └── package.json
@@ -157,6 +165,13 @@ Compilation details:
    Reports µs per call, RSS growth after warm-up and Mach host port references for every exported function. Reference results on an M4 after Phase 1.1: host port refs stable, no RSS growth, `getDieTemperature` ~2 µs (was ~18 ms).
 
 4. **Thermal Sensor Benchmark**: `native/darwin/tools/hid_bench.cc` (build command in the file header) times each sensor read to locate the cost of a sampler pass.
+
+5. **Refresh Minimums**:
+   ```bash
+   pnpm run bench:darwin      # cost per read (thread and whole system), sensor and battery refresh periods
+   pnpm run bench:extension   # extension-host CPU per read, per section
+   ```
+   Their results set `MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts` by the rule in [ARCHITECTURE.md](ARCHITECTURE.md#refresh-floors).
 
 ---
 

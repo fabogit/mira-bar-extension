@@ -98,7 +98,14 @@
             "enum": ["cpu", "freq", "temp", "mem", "battery", "disk"]
           },
           "uniqueItems": true,
-          "default": ["cpu", "freq", "temp", "mem", "battery", "disk"],
+          "default": [
+            "cpu",
+            "freq",
+            "temp",
+            "mem",
+            "battery",
+            "disk"
+          ],
           "description": "Left-to-right order of the status bar widgets: cpu (CPU usage), freq (CPU frequency on Linux, system load on macOS), temp, mem, battery, disk. Missing entries keep their default position."
         },
         "resmon.disk.format": {
@@ -129,12 +136,120 @@
           "default": "All",
           "description": "Multi-disk status bar display mode: 'All' displays compact metrics for all monitored disks; 'MostFull' displays only the single volume with highest utilization."
         },
+        "resmon.statusBarMs": {
+          "type": "object",
+          "default": {
+            "cpu": 2000,
+            "freq": 2000,
+            "temp": 5000,
+            "mem": 2000,
+            "battery": 10000,
+            "disk": 10000
+          },
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "CPU usage: status bar interval: how often it is read and its text updated (ms)."
+            },
+            "freq": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "System load (macOS) or CPU frequency (Linux): status bar interval: how often it is read and its text updated (ms)."
+            },
+            "temp": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Temperature: status bar interval: how often it is read and its text updated (ms). Measured minimum 2000 ms."
+            },
+            "mem": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Memory: status bar interval: how often it is read and its text updated (ms)."
+            },
+            "battery": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Battery: status bar interval: how often it is read and its text updated (ms). Measured minimum 2000 ms."
+            },
+            "disk": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Disk space: status bar interval: how often it is read and its text updated (ms). Measured minimum 2000 ms."
+            }
+          },
+          "markdownDescription": "**Status bar interval per section, in milliseconds**: how often each section reads its data and updates its text. Every read has a cost, so these intervals set the extension's CPU use.\n\n- Range 200 ms to 1 h. Measured minimums: temperature 2000 ms, battery 2000 ms and disk 2000 ms. Below them a section's reads exceed its share of the CPU budget (see `#resmon.allowFastRefresh#`); CPU usage, system load / CPU frequency and memory can go down to 200 ms.\n- Sections: `cpu` CPU usage, `freq` system load (macOS) or CPU frequency (Linux), `temp` temperature, `mem` memory, `battery`, `disk`.\n- A section left out uses its default; for `cpu`, `freq` and `mem` the older `#resmon.updatefrequencyms#` applies if you set it.\n- Live tooltips follow these intervals; Static tooltips use `#resmon.tooltipMs#`."
+        },
+        "resmon.tooltipMs": {
+          "type": "object",
+          "default": {
+            "cpu": 5000,
+            "freq": 5000,
+            "temp": 5000,
+            "mem": 5000,
+            "battery": 10000,
+            "disk": 10000
+          },
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "CPU usage: Static tooltip interval (ms)."
+            },
+            "freq": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "System load (macOS) or CPU frequency (Linux): Static tooltip interval (ms)."
+            },
+            "temp": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Temperature: Static tooltip interval (ms)."
+            },
+            "mem": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Memory: Static tooltip interval (ms)."
+            },
+            "battery": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Battery: Static tooltip interval (ms)."
+            },
+            "disk": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Disk space: Static tooltip interval (ms)."
+            }
+          },
+          "markdownDescription": "**Tooltip interval per section, in milliseconds (Static mode)**: how often each tooltip is rebuilt from the latest reading while `#resmon.tooltip.mode#` is `Static` and `#resmon.tooltip.autoRefresh#` is on.\n\n- A tooltip never refreshes faster than its section's status bar interval (`#resmon.statusBarMs#`): there is no newer reading to show, so a shorter value applies as the status bar interval.\n- Not used in Live mode (tooltips follow the status bar) or with auto-refresh off (tooltips refresh on click).\n- Range 200 ms to 1 h. Sections as in `#resmon.statusBarMs#`."
+        },
+        "resmon.allowFastRefresh": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Performance impact.** Allows status bar intervals below the measured minimums (temperature 2000 ms, battery 2000 ms and disk 2000 ms), down to 200 ms. The minimums are the intervals at which each section's reads use its share of the extension's CPU budget (0.5% of one core for all six sections together); below them, reads cost more CPU time and energy. Values set below a minimum are kept and apply whenever this is on."
+        },
         "resmon.updatefrequencyms": {
           "type": "number",
           "default": 2000,
           "minimum": 200,
           "maximum": 15000,
-          "description": "Status bar interval in milliseconds (200-15000). It is the clock of the extension: in Live mode tooltips follow every tick, and per-section refresh intervals shorter than it take effect once per tick."
+          "markdownDescription": "Deprecated: single status bar interval in milliseconds (200-15000), replaced by `#resmon.statusBarMs#`. Still applies to CPU usage, system load / frequency and memory while `#resmon.statusBarMs#` does not set them.",
+          "deprecationMessage": "Replaced by resmon.statusBarMs (one interval per section). Still applies to cpu, freq and mem until resmon.statusBarMs sets them."
         },
         "resmon.freq.unit": {
           "type": "string",
@@ -181,43 +296,27 @@
             "Live"
           ],
           "default": "Static",
-          "description": "Tooltip refresh mode: 'Static' regenerates tooltips on click and, when auto-refresh is on, at the per-section intervals of 'resmon.refreshMs' (limits hover flicker); 'Live' regenerates them on every status bar tick ('resmon.updatefrequencyms'); battery, disk and temperature when a new reading arrives. Each tooltip shows the time of its last update (with tenths of a second below 1000 ms)."
+          "markdownDescription": "`Static` rebuilds each tooltip on click and, with `#resmon.tooltip.autoRefresh#`, every `#resmon.tooltipMs#` of its section (fewer changes while you hover). `Live` rebuilds it with every status bar update of its section (`#resmon.statusBarMs#`); temperature only when a new sensor reading arrives. Each tooltip shows the time of the reading it displays (with tenths of a second below 1000 ms)."
         },
         "resmon.tooltip.autoRefresh": {
           "type": "boolean",
           "default": true,
-          "description": "Static mode only: automatically regenerate tooltips at the per-section intervals of 'resmon.refreshMs'. When off, Static tooltips refresh only on click."
+          "markdownDescription": "Static mode only: rebuild tooltips automatically every `#resmon.tooltipMs#` of their section. When off, Static tooltips refresh only on click."
         },
         "resmon.refreshMs": {
           "type": "object",
-          "default": {
-            "cpu": 5000,
-            "freq": 5000,
-            "temp": 5000,
-            "mem": 5000,
-            "battery": 10000,
-            "disk": 10000
-          },
-          "properties": {
-            "cpu": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "CPU utilization: Static tooltip refresh (ms)." },
-            "freq": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "CPU frequency (Linux) / system load (macOS): Static tooltip refresh (ms)." },
-            "temp": { "type": "number", "minimum": 2000, "maximum": 3600000, "description": "Temperature: sampling and Static tooltip refresh (ms; minimum 2000: on macOS each sensor pass costs ~16 ms of HID IPC)." },
-            "mem": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Memory: Static tooltip refresh (ms)." },
-            "battery": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Battery: sampling and Static tooltip refresh (ms; minimum 2000 unless resmon.allowFastBatteryDiskRefresh is on)." },
-            "disk": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Disk: sampling and Static tooltip refresh (ms; minimum 2000 unless resmon.allowFastBatteryDiskRefresh is on)." }
-          },
-          "additionalProperties": false,
-          "description": "Refresh interval in milliseconds for each section (200 ms to 1 h). In Static mode it is the tooltip auto-refresh interval (see 'resmon.tooltip.autoRefresh'); battery, disk and temperature are also sampled at this interval in both modes. Intervals shorter than 'resmon.updatefrequencyms' take effect at the next status bar tick."
+          "markdownDescription": "Deprecated (pre-release): replaced by `#resmon.tooltipMs#` for tooltips and `#resmon.statusBarMs#` for reads. Still read until those are set.",
+          "deprecationMessage": "Replaced by resmon.tooltipMs (tooltips) and resmon.statusBarMs (reads). Still read until those are set."
         },
         "resmon.allowFastBatteryDiskRefresh": {
           "type": "boolean",
-          "default": false,
-          "markdownDescription": "**Performance impact.** Allows battery and disk refresh below 2000 ms (down to 200 ms). Each battery read queries IOPowerSources/IOKit and each disk read calls `statfs`: below 2 s this costs CPU time and energy for values that change slowly. Off by default; values set below 2000 ms are kept and apply again when this is turned on."
+          "markdownDescription": "Deprecated (pre-release): replaced by `#resmon.allowFastRefresh#`.",
+          "deprecationMessage": "Replaced by resmon.allowFastRefresh."
         },
         "resmon.refreshSeconds": {
           "type": "object",
-          "deprecationMessage": "Replaced by resmon.refreshMs (milliseconds). Still read, converted, until resmon.refreshMs is set.",
-          "description": "Deprecated: per-section refresh in seconds. Use resmon.refreshMs."
+          "markdownDescription": "Deprecated (pre-release): seconds per section, replaced by `#resmon.tooltipMs#` and `#resmon.statusBarMs#`.",
+          "deprecationMessage": "Replaced by resmon.tooltipMs and resmon.statusBarMs (milliseconds). Still read until those are set."
         },
         "resmon.tooltip.cpuLayout": {
           "type": "string",
@@ -248,6 +347,7 @@
     "compile:native": "bash native/darwin/compile.sh",
     "test:darwin": "node test/smoke-darwin.mjs",
     "test:linux": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/smoke-linux.ts'], outfile: 'dist/test-smoke-linux.cjs', bundle: true, platform: 'node', format: 'cjs' });\" && node dist/test-smoke-linux.cjs && rm -f dist/test-smoke-linux.cjs",
+    "test:extension": "node --expose-gc test/extension.test.mjs",
     "bench:darwin": "node test/bench-darwin.mjs",
     "bench:extension": "node test/bench-extension.mjs",
     "test:integration": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/integration.ts'], outfile: 'dist/test-integration.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['*.node'] });\" && node dist/test-integration.cjs && rm -f dist/test-integration.cjs",

@@ -250,6 +250,40 @@ if (battery) {
   console.log('Battery driver: no AppleSmartBattery (desktop Mac).');
 }
 
+// Proposed minimums: native cost per read + extension-host cost per read (from `pnpm run bench:extension`,
+// run it first), divided by the section's budget share, rounded up to 100 ms, at least 200 ms.
+const extFile = path.resolve(__dirname, '../dist/bench-extension.json');
+if (fs.existsSync(extFile)) {
+  const ext = JSON.parse(fs.readFileSync(extFile, 'utf8')).perReadUs ?? {};
+  const nativeUs = {
+    cpu: results[0], freq: results[1], mem: results[2], battery: results[3], disk: results[4],
+  };
+  const cost = (r) => Math.max(r.systemCpuUs, r.processCpuUs);
+  const rows = [];
+  for (const section of ['cpu', 'freq', 'temp', 'mem', 'battery', 'disk']) {
+    const native = section === 'temp'
+      ? (temp ? Math.max(temp.passSystemCpuMs, temp.passWorkerCpuMs) * 1000 : NaN)
+      : cost(nativeUs[section]);
+    const extension = ext[section];
+    if (!Number.isFinite(native) || extension === undefined) {
+      rows.push({ section, 'native µs/read': Number.isFinite(native) ? native.toFixed(1) : 'n/a', 'extension µs/read': extension?.toFixed(0) ?? 'n/a', 'proposed minimum (ms)': 'n/a' });
+      continue;
+    }
+    const raw = floorMs(native + extension);
+    rows.push({
+      section,
+      'native µs/read': native.toFixed(1),
+      'extension µs/read': extension.toFixed(0),
+      'exact (ms)': raw.toFixed(0),
+      'proposed minimum (ms)': Math.max(200, Math.ceil(raw / 100) * 100),
+    });
+  }
+  console.log('\nProposed minimums (rule: docs/ARCHITECTURE.md, "Refresh Floors"):');
+  console.table(rows);
+} else {
+  console.log('\nRun `pnpm run bench:extension` first to get the proposed minimums (it writes dist/bench-extension.json).');
+}
+
 if (JSON_OUT) {
   console.log('\n' + JSON.stringify({ share: SHARE, results, temp, battery }, null, 2));
 }

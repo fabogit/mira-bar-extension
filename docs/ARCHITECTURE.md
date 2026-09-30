@@ -42,7 +42,7 @@ Resource Monitor NG enforces a strict **Zero-Subprocess Invariant** on all suppo
 ### 3. Hardware Thermal Discovery
 - **Linux (`/sys/class/hwmon/`)**: One-time startup heuristic scanning AMD `k10temp`/`zenpower`, Intel `coretemp`, and ACPI thermal zones.
 - **Darwin Apple Silicon (`IOHIDEventSystemClient`)**: Unprivileged kernel HID event tap matching `PrimaryUsagePage = 0xff00` and `PrimaryUsage = 0x5`. Samples 24 on-die SoC sensors (reporting both average and peak die temperatures), NAND SSD controller temperature, and battery cell temperature without root permissions.
-  - **Background sampler**: one pass costs ~16-18 ms on an M4 (~0.6 ms of IPC per sensor), so a native worker thread (`ThermalSampler`) performs the reads. `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and wakes the worker when the reading is older than `maxAgeMs`; the extension host thread never waits for the sensors after the first reading.
+  - **Background sampler**: one pass costs ~16-18 ms on an M4 (~0.6 ms of IPC per sensor), so a native worker thread (`ThermalSampler`) performs the reads. `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and wakes the worker when the reading is older than `maxAgeMs`; the extension host thread never waits for the sensors after the first reading. Each reading carries `sampleSeq` (changes with every pass), `ageMs`, and the cost of its pass (`passWallMs`, `passCpuMs`).
 
 ### 4. Memory & Virtual Memory Subsystem
 - **Linux (`/proc/meminfo`)**: Single-pass line scan extracting `MemTotal`, `MemAvailable`, `SwapTotal`, `SwapFree`.
@@ -68,38 +68,54 @@ Resource Monitor NG enforces a strict **Zero-Subprocess Invariant** on all suppo
 
 ---
 
-## Multi-Rate Polling
+## Refresh Model
 
-High-frequency telemetry (e.g. 200 ms) is valuable for observing short CPU load spikes, but harmful if applied uniformly to slow-moving or IPC-bound subsystems. The extension uses one clock and per-section, time-based intervals:
+Every section has two intervals, set per section in the settings panel or in `settings.json`:
+
+| Setting | What it controls | Applies to | Range |
+| :--- | :--- | :--- | :--- |
+| `resmon.statusBarMs` | How often the section **reads its data** and updates its status bar text | Both tooltip modes; Live tooltips follow it | 200 ms to 1 h, never below the section's measured minimum |
+| `resmon.tooltipMs` | How often the section's **tooltip is rebuilt** from the latest reading | Static mode with `resmon.tooltip.autoRefresh` on | 200 ms to 1 h, never below the section's status bar interval |
+| `resmon.allowFastRefresh` | Lowers every measured minimum to 200 ms | `resmon.statusBarMs` only | on / off (default off) |
+
+- **Reads happen only at the status bar interval.** A tooltip never triggers a read: it shows the latest reading, so a tooltip interval shorter than the status bar interval changes nothing and applies as the status bar interval (the panel says so under the value).
+- **Live** rebuilds a tooltip with every read of its section (temperature only when the sensors produced a new reading). **Static** rebuilds it on click and, with auto-refresh, at the read closest to its tooltip interval. With auto-refresh off, Static tooltips change only on click.
+- **Every tooltip shows the time of the reading it displays** (tenths of a second when the section's status bar interval is below 1000 ms). For temperature this is the time of the sensor pass, which can precede the read.
+- **A click** on any widget (or *Resource Monitor: Refresh Stats*) reads every visible section and rebuilds every tooltip.
+
+### Scheduler
+
+There is no global tick. `ResourceMonitor` (`src/monitor.ts`) keeps, per section, the time of its last read and arms **one timer at the earliest deadline** among the visible sections. At each wake-up it reads the sections that are due; sections due within 25 ms of the wake-up are read in it, so close deadlines share one wake-up. Hidden sections are never read, and with every section hidden no timer runs at all.
 
 ```
-                  ┌───────────────────────────────────────────────┐
-                  │ Status bar tick (resmon.updatefrequencyms,    │
-                  │ 200 ms - 15 s)                                │
-                  └───────────────────────┬───────────────────────┘
-                                          │
-                 ┌────────────────────────┴────────────────────────┐
-                 ▼                                                 ▼
-         [Every tick]                                   [Per-section interval]
-       - CPU ticks, load / frequency                    resmon.refreshMs.<section>
-       - Memory                                         elapsed since last sample?
-       - Status bar text                                          │
-       - Live tooltips                              Yes ──────────┴────────── No
-                                                     │                        │
-                                                     ▼                        ▼
-                                            - Battery (IOPowerSources)   Reuse cached values
-                                            - Disk (statfs)
-                                            - Temperature (sampler age)
-                                            - Static tooltips (auto-refresh)
+ time ──────────────────────────────────────────────────────────────────►
+ cpu   (2 s)   ●───────────●───────────●───────────●───────────●
+ mem   (2 s)   ●───────────●───────────●───────────●───────────●
+ temp  (5 s)   ●──────────────────────────────○●────────────────
+ disk (10 s)   ●··········(statfs off the event loop turn)·······
+ timer         ▲           ▲           ▲      ▲▲   ▲           ▲
+               one wake-up per distinct deadline (○ = temperature pass requested ahead)
 ```
 
-- **Intervals** (`resmon.refreshMs`, 200 ms to 1 h, defaults 5 s; battery and disk 10 s) are measured in time, not in ticks, with a tolerance of half a tick so an interval equal to the tick fires on every tick. Intervals shorter than the tick run once per tick.
-- **Floors**: temperature at least 2000 ms (a sampler pass costs ~16 ms of a background thread); battery and disk at least 2000 ms unless `resmon.allowFastBatteryDiskRefresh` is enabled, since every battery read is an XPC round trip to `powerd` and every disk read a `statfs` call.
-- **Hidden widgets** are not sampled. A failed read is retried at its interval, not on every tick.
-- **Disk off the tick**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other widgets updating; no new request for the same paths starts until it returns, while a change of `resmon.disk.drives` starts one at once and drops the stale result.
-- **Live tooltips follow new data**: CPU, load and memory tooltips are rebuilt on every tick; battery, disk and temperature only when a new reading arrives, so an unchanged tooltip is not re-sent to the renderer.
-- **Manual refresh** (`resmon.refresh` or a click on any widget) samples every visible subsystem, rebuilds all tooltips and restarts the timer.
-- **Configuration changes** are debounced (100 ms), so dragging a slider in the settings panel does not recreate the widgets on every step.
+- **Temperature (macOS)**: a sensor pass takes ~16-18 ms on the native worker thread, so the monitor asks for it 100 ms before the read (`requestTempRefresh`); the read then shows a reading taken just before it, without waiting and with one pass per interval.
+- **Disk**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other sections running; no new request for the same paths starts until it returns, a change of `resmon.disk.drives` starts one at once and drops the stale result, and at most two requests are in flight (each hung `statfs` holds one of the 4 libuv pool threads shared by the extension host).
+- **Configuration changes** are debounced (100 ms), so dragging a slider in the settings panel applies once.
+
+### Refresh Floors
+
+The measured minimums (`MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts`) follow one rule:
+
+> The minimum status bar interval of a section is the interval at which its reads cost **its share of the project budget**: 0.5% of one core (docs/ROADMAP.md) shared by the six sections, i.e. 0.083% of one core each. With every section at its minimum, the extension stays within the budget.
+
+$$\text{minimum}_s = \max\left(200\ \text{ms},\ \frac{\text{source CPU per read}_s + \text{extension CPU per read}_s}{0.005 / 6}\right)$$
+
+- *Source CPU per read* counts the whole machine: the calling thread plus the macOS services that answer the request (powerd for the battery, the HID event server for temperature). `test/bench-darwin.mjs` measures it from host CPU ticks (busy ticks while reading in a loop, minus the idle baseline); for temperature it is one background pass over all sensors.
+- *Extension CPU per read* is the extension host's work for one read: waking up, sampling through the provider, rendering the text and, in the worst case (Live mode), the tooltip. `test/bench-extension.mjs` measures it with one section visible at a time.
+- The result is rounded up to the next 100 ms. The renderer-side cost of a status bar update in VS Code is not included (it cannot be measured outside VS Code).
+
+*Measurement on the Apple M4 in progress: until it is recorded here, the minimums are the provisional values in `src/config.ts` (temperature, battery and disk 2000 ms; the other sections 200 ms).*
+
+The same bench measures how often the sources refresh (temperature sensors, battery driver `UpdateTime`): reading faster than that only returns the same values, so the defaults are set at or above those periods. `resmon.allowFastRefresh` lowers every minimum to 200 ms; values set below a minimum are kept in the settings and apply whenever it is on.
 
 ---
 
@@ -118,9 +134,9 @@ Resource Monitor NG enforces two UI stability invariants:
    - Numeric percentages and values are padded with Unicode Figure Space (U+2007), which has the exact width of a digit in tabular numbers. This completely prevents horizontal status bar jitter as values fluctuate between single, double, and triple digits.
 4. **Dual Tooltip Modes (`Static` vs `Live`)**:
    - VS Code exposes no hover event, so tooltips are rebuilt ahead of time and a hover shows the last version.
-   - **`Static` (Default)**: tooltips are rebuilt on click and, with `resmon.tooltip.autoRefresh` (default on), at each section interval, so they change rarely while the status bar text keeps streaming.
-   - **`Live`**: tooltips are rebuilt on every status bar tick that brings new data for them (battery, disk and temperature at their sampling interval).
-   - Every tooltip ends with its update time (tenths of a second when the tick is below 1000 ms) and links to *Settings* and *Refresh*.
+   - **`Static` (Default)**: tooltips are rebuilt on click and, with `resmon.tooltip.autoRefresh` (default on), every `resmon.tooltipMs` of their section, so they change rarely while the status bar text keeps updating.
+   - **`Live`**: tooltips are rebuilt with every read of their section (`resmon.statusBarMs`).
+   - Every tooltip ends with the time of its reading (tenths of a second below 1000 ms) and links to *Settings* and *Refresh* (see "Refresh Model").
    - Switchable via `resmon.toggleTooltipMode` / `resmon.toggleTooltipAutoRefresh` or from the gear widget's tooltip.
 5. **Unified Monospace ASCII Table Engine (`renderDynamicAsciiTable`)**:
    - Standard GitHub-Flavored Markdown tables rendered in VS Code hover popups rely on proportional system fonts and browser table layout algorithms, frequently causing misaligned columns, awkward line wraps, or excessive horizontal expansion.
@@ -128,13 +144,15 @@ Resource Monitor NG enforces two UI stability invariants:
    - Dynamically calculates maximum column widths, enforces numeric right-alignment and textual left-alignment, and ensures pixel-perfect column alignment across all VS Code themes.
    - Standardized across all 6 subsystems: CPU per-core breakdown, System Load / Frequency, Thermal die matrix, Memory & Swap breakdown, Storage filesystems, and Battery health & capacity.
 6. **Settings Widget & Panel**:
-   - The gear widget shows the current options with one-click toggles; clicking it opens a webview panel (`src/settings/`) with preset sliders, millisecond fields, section visibility, drag-and-drop order (`resmon.order`, mapped to status bar priorities) and units.
+   - The gear widget shows the intervals in use and one-click toggles; clicking it opens a webview panel (`src/settings/`): per section a status bar interval (preset slider plus millisecond field) and a tooltip interval, with a note under a value when what applies differs from what is set; visibility, drag-and-drop order (`resmon.order`, mapped to status bar priorities), units and disk options.
+   - The first interval edit with pre-release settings present (`resmon.updatefrequencyms`, `resmon.refreshMs`, `resmon.refreshSeconds`, `resmon.allowFastBatteryDiskRefresh`) stores the intervals as they were in effect and removes those keys; until then they are read as fallbacks.
    - The panel is only a front-end: messages are validated against a whitelist (`EDITABLE_SETTINGS`) and written to the user settings, which remain the single source of truth. Values the user did not touch are never rewritten.
    - Strict Content Security Policy with a per-load nonce; rows are updated in place so a configuration change never interrupts typing or dragging.
-7. **Deterministic Tooltip Footer Formatting**:
-   - In VS Code hover tooltips (Chromium CommonMark implementation), single line breaks within paragraphs are collapsed into a continuous single line, causing wide tooltips when command links are placed on successive lines.
-   - Footers are strictly formatted as Markdown lists (`- **Field**: [Action](command:...)`), guaranteeing clean vertical line separation and preserving compact tooltip widths.
-8. **Modern Activation Lifecycle (`onStartupFinished`)**:
+7. **Tooltip Footer**:
+   - In VS Code hover tooltips (Chromium CommonMark implementation), single line breaks within paragraphs are collapsed into one line, so the footer separates the reading time and the *Settings* / *Refresh* links with a blank line.
+8. **Code Layout**:
+   - `src/extension.ts` wires commands and settings to VS Code; `src/monitor.ts` owns the widgets and the scheduler; `src/sections.ts` renders each section's text and tooltip from one reading (pure functions); `src/format.ts` holds the formatting helpers; `src/config.ts` reads and validates the settings.
+9. **Modern Activation Lifecycle (`onStartupFinished`)**:
    - Replaced legacy global wildcard (`"*"`) activation with `"onStartupFinished"`.
    - Prevents the extension from contending with critical VS Code startup tasks (language server initialization, workspace scanning), achieving zero impact on editor launch time.
 

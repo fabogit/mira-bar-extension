@@ -116,7 +116,7 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - Measured on Apple M4: `getDieTemperature()` cost ~18 ms per call (24 tdie + NAND + battery sensors), above the 1 ms SLA.
   - Profiled with `native/darwin/tools/hid_bench.cc`: cost evenly spread (~0.6 ms per sensor IPC), no single slow sensor.
   - Native background sampler (`ThermalSampler`): `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and asks the worker for a new pass when it is older than requested.
-- [x] **Refresh Model**:
+- [x] **Refresh Model** (superseded by the per-section model of Phase 1.2):
   - `resmon.updatefrequencyms` (200-15000 ms) is the clock: status bar values every tick, Live tooltips every tick.
   - `resmon.refreshMs` per section (200 ms to 1 h): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `resmon.allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaces the pre-release `resmon.refreshSeconds`, still read as a fallback.
   - Half-tick tolerance so an interval equal to the tick fires every tick; update time with tenths of a second below 1000 ms; a click refreshes everything.
@@ -134,8 +134,32 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - `resmon.order` mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
 - [ ] **Verification in VS Code on Apple Silicon**:
   - Install the `darwin-arm64` VSIX and check the settings panel, Static/Live tooltips at 200 ms and the battery/disk lock.
-- [ ] **Extension Lifecycle Refactor** (deferred):
-  - `ResourceMonitor` class implementing `vscode.Disposable`; `update()` split into per-widget renderers; cached configuration. Worth doing before Phase 3 adds a third provider.
+- [x] **Extension Lifecycle Refactor**: done in Phase 1.2 below.
+
+---
+
+## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v1.1.1) [IN PROGRESS]
+
+> Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Implemented, minimums pending measurement on Apple Silicon**
+
+Each section gets its own status bar and tooltip intervals, and the minimums are derived from measured costs instead of fixed values.
+
+- [x] **Measurement Tools**:
+  - `test/bench-darwin.mjs`: cost per read of every source on the calling thread and system-wide (host CPU ticks, macOS services included), temperature pass cost and sensor refresh period, battery driver refresh period (`UpdateTime`).
+  - `test/bench-extension.mjs`: extension-host CPU per configuration and per section (one section alone, Live).
+  - Native temperature readings carry `sampleSeq`, `ageMs`, `passWallMs`, `passCpuMs`.
+- [x] **Per-Section Intervals**:
+  - `resmon.statusBarMs` (reads and status bar text) and `resmon.tooltipMs` (Static tooltips, never faster than the status bar); `resmon.allowFastRefresh` lowers the minimums to 200 ms.
+  - Pre-release keys read as fallbacks and migrated on the first interval edit in the panel; the released `resmon.updatefrequencyms` keeps working (CPU, load, memory; temperature, battery and disk at least as slow).
+- [x] **Deadline Scheduler & Lifecycle Refactor**:
+  - `ResourceMonitor` (`src/monitor.ts`, `vscode.Disposable`): one timer at the earliest section deadline, no global tick, no timer when every section is hidden.
+  - Renderers per section (`src/sections.ts`, pure functions) and formatting helpers (`src/format.ts`); `src/extension.ts` only wires commands and settings.
+  - Temperature pass requested 100 ms before its read on macOS, so the value shown is fresh without waiting.
+  - Disk requests capped at two in flight (a hung `statfs` holds a libuv pool thread); panel messages handled one at a time.
+- [x] **Settings Panel**: two intervals per section with notes on what applies, measured minimums and the budget rule explained in place.
+- [x] **Tests**: `test/extension.test.mjs` (schedule, tooltips, minimums, legacy settings and migration, panel, disk isolation, lifecycle, heap) runnable with `pnpm run test:extension`.
+- [ ] **Measured Minimums**: run the benches on Apple Silicon and set `MEASURED_MIN_STATUS_BAR_MS` by the rule in docs/ARCHITECTURE.md ("Refresh Floors").
+- [ ] **Verification in VS Code on Apple Silicon**.
 
 ---
 

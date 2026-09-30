@@ -27,8 +27,9 @@ const TICK_STATES = 4;
 const MIN_TICKS_PER_CORE = 5;
 
 /**
- * Default age of a temperature reading. A full HID pass costs ~16 ms of IPC on an M4 and runs on a native
- * background thread: every 5 s it is ~0.3% of one core. The 2 s minimum is enforced by config.ts.
+ * Default age of a temperature reading when no age is given. A full HID pass costs ~16 ms of IPC on an M4
+ * and runs on a native background thread; the minimum interval is set in config.ts
+ * (MEASURED_MIN_STATUS_BAR_MS).
  */
 const TEMP_MAX_AGE_MS = 5_000;
 
@@ -296,6 +297,15 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
         eCores: this.topology.eCores,
       },
     };
+  }
+
+  /**
+   * Requests a background sensor pass without waiting for it (the call returns the previous reading,
+   * which is ignored). The monitor calls it shortly before a temperature read, so that read gets a
+   * reading taken just before it.
+   */
+  public requestTempRefresh(): void {
+    this.nativeAddon?.getDieTemperature(0);
   }
 
   /**

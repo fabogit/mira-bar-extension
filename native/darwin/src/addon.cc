@@ -908,7 +908,9 @@ napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
       .Str("sensorLabel", label);
   if (reading.nand_celsius > 0.0) obj.Double("nandCelsius", reading.nand_celsius);
   if (reading.battery_celsius > 0.0) obj.Double("batteryCelsius", reading.battery_celsius);
+  const double age_ms = std::chrono::duration<double, std::milli>(Clock::now() - reading.taken).count();
   obj.Double("sampleSeq", static_cast<double>(reading.pass_seq))
+      .Double("ageMs", age_ms > 0.0 ? age_ms : 0.0)
       .Double("passWallMs", reading.pass_wall_ms)
       .Double("passCpuMs", reading.pass_cpu_ms);
   return obj.Finish();

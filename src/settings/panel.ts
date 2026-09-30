@@ -37,6 +37,11 @@ export class SettingsPanel implements vscode.Disposable {
 
   private readonly disposables: vscode.Disposable[] = [];
   private disposed = false;
+  /**
+   * Messages are handled one at a time: a write can take several awaited settings updates (legacy
+   * migration), and a second edit must see its result, not the state before it.
+   */
+  private queue: Promise<void> = Promise.resolve();
 
   /**
    * Opens the panel, or reveals it if it is already open.
@@ -76,7 +81,7 @@ export class SettingsPanel implements vscode.Disposable {
     this.disposables.push(
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((msg: unknown) => {
-        void this.onMessage(msg);
+        this.queue = this.queue.then(() => this.onMessage(msg));
       })
     );
   }
