@@ -126,8 +126,11 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - `resmon.refreshSeconds` also sets how often battery, disk and temperature are sampled (temperature minimum 2 s); `resmon.updatefrequencyms` (200-15000 ms) drives the status bar values.
   - Battery tooltip shows "Nominal vs Design" (NominalChargeCapacity / DesignCapacity) instead of "Battery Health": macOS "Maximum Capacity" uses an internal calculation not exposed to apps (100% vs 99.4% on the test M4).
   - Every tooltip ends with the update time and the refresh hint on separate lines.
-- [ ] **Configurable Widget Order**:
-  - New setting (e.g. `resmon.order`: ordered list of `cpu`, `freq`/`load`, `temp`, `mem`, `battery`, `disk`) mapped to status bar priorities, applied live on configuration change; unknown or missing entries fall back to the default order.
+- [x] **Settings Widget & Panel**:
+  - Gear status bar widget: tooltip with the current values and quick toggles; click opens a webview settings panel (sliders and number fields for the status bar interval and per-section refresh, visibility, units, disk options).
+  - The panel writes validated values to the user settings (single source of truth); data tooltips keep only metrics, update time and Settings / Refresh links.
+- [x] **Configurable Widget Order**:
+  - `resmon.order` (drag and drop in the settings panel) mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
 
 ---
 

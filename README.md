@@ -49,12 +49,22 @@ For Antigravity-IDE:
 antigravity --install-extension resource-monitor-ng-darwin-arm64-1.1.0.vsix
 ```
 
+## Settings Panel
+
+The gear widget at the end of the status bar group collects the options:
+
+- **Hover** it for the current values and one-click toggles (tooltip mode, Static auto-refresh, CPU core layout, load format, multi-disk display).
+- **Click** it (or run *Resource Monitor: Open Settings Panel*) to open the settings panel: sliders and number fields for the status bar interval and the per-section refresh, section visibility, drag-and-drop widget order, units and disk options.
+
+The panel is only a front-end for the regular settings below: every change is validated and written to your user `settings.json`, and edits made there are reflected in the panel. The data tooltips keep only the metrics, the time of their last update and links to *Settings* and *Refresh*.
+
 ## Commands
 
 | Command | Title | Description |
 | :--- | :--- | :--- |
-| `resmon.refresh` | Resource Monitor: Refresh Stats | Immediately samples all providers (bypassing decimation) and restarts the polling timer. Also triggered by clicking on any status bar widget. |
-| `resmon.toggleTooltipMode` | Resource Monitor: Toggle Tooltip Mode (Static / Live) | Toggles tooltip update mode between `Static` (flicker-free, updated on click) and `Live` (continuous real-time updates). Also accessible via link in tooltips. |
+| `resmon.refresh` | Resource Monitor: Refresh Stats | Immediately samples all providers and restarts the polling timer. Also triggered by clicking on any metric widget. |
+| `resmon.openSettings` | Resource Monitor: Open Settings Panel | Opens the settings panel (also the gear widget's click action). |
+| `resmon.toggleTooltipMode` | Resource Monitor: Toggle Tooltip Mode (Static / Live) | Toggles tooltip update mode between `Static` (flicker-free, updated on click) and `Live` (continuous real-time updates). Also available in the gear widget's tooltip. |
 | `resmon.toggleCpuLayout` | Resource Monitor: Toggle CPU Tooltip Layout (Table / List) | Toggles CPU per-core breakdown layout between `Table` (monospaced side-by-side grid) and `List` (vertical clusters). |
 | `resmon.toggleLoadFormat` | Resource Monitor: Toggle System Load Format (Percent / Value) | Toggles System Load display on Darwin between normalized capacity percentage (`34.4% L`) and raw POSIX queue depth (`3.44 L`). |
 | `resmon.toggleDiskMultiDisplay` | Resource Monitor: Toggle Multi-Disk Display Mode (All / MostFull) | Toggles multi-disk status bar display between showing all monitored mount points (`All`) and showing only the fullest volume (`MostFull`). |
@@ -71,6 +81,8 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.show.mem` | `boolean` | `true` | Toggle memory consumption |
 | `resmon.show.battery` | `boolean` | `true` | Toggle battery percentage (auto-hidden on desktops) |
 | `resmon.show.disk` | `boolean` | `false` | Toggle disk space information |
+| `resmon.show.settings` | `boolean` | `true` | Show the settings (gear) widget after the metrics |
+| `resmon.order` | `string[]` | `["cpu","freq","temp","mem","battery","disk"]` | Left-to-right widget order; missing entries keep their default position |
 | `resmon.updatefrequencyms`| `number` | `2000` | Status bar polling interval in milliseconds (200-15000) |
 | `resmon.freq.unit` | `string` | `"GHz"` | Unit for CPU frequency (`GHz`, `MHz`, `KHz`, `Hz`) |
 | `resmon.mem.unit` | `string` | `"GB"` | Unit for memory display (`GB`, `MB`, `KB`, `B`) |

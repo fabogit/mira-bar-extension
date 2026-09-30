@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { getConfig, TOOLTIP_SECTIONS, UNIT_DIVISORS, type ResMonConfig, type TooltipSection } from './config.js';
+import { SettingsPanel } from './settings/panel.js';
 import { createPlatformProvider } from './platform/factory.js';
 import { DiskProvider } from './disk/disk_provider.js';
 import type { BatteryInfo, DiskDriveInfo } from './types.js';
@@ -35,6 +36,8 @@ interface StatusBarWidgets {
 }
 
 let widgets: StatusBarWidgets | null = null;
+/** Gear widget: quick toggles in its tooltip, click opens the settings panel. */
+let settingsItem: vscode.StatusBarItem | null = null;
 
 /**
  * Disposes the currently active status bar widgets, if any.
@@ -46,6 +49,10 @@ function disposeWidgets(): void {
       item.dispose();
     }
     widgets = null;
+  }
+  if (settingsItem) {
+    settingsItem.dispose();
+    settingsItem = null;
   }
 }
 const visibleSet = new WeakSet<vscode.StatusBarItem>();
@@ -360,7 +367,7 @@ function updateWidget(
         : '';
 
     if (currentMd !== tooltipMd) {
-      const md = new vscode.MarkdownString(tooltipMd);
+      const md = new vscode.MarkdownString(tooltipMd, true);
       md.isTrusted = true;
       item.tooltip = md;
     }
@@ -373,71 +380,102 @@ function updateWidget(
 }
 
 /**
- * Builds the common tooltip footer: mode switch, Static auto-refresh switch, optional extra toggle,
- * then the update time and the refresh hint on separate lines.
+ * Common tooltip footer: the update time and the settings / refresh links, on two lines.
+ * Mode and layout toggles live in the settings widget and panel, not in the data tooltips.
  *
- * @param config - Current configuration.
- * @param section - Status bar section the tooltip belongs to.
- * @param extraCommand - Optional section-specific toggle (layout, format, multi-disk).
  * @returns Markdown lines.
  */
-function getTooltipFooter(
-  config: ResMonConfig,
-  section: TooltipSection,
-  extraCommand?: { label: string; command: string; prefix?: string }
-): string[] {
-  const mode = config.tooltipMode;
-  const nextMode = mode === 'Static' ? 'Live' : 'Static';
-  const lines = [
+function getTooltipFooter(): string[] {
+  return [
     '---',
-    `- **Tooltip Mode**: \`${mode}\` ([Switch to ${nextMode}](command:resmon.toggleTooltipMode))`,
-  ];
-  if (mode === 'Static') {
-    lines.push(config.tooltipAutoRefresh
-      ? `- **Auto-refresh**: every ${config.sectionRefreshSeconds[section]} s ([Turn off](command:resmon.toggleTooltipAutoRefresh))`
-      : '- **Auto-refresh**: off ([Turn on](command:resmon.toggleTooltipAutoRefresh))');
-  }
-  if (extraCommand) {
-    const prefix = extraCommand.prefix ?? 'CPU Layout';
-    lines.push(`- **${prefix}**: [${extraCommand.label}](command:${extraCommand.command})`);
-  }
-  lines.push(
-    '',
     `*Updated at ${tooltipUpdatedAt}*`,
     '',
-    mode === 'Static' ? '*Click the widget to refresh now*' : '*Refreshing on every tick*'
-  );
-  return lines;
+    '[$(gear) Settings](command:resmon.openSettings) · [$(refresh) Refresh](command:resmon.refresh)',
+  ];
 }
 
 /**
- * Creates individual StatusBarItem widgets with sequential priorities.
+ * Tooltip of the settings (gear) widget: current values with one-click toggles, plus a link to
+ * the full panel (sliders, section order, units).
  *
- * @param alignment - Status bar alignment side (Left or Right).
- * @param basePriority - Base priority number for positioning.
- * @returns Object holding all 6 StatusBarItem instances.
+ * @param config - Current configuration.
+ * @returns Markdown tooltip.
  */
-function createWidgets(
-  alignment: 'Left' | 'Right',
-  basePriority: number
-): StatusBarWidgets {
-  const align = alignment === 'Right' ? vscode.StatusBarAlignment.Right : vscode.StatusBarAlignment.Left;
-  const isLeft = alignment === 'Left';
+function buildSettingsTooltip(config: ResMonConfig): string {
+  const isDarwin = process.platform === 'darwin';
+  const mode = config.tooltipMode;
+  const refresh = TOOLTIP_SECTIONS
+    .map((s) => `${SECTION_SHORT_LABELS[s](isDarwin)} ${config.sectionRefreshSeconds[s]} s`)
+    .join(' · ');
+  const lines = [
+    '### Resource Monitor Settings',
+    '',
+    `- **Tooltip mode**: \`${mode}\` — [switch to ${mode === 'Static' ? 'Live' : 'Static'}](command:resmon.toggleTooltipMode)`,
+  ];
+  if (mode === 'Static') {
+    lines.push(`- **Auto-refresh**: ${config.tooltipAutoRefresh ? 'on' : 'off'} — [turn ${config.tooltipAutoRefresh ? 'off' : 'on'}](command:resmon.toggleTooltipAutoRefresh)`);
+  }
+  lines.push(
+    `- **Status bar interval**: ${config.updateFrequencyMs} ms`,
+    `- **Section refresh**: ${refresh}`,
+    `- **CPU cores**: ${config.cpuTooltipLayout} — [switch to ${config.cpuTooltipLayout === 'Table' ? 'List' : 'Table'}](command:resmon.toggleCpuLayout)`
+  );
+  if (isDarwin) {
+    lines.push(`- **System load**: ${config.loadFormat} — [switch to ${config.loadFormat === 'Percent' ? 'Value' : 'Percent'}](command:resmon.toggleLoadFormat)`);
+  }
+  lines.push(
+    `- **Several disks**: ${config.diskMultiDisplay === 'All' ? 'All' : 'Most full'} — [switch to ${config.diskMultiDisplay === 'All' ? 'Most full' : 'All'}](command:resmon.toggleDiskMultiDisplay)`,
+    '',
+    '---',
+    '[$(settings-gear) Open settings panel](command:resmon.openSettings)',
+  );
+  return lines.join('\n');
+}
 
-  const w: StatusBarWidgets = {
-    cpu: vscode.window.createStatusBarItem(align, isLeft ? basePriority : basePriority + 5),
-    freq: vscode.window.createStatusBarItem(align, isLeft ? basePriority - 1 : basePriority + 4),
-    temp: vscode.window.createStatusBarItem(align, isLeft ? basePriority - 2 : basePriority + 3),
-    mem: vscode.window.createStatusBarItem(align, isLeft ? basePriority - 3 : basePriority + 2),
-    battery: vscode.window.createStatusBarItem(align, isLeft ? basePriority - 4 : basePriority + 1),
-    disk: vscode.window.createStatusBarItem(align, isLeft ? basePriority - 5 : basePriority),
-  };
+/** Short section names for compact summaries ('freq' is system load on macOS, frequency on Linux). */
+const SECTION_SHORT_LABELS: Record<TooltipSection, (isDarwin: boolean) => string> = {
+  cpu: () => 'CPU',
+  freq: (isDarwin) => (isDarwin ? 'Load' : 'Freq'),
+  temp: () => 'Temp',
+  mem: () => 'Mem',
+  battery: () => 'Battery',
+  disk: () => 'Disk',
+};
 
-  for (const item of Object.values(w)) {
+/**
+ * Creates the metric widgets (plus the optional gear widget at the end) in the configured order.
+ * VS Code places higher priorities further left on both sides of the status bar, so priorities
+ * decrease along the order.
+ *
+ * @param config - Current configuration (alignment, base priority, order, settings widget).
+ * @returns Object holding the 6 metric StatusBarItem instances.
+ */
+function createWidgets(config: ResMonConfig): StatusBarWidgets {
+  const align = config.alignment === 'Right' ? vscode.StatusBarAlignment.Right : vscode.StatusBarAlignment.Left;
+  const slots = config.order.length + 1; // metrics + gear
+  const top = config.alignment === 'Left' ? config.priority : config.priority + slots - 1;
+  const priorityOf = (index: number): number => top - index;
+
+  const created = {} as Record<TooltipSection, vscode.StatusBarItem>;
+  config.order.forEach((section, index) => {
+    const item = vscode.window.createStatusBarItem(align, priorityOf(index));
     item.command = 'resmon.refresh';
+    item.name = `Resource Monitor: ${SECTION_SHORT_LABELS[section](process.platform === 'darwin')}`;
+    created[section] = item;
+  });
+
+  if (config.showSettings) {
+    settingsItem = vscode.window.createStatusBarItem(align, priorityOf(config.order.length));
+    settingsItem.text = '$(settings-gear)';
+    settingsItem.command = 'resmon.openSettings';
+    settingsItem.name = 'Resource Monitor Settings';
+    const md = new vscode.MarkdownString(buildSettingsTooltip(config), true);
+    md.isTrusted = true;
+    settingsItem.tooltip = md;
+    settingsItem.show();
   }
 
-  return w;
+  return created;
 }
 
 /**
@@ -457,8 +495,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const log = vscode.window.createOutputChannel('Resource Monitor NG', { log: true });
   context.subscriptions.push(log);
   let currentConfig = getConfig();
-  widgets = createWidgets(currentConfig.alignment, currentConfig.priority);
+  widgets = createWidgets(currentConfig);
   context.subscriptions.push({ dispose: disposeWidgets });
+  context.subscriptions.push({ dispose: () => SettingsPanel.disposeCurrent() });
 
   const platformProvider = createPlatformProvider();
   const diskProvider = new DiskProvider();
@@ -507,16 +546,39 @@ export function activate(context: vscode.ExtensionContext): void {
         let cpuMd: string | null = null;
         if (tooltipDue('cpu')) {
           const topoDesc = platformProvider.getTopologyDescription ? platformProvider.getTopologyDescription() : '';
-          const lines = [
-            `### CPU Utilization: ${cpuUsage.overallPercent.toFixed(1)}%`,
-            '',
-            '**Overall Load**:',
-            `${renderBar(cpuUsage.overallPercent, 8)} **${cpuUsage.overallPercent.toFixed(1)}%**`,
-          ];
+          const coreCount = cpuUsage.perCorePercent.length;
+          const lines = ['### CPU Utilization'];
+          const context: string[] = [];
           if (topoDesc) {
-            lines.push(`Hardware: \`${topoDesc}\``);
+            context.push(topoDesc);
           }
-          lines.push('---');
+          if (coreCount > 0) {
+            context.push(`${coreCount} logical cores`);
+          }
+          if (context.length > 0) {
+            lines.push(context.join(' · '));
+          }
+          lines.push('');
+
+          // Summary table in the same style as the other sections: overall load, then per cluster.
+          const loadRow = (label: string, pct: number): string[] => [
+            label,
+            `${renderBar(pct, 6, false)}  ${pct.toFixed(1).padStart(5, ' ')}%`,
+          ];
+          const summaryRows: string[][] = [loadRow('Overall', cpuUsage.overallPercent)];
+          if (cpuUsage.coreTypes && cpuUsage.coreTypes.length === coreCount) {
+            for (const [type, label] of [['P', 'Performance'], ['E', 'Efficiency']] as const) {
+              const values = cpuUsage.perCorePercent.filter((_, idx) => cpuUsage.coreTypes![idx] === type);
+              if (values.length > 0) {
+                summaryRows.push(loadRow(label, values.reduce((a, b) => a + b, 0) / values.length));
+              }
+            }
+          }
+          lines.push(...renderDynamicAsciiTable(
+            [{ header: 'Cluster', align: 'left' }, { header: 'Load', align: 'left' }],
+            summaryRows
+          ));
+          lines.push('');
 
           const hasCoreTypes = Boolean(cpuUsage.coreTypes && cpuUsage.coreTypes.length === cpuUsage.perCorePercent.length);
           const isTable = config.cpuTooltipLayout === 'Table';
@@ -571,12 +633,7 @@ export function activate(context: vscode.ExtensionContext): void {
             }
           }
 
-          const layoutToggle = {
-            label: isTable ? 'Switch to Vertical List' : 'Switch to Compact Table',
-            command: 'resmon.toggleCpuLayout',
-            prefix: 'CPU Layout',
-          };
-          lines.push(...getTooltipFooter(config, 'cpu', layoutToggle));
+          lines.push(...getTooltipFooter());
           cpuMd = lines.join('\n');
         }
         updateWidget(widgets.cpu, `$(pulse) ${cpuStr}%`, cpuMd, true);
@@ -598,11 +655,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
           let loadMd: string | null = null;
           if (tooltipDue('freq')) {
-            const formatToggle = {
-              label: config.loadFormat === 'Percent' ? 'Switch to Raw Value' : 'Switch to Normalized %',
-              command: 'resmon.toggleLoadFormat',
-              prefix: 'Load Format',
-            };
 
             const loadColumns: ColumnDef[] = [
               { header: 'Period', align: 'right' },
@@ -620,7 +672,7 @@ export function activate(context: vscode.ExtensionContext): void {
               `Normalized capacity across **${load.totalCores} logical cores**:`,
               '',
               ...renderDynamicAsciiTable(loadColumns, loadRows),
-              ...getTooltipFooter(config, 'freq', formatToggle),
+              ...getTooltipFooter(),
             ].join('\n');
           }
           updateWidget(widgets.freq, `$(dashboard) ${loadStr}`, loadMd, true);
@@ -644,7 +696,7 @@ export function activate(context: vscode.ExtensionContext): void {
               });
               lines.push(...coreFreqs);
             }
-            lines.push(...getTooltipFooter(config, 'freq'));
+            lines.push(...getTooltipFooter());
             freqMd = lines.join('\n');
           }
           updateWidget(widgets.freq, `$(dashboard) ${freqStr} ${config.freqUnit}`, freqMd, true);
@@ -717,7 +769,7 @@ export function activate(context: vscode.ExtensionContext): void {
             '### CPU & System Temperature',
             '',
             ...renderDynamicAsciiTable(tempColumns, tempRows),
-            ...getTooltipFooter(config, 'temp'),
+            ...getTooltipFooter(),
           ];
           tempMd = tempLines.join('\n');
         }
@@ -800,7 +852,7 @@ export function activate(context: vscode.ExtensionContext): void {
             memLines.push(...renderDynamicAsciiTable(allocCols, allocRows));
           }
 
-          memLines.push(...getTooltipFooter(config, 'mem'));
+          memLines.push(...getTooltipFooter());
           memMd = memLines.join('\n');
         }
         updateWidget(widgets.mem, `$(ellipsis) ${usedStr}/${totalStr} ${config.memUnit}`, memMd, true);
@@ -881,7 +933,7 @@ export function activate(context: vscode.ExtensionContext): void {
               '### Battery Status & Health',
               '',
               ...renderDynamicAsciiTable(batCols, batRows),
-              ...getTooltipFooter(config, 'battery'),
+              ...getTooltipFooter(),
             ];
             batMd = batLines.join('\n');
           }
@@ -964,12 +1016,7 @@ export function activate(context: vscode.ExtensionContext): void {
               `${formatBytes(d.freeBytes)} of ${formatBytes(d.totalBytes)}`,
             ]);
             lines.push(...renderDynamicAsciiTable(storageCols, storageRows));
-            const multiToggle = cachedDisks.length > 1 ? {
-              label: config.diskMultiDisplay === 'All' ? 'Switch to Most Full Disk' : 'Switch to All Disks',
-              command: 'resmon.toggleDiskMultiDisplay',
-              prefix: 'Multi-Disk',
-            } : undefined;
-            lines.push(...getTooltipFooter(config, 'disk', multiToggle));
+            lines.push(...getTooltipFooter());
             diskMd = lines.join('\n');
           }
           updateWidget(widgets.disk, `$(database) ${diskDisplayStr}`, diskMd, true);
@@ -1023,6 +1070,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('resmon.refresh', async () => {
       await update(true);
       scheduleNext();
+    })
+  );
+
+  // Settings panel (sliders, section order, units); the gear widget opens it too
+  context.subscriptions.push(
+    vscode.commands.registerCommand('resmon.openSettings', () => {
+      SettingsPanel.show(process.platform);
     })
   );
 
@@ -1087,13 +1141,20 @@ export function activate(context: vscode.ExtensionContext): void {
         const newConfig = getConfig();
         if (
           newConfig.priority !== currentConfig.priority ||
-          newConfig.alignment !== currentConfig.alignment
+          newConfig.alignment !== currentConfig.alignment ||
+          newConfig.showSettings !== currentConfig.showSettings ||
+          newConfig.order.join() !== currentConfig.order.join()
         ) {
-          // Dispose and recreate widgets if layout alignment or base priority changed
+          // Placement changed: recreate the widgets (VS Code cannot move an existing item)
           disposeWidgets();
-          currentConfig = newConfig;
-          widgets = createWidgets(currentConfig.alignment, currentConfig.priority);
+          widgets = createWidgets(newConfig);
+        } else if (settingsItem) {
+          const md = new vscode.MarkdownString(buildSettingsTooltip(newConfig), true);
+          md.isTrusted = true;
+          settingsItem.tooltip = md;
         }
+        currentConfig = newConfig;
+        SettingsPanel.notifyConfigChanged();
 
         cachedBattery = null;
         cachedDisks = [];
@@ -1113,6 +1174,7 @@ export function activate(context: vscode.ExtensionContext): void {
  */
 export function deactivate(): void {
   disposed = true;
+  SettingsPanel.disposeCurrent();
   if (updateTimer) {
     clearTimeout(updateTimer);
     updateTimer = null;

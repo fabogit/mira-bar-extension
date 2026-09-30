@@ -6,6 +6,31 @@ export type TooltipSection = 'cpu' | 'freq' | 'temp' | 'mem' | 'battery' | 'disk
 
 export const TOOLTIP_SECTIONS: readonly TooltipSection[] = ['cpu', 'freq', 'temp', 'mem', 'battery', 'disk'];
 
+/** Default left-to-right order of the status bar widgets (resmon.order). */
+export const DEFAULT_WIDGET_ORDER: readonly TooltipSection[] = TOOLTIP_SECTIONS;
+
+/**
+ * Validates resmon.order: keeps known, unique section ids in the given order and appends any
+ * missing section in its default position, so a partial or invalid list never hides a widget.
+ */
+export function readWidgetOrder(raw: unknown): TooltipSection[] {
+  const order: TooltipSection[] = [];
+  if (Array.isArray(raw)) {
+    for (const value of raw) {
+      if (typeof value === 'string' && (TOOLTIP_SECTIONS as readonly string[]).includes(value) &&
+          !order.includes(value as TooltipSection)) {
+        order.push(value as TooltipSection);
+      }
+    }
+  }
+  for (const section of DEFAULT_WIDGET_ORDER) {
+    if (!order.includes(section)) {
+      order.push(section);
+    }
+  }
+  return order;
+}
+
 /**
  * Default refresh interval per section, in seconds. It sets how fresh each section is: the Static
  * tooltip auto-refresh interval and, for battery, disk and temperature, also how often they are sampled.
@@ -19,20 +44,20 @@ export const DEFAULT_SECTION_REFRESH_SECONDS: Readonly<Record<TooltipSection, nu
   disk: 10,
 };
 
-const MIN_SECTION_REFRESH_SECONDS = 1;
-const MAX_SECTION_REFRESH_SECONDS = 3600;
+export const MIN_SECTION_REFRESH_SECONDS = 1;
+export const MAX_SECTION_REFRESH_SECONDS = 3600;
 /** A full temperature pass costs ~16 ms of HID IPC (Apple M4), so it is never sampled more often than every 2 s. */
-const MIN_TEMP_REFRESH_SECONDS = 2;
+export const MIN_TEMP_REFRESH_SECONDS = 2;
 
 /** Polling interval bounds for the status bar values, in milliseconds. */
-const MIN_UPDATE_FREQUENCY_MS = 200;
-const MAX_UPDATE_FREQUENCY_MS = 15_000;
+export const MIN_UPDATE_FREQUENCY_MS = 200;
+export const MAX_UPDATE_FREQUENCY_MS = 15_000;
 
 /**
  * Validates the per-section refresh object from settings, falling back to defaults for
  * missing or invalid entries and clamping values to [1, 3600] seconds (temperature: [2, 3600]).
  */
-function readSectionRefreshSeconds(raw: unknown): Record<TooltipSection, number> {
+export function readSectionRefreshSeconds(raw: unknown): Record<TooltipSection, number> {
   const result = { ...DEFAULT_SECTION_REFRESH_SECONDS };
   if (raw !== null && typeof raw === 'object') {
     const values = raw as Record<string, unknown>;
@@ -63,6 +88,10 @@ export interface ResMonConfig {
   showBattery: boolean;
   /** Whether to show disk space in the status bar. */
   showDisk: boolean;
+  /** Whether to show the settings (gear) widget in the status bar. */
+  showSettings: boolean;
+  /** Left-to-right order of the metric widgets in the status bar. */
+  order: TooltipSection[];
   /** Format used to render disk space strings. */
   diskFormat: DiskSpaceFormat;
   /** Explicit filesystem mount points to monitor. Empty means active workspace or root. */
@@ -109,6 +138,8 @@ export function getConfig(): ResMonConfig {
     showMem: config.get<boolean>('show.mem', true),
     showBattery: config.get<boolean>('show.battery', true),
     showDisk: config.get<boolean>('show.disk', false),
+    showSettings: config.get<boolean>('show.settings', true),
+    order: readWidgetOrder(config.get<unknown>('order')),
     diskFormat: config.get<DiskSpaceFormat>('disk.format', 'PercentRemaining'),
     diskDrives: config.get<string[]>('disk.drives', []),
     diskMultiDisplay: config.get<'All' | 'MostFull'>('disk.multiDisplay', 'All'),

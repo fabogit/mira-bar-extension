@@ -28,6 +28,10 @@
         "title": "Resource Monitor: Refresh Stats"
       },
       {
+        "command": "resmon.openSettings",
+        "title": "Resource Monitor: Open Settings Panel"
+      },
+      {
         "command": "resmon.toggleTooltipMode",
         "title": "Resource Monitor: Toggle Tooltip Mode (Static / Live)"
       },
@@ -81,6 +85,21 @@
           "type": "boolean",
           "default": false,
           "description": "Toggles the display of disk space information."
+        },
+        "resmon.show.settings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Shows the settings (gear) widget after the metrics: its tooltip holds the quick toggles, a click opens the settings panel."
+        },
+        "resmon.order": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["cpu", "freq", "temp", "mem", "battery", "disk"]
+          },
+          "uniqueItems": true,
+          "default": ["cpu", "freq", "temp", "mem", "battery", "disk"],
+          "description": "Left-to-right order of the status bar widgets: cpu (CPU usage), freq (CPU frequency on Linux, system load on macOS), temp, mem, battery, disk. Missing entries keep their default position."
         },
         "resmon.disk.format": {
           "type": "string",
