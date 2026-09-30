@@ -122,7 +122,9 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
 
 - [x] **Static Tooltip Freshness**:
   - In `Static` mode tooltips are regenerated only on click/refresh, so hovering shows the values from the last refresh (or from the switch out of `Live`) while the status bar text keeps updating.
-  - VS Code exposes no hover event, so tooltips cannot be computed on hover. Static regenerates tooltips on click and, with `resmon.tooltip.autoRefresh` (default on, toggle from the tooltip or the command palette), at per-section intervals from `resmon.tooltip.refreshSeconds` (default 5 s; battery and disk 10 s). Live regenerates at most once per second.
+  - VS Code exposes no hover event, so tooltips cannot be computed on hover. Static regenerates tooltips on click and, with `resmon.tooltip.autoRefresh` (default on, toggle from the tooltip or the command palette), at per-section intervals from `resmon.refreshSeconds` (default 5 s; battery and disk 10 s). Live regenerates at most once per second.
+  - `resmon.refreshSeconds` also sets how often battery, disk and temperature are sampled (temperature minimum 2 s); `resmon.updatefrequencyms` (200-15000 ms) drives the status bar values.
+  - Battery tooltip shows "Nominal vs Design" (NominalChargeCapacity / DesignCapacity) instead of "Battery Health": macOS "Maximum Capacity" uses an internal calculation not exposed to apps (100% vs 99.4% on the test M4).
   - Every tooltip ends with the update time and the refresh hint on separate lines.
 - [ ] **Configurable Widget Order**:
   - New setting (e.g. `resmon.order`: ordered list of `cpu`, `freq`/`load`, `temp`, `mem`, `battery`, `disk`) mapped to status bar priorities, applied live on configuration change; unknown or missing entries fall back to the default order.

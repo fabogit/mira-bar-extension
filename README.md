@@ -71,7 +71,7 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.show.mem` | `boolean` | `true` | Toggle memory consumption |
 | `resmon.show.battery` | `boolean` | `true` | Toggle battery percentage (auto-hidden on desktops) |
 | `resmon.show.disk` | `boolean` | `false` | Toggle disk space information |
-| `resmon.updatefrequencyms`| `number` | `2000` | Update frequency in milliseconds (min: 200) |
+| `resmon.updatefrequencyms`| `number` | `2000` | Status bar polling interval in milliseconds (200-15000) |
 | `resmon.freq.unit` | `string` | `"GHz"` | Unit for CPU frequency (`GHz`, `MHz`, `KHz`, `Hz`) |
 | `resmon.mem.unit` | `string` | `"GB"` | Unit for memory display (`GB`, `MB`, `KB`, `B`) |
 | `resmon.disk.format` | `string` | `"PercentRemaining"` | Disk display format |
@@ -79,7 +79,9 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.disk.multiDisplay` | `string` | `"All"` | Multi-disk status bar display mode: `"All"` (all disks) or `"MostFull"` (single fullest volume) |
 | `resmon.priority` | `number` | `100` | Base priority for status bar positioning (lower/negative shifts right) |
 | `resmon.alignment` | `string` | `"Left"` | Status bar alignment (`"Left"` or `"Right"`) |
-| `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (flicker-free, updated on click) or `"Live"` (continuous real-time) |
+| `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (updated on click and, with auto-refresh, at each section interval) or `"Live"` (every polling tick, at most once per second) |
+| `resmon.tooltip.autoRefresh` | `boolean` | `true` | Static mode: regenerate tooltips automatically at each section interval (otherwise only on click) |
+| `resmon.refreshSeconds` | `object` | `{cpu:5, freq:5, temp:5, mem:5, battery:10, disk:10}` | Seconds per section: Static tooltip refresh; battery, disk and temperature are also sampled at this interval (temperature min 2 s) |
 | `resmon.tooltip.cpuLayout` | `string` | `"Table"` | CPU core layout in tooltips: `"Table"` (compact monospace grid) or `"List"` (vertical cluster list) |
 | `resmon.loadFormat` | `string` | `"Percent"` | System Load display format on Darwin: `"Percent"` (`34.4% L`) or `"Value"` (`3.44 L`) |
 

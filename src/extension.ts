@@ -9,13 +9,12 @@ let disposed = false;
 let isUpdating = false;
 let pendingForceUpdate = false;
 let lastUpdateError = '';
-/** Slow metrics are sampled on a time basis, independent of the polling interval (a click forces all). */
-const BATTERY_REFRESH_MS = 5_000;
-const DISK_REFRESH_MS = 10_000;
+/* Battery, disk and temperature are sampled at their section interval (resmon.refreshSeconds),
+   independent of the polling interval; a click forces a fresh sample of everything. */
 /**
  * Tooltip regeneration. VS Code has no hover event, so tooltips are rebuilt ahead of time:
  * Live on every tick (at most once per second); Static on click and, when auto-refresh is on,
- * at the per-section interval from `resmon.tooltip.refreshSeconds` (limits hover flicker).
+ * at the per-section interval from `resmon.refreshSeconds` (limits hover flicker).
  */
 const LIVE_TOOLTIP_REFRESH_MS = 1_000;
 
@@ -101,7 +100,7 @@ function tooltipIntervalMs(config: ResMonConfig, section: TooltipSection): numbe
   if (config.tooltipMode === 'Live') {
     return LIVE_TOOLTIP_REFRESH_MS;
   }
-  return config.tooltipAutoRefresh ? config.tooltipRefreshSeconds[section] * 1000 : Number.POSITIVE_INFINITY;
+  return config.tooltipAutoRefresh ? config.sectionRefreshSeconds[section] * 1000 : Number.POSITIVE_INFINITY;
 }
 
 /**
@@ -395,7 +394,7 @@ function getTooltipFooter(
   ];
   if (mode === 'Static') {
     lines.push(config.tooltipAutoRefresh
-      ? `- **Auto-refresh**: every ${config.tooltipRefreshSeconds[section]} s ([Turn off](command:resmon.toggleTooltipAutoRefresh))`
+      ? `- **Auto-refresh**: every ${config.sectionRefreshSeconds[section]} s ([Turn off](command:resmon.toggleTooltipAutoRefresh))`
       : '- **Auto-refresh**: off ([Turn on](command:resmon.toggleTooltipAutoRefresh))');
   }
   if (extraCommand) {
@@ -468,7 +467,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * Executes a polling tick across active resource providers and updates individual widgets.
    *
    * Fast in-memory telemetry (CPU, Freq/Load, Temp, RAM) is polled on every tick.
-   * Slow or I/O-intensive telemetry (Battery, Disk) is decimated if updateFrequencyMs < 1000.
+   * Battery, disk and temperature are sampled at their section interval (resmon.refreshSeconds).
    * Tooltip Markdown content is refreshed on every tick in 'Live' mode, or on-demand when forceAll is true in 'Static' mode.
    *
    * @param forceAll - When true, bypasses tick decimation and forces all providers and tooltips to refresh.
@@ -655,7 +654,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       // 3. CPU & System Temperature (4-metric synthesis on Darwin)
-      const cpuTemp = config.showCpuTemp ? platformProvider.sampleTemp() : null;
+      const cpuTemp = config.showCpuTemp ? platformProvider.sampleTemp(config.sectionRefreshSeconds.temp * 1000) : null;
       if (cpuTemp) {
         const tempStr = padNum(cpuTemp.tempCelsius.toFixed(2), 5);
         let tempMd: string | null = null;
@@ -811,7 +810,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 5. Battery (with Time Remaining estimation)
       if (config.showBattery && platformProvider.isBatteryAvailable()) {
-        if (forceAll || cachedBattery === null || now - lastBatterySampleAt >= BATTERY_REFRESH_MS) {
+        if (forceAll || cachedBattery === null || now - lastBatterySampleAt >= config.sectionRefreshSeconds.battery * 1000) {
           cachedBattery = platformProvider.sampleBattery();
           lastBatterySampleAt = now;
         }
@@ -844,8 +843,10 @@ export function activate(context: vscode.ExtensionContext): void {
               const healthDetail = cachedBattery.designCapacity && healthCapacity
                 ? `${healthCapacity} / ${cachedBattery.designCapacity} ${unit}`
                 : `${cachedBattery.healthPercent.toFixed(1)}%`;
+              // Nominal full-charge capacity vs design capacity. macOS "Maximum Capacity" uses an
+              // internal calculation that is not exposed to apps, so the label says what this is.
               batRows.push([
-                'Battery Health',
+                'Nominal vs Design',
                 `${renderBar(cachedBattery.healthPercent, 6, false)}  ${cachedBattery.healthPercent.toFixed(1).padStart(5, ' ')}%`,
                 healthDetail,
               ]);
@@ -900,7 +901,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 6. Disk Space (asynchronous statfs with tick decimation)
       if (config.showDisk) {
-        if (forceAll || cachedDisks.length === 0 || now - lastDiskSampleAt >= DISK_REFRESH_MS) {
+        if (forceAll || cachedDisks.length === 0 || now - lastDiskSampleAt >= config.sectionRefreshSeconds.disk * 1000) {
           lastDiskSampleAt = now;
           const defaultWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
           cachedDisks = await diskProvider.sample(config.diskDrives, defaultWorkspace);

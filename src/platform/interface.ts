@@ -26,7 +26,7 @@ export interface TelemetryPlatformProvider {
   /**
    * Samples CPU / SoC die temperature in degrees Celsius.
    */
-  sampleTemp(): CpuTempInfo | null;
+  sampleTemp(maxAgeMs?: number): CpuTempInfo | null;
 
   /**
    * Samples system physical memory (RAM) and swap metrics.
