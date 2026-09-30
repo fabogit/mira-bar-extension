@@ -179,33 +179,38 @@
             "Live"
           ],
           "default": "Static",
-          "description": "Tooltip refresh mode: 'Static' regenerates tooltips on click and, when auto-refresh is on, at the per-section intervals of 'resmon.refreshSeconds' (limits hover flicker); 'Live' regenerates them on every polling tick (at most once per second). Each tooltip shows the time of its last update."
+          "description": "Tooltip refresh mode: 'Static' regenerates tooltips on click and, when auto-refresh is on, at the per-section intervals of 'resmon.refreshMs' (limits hover flicker); 'Live' regenerates them on every polling tick (at most once per second). Each tooltip shows the time of its last update."
         },
         "resmon.tooltip.autoRefresh": {
           "type": "boolean",
           "default": true,
-          "description": "Static mode only: automatically regenerate tooltips at the per-section intervals of 'resmon.refreshSeconds'. When off, Static tooltips refresh only on click."
+          "description": "Static mode only: automatically regenerate tooltips at the per-section intervals of 'resmon.refreshMs'. When off, Static tooltips refresh only on click."
+        },
+        "resmon.refreshMs": {
+          "type": "object",
+          "default": {
+            "cpu": 5000,
+            "freq": 5000,
+            "temp": 5000,
+            "mem": 5000,
+            "battery": 10000,
+            "disk": 10000
+          },
+          "properties": {
+            "cpu": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "CPU utilization: Static tooltip refresh (ms)." },
+            "freq": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "CPU frequency (Linux) / system load (macOS): Static tooltip refresh (ms)." },
+            "temp": { "type": "number", "minimum": 2000, "maximum": 3600000, "description": "Temperature: sampling and Static tooltip refresh (ms; minimum 2000: each sensor pass costs ~16 ms)." },
+            "mem": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Memory: Static tooltip refresh (ms)." },
+            "battery": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Battery: sampling and Static tooltip refresh (ms)." },
+            "disk": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Disk: sampling and Static tooltip refresh (ms)." }
+          },
+          "additionalProperties": false,
+          "description": "Refresh interval in milliseconds for each section (200 ms to 1 h). In Static mode it is the tooltip auto-refresh interval (see 'resmon.tooltip.autoRefresh'); battery, disk and temperature are also sampled at this interval in both modes. Intervals shorter than 'resmon.updatefrequencyms' take effect at the next status bar tick."
         },
         "resmon.refreshSeconds": {
           "type": "object",
-          "default": {
-            "cpu": 5,
-            "freq": 5,
-            "temp": 5,
-            "mem": 5,
-            "battery": 10,
-            "disk": 10
-          },
-          "properties": {
-            "cpu": { "type": "number", "minimum": 1, "maximum": 3600, "description": "CPU utilization: Static tooltip refresh." },
-            "freq": { "type": "number", "minimum": 1, "maximum": 3600, "description": "CPU frequency (Linux) / system load (macOS): Static tooltip refresh." },
-            "temp": { "type": "number", "minimum": 2, "maximum": 3600, "description": "Temperature: sampling and Static tooltip refresh (minimum 2 s: each sensor pass costs ~16 ms)." },
-            "mem": { "type": "number", "minimum": 1, "maximum": 3600, "description": "Memory: Static tooltip refresh." },
-            "battery": { "type": "number", "minimum": 1, "maximum": 3600, "description": "Battery: sampling and Static tooltip refresh." },
-            "disk": { "type": "number", "minimum": 1, "maximum": 3600, "description": "Disk: sampling and Static tooltip refresh." }
-          },
-          "additionalProperties": false,
-          "description": "Refresh interval in seconds for each section. In Static mode it is the tooltip auto-refresh interval (see 'resmon.tooltip.autoRefresh'); battery, disk and temperature are also sampled at this interval in both modes. CPU, load and memory values in the status bar follow 'resmon.updatefrequencyms'."
+          "deprecationMessage": "Replaced by resmon.refreshMs (milliseconds). Still read, converted, until resmon.refreshMs is set.",
+          "description": "Deprecated: per-section refresh in seconds. Use resmon.refreshMs."
         },
         "resmon.tooltip.cpuLayout": {
           "type": "string",

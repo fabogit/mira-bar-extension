@@ -1,16 +1,14 @@
 import * as vscode from 'vscode';
 import {
   getConfig,
-  MAX_SECTION_REFRESH_SECONDS,
   MAX_UPDATE_FREQUENCY_MS,
   MIN_UPDATE_FREQUENCY_MS,
-  readSectionRefreshSeconds,
+  readSectionRefreshMs,
   readWidgetOrder,
-  TOOLTIP_SECTIONS,
 } from '../config.js';
 
 /** Kinds of value the settings panel may write, each with its own validation. */
-type SettingKind = 'boolean' | 'number' | 'enum' | 'stringArray' | 'order' | 'refreshSeconds';
+type SettingKind = 'boolean' | 'number' | 'enum' | 'stringArray' | 'order' | 'refreshMs';
 
 interface SettingSpec {
   /** Key under the `resmon` configuration section. */
@@ -29,7 +27,7 @@ export const EDITABLE_SETTINGS: readonly SettingSpec[] = [
   { key: 'tooltip.mode', kind: 'enum', options: ['Static', 'Live'] },
   { key: 'tooltip.autoRefresh', kind: 'boolean' },
   { key: 'updatefrequencyms', kind: 'number', min: MIN_UPDATE_FREQUENCY_MS, max: MAX_UPDATE_FREQUENCY_MS },
-  { key: 'refreshSeconds', kind: 'refreshSeconds' },
+  { key: 'refreshMs', kind: 'refreshMs' },
   { key: 'order', kind: 'order' },
   { key: 'show.cpuusage', kind: 'boolean' },
   { key: 'show.cpufreq', kind: 'boolean' },
@@ -88,16 +86,11 @@ export function validateSetting(key: string, value: unknown): ValidationResult {
         return { ok: false, reason: 'order must be a list of sections' };
       }
       return { ok: true, value: readWidgetOrder(value) };
-    case 'refreshSeconds': {
+    case 'refreshMs':
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-        return { ok: false, reason: 'refreshSeconds must be an object' };
+        return { ok: false, reason: 'refreshMs must be an object' };
       }
-      const clamped = readSectionRefreshSeconds(value);
-      for (const section of TOOLTIP_SECTIONS) {
-        clamped[section] = Math.min(MAX_SECTION_REFRESH_SECONDS, Math.round(clamped[section]));
-      }
-      return { ok: true, value: clamped };
-    }
+      return { ok: true, value: readSectionRefreshMs(value) };
   }
 }
 
@@ -111,7 +104,7 @@ export function readSettingsSnapshot(): Record<string, unknown> {
     'tooltip.mode': c.tooltipMode,
     'tooltip.autoRefresh': c.tooltipAutoRefresh,
     updatefrequencyms: c.updateFrequencyMs,
-    refreshSeconds: c.sectionRefreshSeconds,
+    refreshMs: c.sectionRefreshMs,
     order: c.order,
     'show.cpuusage': c.showCpuUsage,
     'show.cpufreq': c.showCpuFreq,
@@ -136,7 +129,12 @@ export function readSettingsSnapshot(): Record<string, unknown> {
  * Writes one validated setting to the user (global) settings.
  */
 export async function writeSetting(key: string, value: unknown): Promise<void> {
-  await vscode.workspace.getConfiguration('resmon').update(key, value, vscode.ConfigurationTarget.Global);
+  const configuration = vscode.workspace.getConfiguration('resmon');
+  await configuration.update(key, value, vscode.ConfigurationTarget.Global);
+  if (key === 'refreshMs') {
+    // Drop the deprecated seconds-based setting once the millisecond one is saved.
+    await configuration.update('refreshSeconds', undefined, vscode.ConfigurationTarget.Global);
+  }
 }
 
 /**
@@ -147,4 +145,5 @@ export async function resetSettings(): Promise<void> {
   for (const spec of EDITABLE_SETTINGS) {
     await configuration.update(spec.key, undefined, vscode.ConfigurationTarget.Global);
   }
+  await configuration.update('refreshSeconds', undefined, vscode.ConfigurationTarget.Global);
 }

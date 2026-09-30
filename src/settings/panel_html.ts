@@ -81,7 +81,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   .name { white-space: nowrap; }
   .refresh { display: flex; align-items: center; gap: 8px; }
   .refresh input[type="range"] { flex: 1 1 140px; }
-  .refresh input[type="number"] { width: 66px; }
+  .refresh input[type="number"] { width: 92px; }
   .move { display: inline-flex; gap: 2px; }
   .icon-btn {
     font: inherit; line-height: 1; padding: 3px 6px; border-radius: 3px; cursor: pointer;
@@ -140,8 +140,8 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     <div class="row">
       <div class="label">Update interval<span class="hint">CPU, load and memory values</span></div>
       <div class="control">
-        <input type="range" id="freqRange" min="200" max="15000" step="100" aria-label="Update interval (milliseconds)">
-        <input type="number" id="freqNumber" min="200" max="15000" step="100" aria-label="Update interval in milliseconds">
+        <input type="range" id="freqRange" min="0" step="1" aria-label="Update interval (preset steps)">
+        <input type="number" id="freqNumber" min="200" max="15000" step="50" aria-label="Update interval in milliseconds">
         <span class="unit">ms</span>
       </div>
     </div>
@@ -177,8 +177,10 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
       </thead>
       <tbody id="sections"></tbody>
     </table>
-    <p class="note">Drag rows (or use the arrows) to reorder the widgets left to right. Refresh sets the Static tooltip
-      auto-refresh; battery, disk and temperature are also sampled at that interval (temperature at least every 2 s).</p>
+    <p class="note">Drag rows (or use the arrows) to reorder the widgets left to right. Refresh (200 ms to 1 h; the slider
+      has preset steps, type any value in the field) sets the Static tooltip auto-refresh; battery, disk and temperature are
+      also sampled at that interval, temperature at least every 2000 ms. Intervals shorter than the status bar update
+      interval take effect at its next tick.</p>
   </section>
 
   <section aria-labelledby="h-display">
@@ -254,8 +256,21 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     battery: { label: 'Battery', show: 'show.battery' },
     disk: { label: 'Disk', show: 'show.disk' }
   };
-  const REFRESH_SLIDER_MAX = 60;
-  const REFRESH_MAX = 3600;
+  // Slider presets (ms): denser at the low end, where precision matters; the number fields take any value.
+  const BAR_STOPS = [200, 250, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
+  const SECTION_STOPS = [200, 250, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000,
+    45000, 60000, 120000, 300000, 600000, 1800000, 3600000];
+  const BAR_MIN = 200, BAR_MAX = 15000;
+  const SECTION_MIN = 200, TEMP_MIN = 2000, SECTION_MAX = 3600000;
+
+  /** Index of the preset closest to ms (log scale), for positioning a slider. */
+  function nearestStop(stops, ms) {
+    let best = 0;
+    for (let i = 1; i < stops.length; i++) {
+      if (Math.abs(Math.log(stops[i] / ms)) < Math.abs(Math.log(stops[best] / ms))) { best = i; }
+    }
+    return best;
+  }
   let values = null;
   let platform = 'darwin';
   let dragId = null;
@@ -298,12 +313,13 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   $('showSettings').addEventListener('change', function (e) { send('show.settings', e.target.checked); });
 
   // Update interval: the slider previews while dragging and saves on release; the field saves on change.
-  $('freqRange').addEventListener('input', function (e) { $('freqNumber').value = e.target.value; });
-  $('freqRange').addEventListener('change', function (e) { send('updatefrequencyms', Number(e.target.value)); });
+  $('freqRange').max = String(BAR_STOPS.length - 1);
+  $('freqRange').addEventListener('input', function (e) { $('freqNumber').value = BAR_STOPS[Number(e.target.value)]; });
+  $('freqRange').addEventListener('change', function (e) { send('updatefrequencyms', BAR_STOPS[Number(e.target.value)]); });
   $('freqNumber').addEventListener('change', function (e) {
-    const v = clamp(Math.round(Number(e.target.value) || 2000), 200, 15000);
+    const v = clamp(Math.round(Number(e.target.value) || 2000), BAR_MIN, BAR_MAX);
     e.target.value = v;
-    $('freqRange').value = v;
+    $('freqRange').value = nearestStop(BAR_STOPS, v);
     send('updatefrequencyms', v);
   });
 
@@ -321,11 +337,11 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   $('reset').addEventListener('click', function () { vscode.postMessage({ type: 'reset' }); });
   $('openJson').addEventListener('click', function () { vscode.postMessage({ type: 'openJson' }); });
 
-  function sendRefresh(id, seconds) {
-    const next = Object.assign({}, values.refreshSeconds);
-    next[id] = seconds;
-    values.refreshSeconds = next;
-    send('refreshSeconds', next);
+  function sendRefresh(id, ms) {
+    const next = Object.assign({}, values.refreshMs);
+    next[id] = ms;
+    values.refreshMs = next;
+    send('refreshMs', next);
   }
 
   function moveSection(id, delta) {
@@ -342,8 +358,9 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
 
   function makeRow(id, index, count) {
     const meta = SECTIONS[id];
-    const minSeconds = id === 'temp' ? 2 : 1;
-    const seconds = values.refreshSeconds[id];
+    const minMs = id === 'temp' ? TEMP_MIN : SECTION_MIN;
+    const stops = SECTION_STOPS; // same steps on every row, so equal values line up
+    const current = values.refreshMs[id];
     const tr = document.createElement('tr');
     tr.draggable = true;
     tr.dataset.id = id;
@@ -373,27 +390,33 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     wrap.className = 'refresh';
     const range = document.createElement('input');
     range.type = 'range';
-    range.min = String(minSeconds);
-    range.max = String(REFRESH_SLIDER_MAX);
+    range.min = '0';
+    range.max = String(stops.length - 1);
     range.step = '1';
-    range.value = String(Math.min(seconds, REFRESH_SLIDER_MAX));
-    range.setAttribute('aria-label', meta.label + ' refresh (seconds)');
+    range.value = String(nearestStop(stops, current));
+    range.setAttribute('aria-label', meta.label + ' refresh (preset steps)');
     const num = document.createElement('input');
     num.type = 'number';
-    num.min = String(minSeconds);
-    num.max = String(REFRESH_MAX);
-    num.step = '1';
-    num.value = String(seconds);
-    num.setAttribute('aria-label', meta.label + ' refresh in seconds');
+    num.min = String(minMs);
+    num.max = String(SECTION_MAX);
+    num.step = '50';
+    num.value = String(current);
+    num.setAttribute('aria-label', meta.label + ' refresh in milliseconds');
     const unit = document.createElement('span');
     unit.className = 'unit';
-    unit.textContent = 's';
-    range.addEventListener('input', function () { num.value = range.value; });
-    range.addEventListener('change', function () { sendRefresh(id, Number(range.value)); });
+    unit.textContent = 'ms';
+    // Steps below the section minimum (temperature: 2000 ms) snap up to it.
+    function stepValue() { return Math.max(minMs, stops[Number(range.value)]); }
+    range.addEventListener('input', function () { num.value = stepValue(); });
+    range.addEventListener('change', function () {
+      const v = stepValue();
+      range.value = String(nearestStop(stops, v));
+      sendRefresh(id, v);
+    });
     num.addEventListener('change', function () {
-      const v = clamp(Math.round(Number(num.value) || minSeconds), minSeconds, REFRESH_MAX);
+      const v = clamp(Math.round(Number(num.value) || minMs), minMs, SECTION_MAX);
       num.value = v;
-      range.value = String(Math.min(v, REFRESH_SLIDER_MAX));
+      range.value = String(nearestStop(stops, v));
       sendRefresh(id, v);
     });
     wrap.append(range, num, unit);
@@ -497,7 +520,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     $('row-autorefresh').classList.toggle('disabled', live);
 
     if (!isFocused($('freqNumber')) && !isFocused($('freqRange'))) {
-      $('freqRange').value = values.updatefrequencyms;
+      $('freqRange').value = nearestStop(BAR_STOPS, values.updatefrequencyms);
       $('freqNumber').value = values.updatefrequencyms;
     }
     if (!isFocused($('priority'))) { $('priority').value = values.priority; }

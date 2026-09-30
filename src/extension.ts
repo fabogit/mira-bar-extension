@@ -10,12 +10,12 @@ let disposed = false;
 let isUpdating = false;
 let pendingForceUpdate = false;
 let lastUpdateError = '';
-/* Battery, disk and temperature are sampled at their section interval (resmon.refreshSeconds),
+/* Battery, disk and temperature are sampled at their section interval (resmon.refreshMs),
    independent of the polling interval; a click forces a fresh sample of everything. */
 /**
  * Tooltip regeneration. VS Code has no hover event, so tooltips are rebuilt ahead of time:
  * Live on every tick (at most once per second); Static on click and, when auto-refresh is on,
- * at the per-section interval from `resmon.refreshSeconds` (limits hover flicker).
+ * at the per-section interval from `resmon.refreshMs` (limits hover flicker).
  */
 const LIVE_TOOLTIP_REFRESH_MS = 1_000;
 
@@ -107,7 +107,23 @@ function tooltipIntervalMs(config: ResMonConfig, section: TooltipSection): numbe
   if (config.tooltipMode === 'Live') {
     return LIVE_TOOLTIP_REFRESH_MS;
   }
-  return config.tooltipAutoRefresh ? config.sectionRefreshSeconds[section] * 1000 : Number.POSITIVE_INFINITY;
+  return config.tooltipAutoRefresh ? config.sectionRefreshMs[section] : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Formats a duration in milliseconds compactly: '200 ms', '1.5 s', '10 s', '2 min'.
+ *
+ * @param ms - Duration in milliseconds.
+ * @returns Human-readable duration.
+ */
+function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms} ms`;
+  }
+  if (ms < 60_000) {
+    return `${Number((ms / 1000).toFixed(1))} s`;
+  }
+  return `${Number((ms / 60_000).toFixed(1))} min`;
 }
 
 /**
@@ -405,7 +421,7 @@ function buildSettingsTooltip(config: ResMonConfig): string {
   const isDarwin = process.platform === 'darwin';
   const mode = config.tooltipMode;
   const refresh = TOOLTIP_SECTIONS
-    .map((s) => `${SECTION_SHORT_LABELS[s](isDarwin)} ${config.sectionRefreshSeconds[s]} s`)
+    .map((s) => `${SECTION_SHORT_LABELS[s](isDarwin)} ${formatDuration(config.sectionRefreshMs[s])}`)
     .join(' · ');
   const lines = [
     '### Resource Monitor Settings',
@@ -416,7 +432,7 @@ function buildSettingsTooltip(config: ResMonConfig): string {
     lines.push(`- **Auto-refresh**: ${config.tooltipAutoRefresh ? 'on' : 'off'} — [turn ${config.tooltipAutoRefresh ? 'off' : 'on'}](command:resmon.toggleTooltipAutoRefresh)`);
   }
   lines.push(
-    `- **Status bar interval**: ${config.updateFrequencyMs} ms`,
+    `- **Status bar interval**: ${formatDuration(config.updateFrequencyMs)}`,
     `- **Section refresh**: ${refresh}`,
     `- **CPU cores**: ${config.cpuTooltipLayout} — [switch to ${config.cpuTooltipLayout === 'Table' ? 'List' : 'Table'}](command:resmon.toggleCpuLayout)`
   );
@@ -506,7 +522,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * Executes a polling tick across active resource providers and updates individual widgets.
    *
    * Fast in-memory telemetry (CPU, Freq/Load, Temp, RAM) is polled on every tick.
-   * Battery, disk and temperature are sampled at their section interval (resmon.refreshSeconds).
+   * Battery, disk and temperature are sampled at their section interval (resmon.refreshMs).
    * Tooltip Markdown content is refreshed on every tick in 'Live' mode, or on-demand when forceAll is true in 'Static' mode.
    *
    * @param forceAll - When true, bypasses tick decimation and forces all providers and tooltips to refresh.
@@ -706,7 +722,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       // 3. CPU & System Temperature (4-metric synthesis on Darwin)
-      const cpuTemp = config.showCpuTemp ? platformProvider.sampleTemp(config.sectionRefreshSeconds.temp * 1000) : null;
+      const cpuTemp = config.showCpuTemp ? platformProvider.sampleTemp(config.sectionRefreshMs.temp) : null;
       if (cpuTemp) {
         const tempStr = padNum(cpuTemp.tempCelsius.toFixed(2), 5);
         let tempMd: string | null = null;
@@ -862,7 +878,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 5. Battery (with Time Remaining estimation)
       if (config.showBattery && platformProvider.isBatteryAvailable()) {
-        if (forceAll || cachedBattery === null || now - lastBatterySampleAt >= config.sectionRefreshSeconds.battery * 1000) {
+        if (forceAll || cachedBattery === null || now - lastBatterySampleAt >= config.sectionRefreshMs.battery) {
           cachedBattery = platformProvider.sampleBattery();
           lastBatterySampleAt = now;
         }
@@ -953,7 +969,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 6. Disk Space (asynchronous statfs with tick decimation)
       if (config.showDisk) {
-        if (forceAll || cachedDisks.length === 0 || now - lastDiskSampleAt >= config.sectionRefreshSeconds.disk * 1000) {
+        if (forceAll || cachedDisks.length === 0 || now - lastDiskSampleAt >= config.sectionRefreshMs.disk) {
           lastDiskSampleAt = now;
           const defaultWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
           cachedDisks = await diskProvider.sample(config.diskDrives, defaultWorkspace);

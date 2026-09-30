@@ -54,7 +54,7 @@ antigravity --install-extension resource-monitor-ng-darwin-arm64-1.1.0.vsix
 The gear widget at the end of the status bar group collects the options:
 
 - **Hover** it for the current values and one-click toggles (tooltip mode, Static auto-refresh, CPU core layout, load format, multi-disk display).
-- **Click** it (or run *Resource Monitor: Open Settings Panel*) to open the settings panel: sliders and number fields for the status bar interval and the per-section refresh, section visibility, drag-and-drop widget order, units and disk options.
+- **Click** it (or run *Resource Monitor: Open Settings Panel*) to open the settings panel: preset-step sliders plus millisecond fields for fine-tuning the status bar interval and the per-section refresh, section visibility, drag-and-drop widget order, units and disk options.
 
 The panel is only a front-end for the regular settings below: every change is validated and written to your user `settings.json`, and edits made there are reflected in the panel. The data tooltips keep only the metrics, the time of their last update and links to *Settings* and *Refresh*.
 
@@ -93,7 +93,7 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.alignment` | `string` | `"Left"` | Status bar alignment (`"Left"` or `"Right"`) |
 | `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (updated on click and, with auto-refresh, at each section interval) or `"Live"` (every polling tick, at most once per second) |
 | `resmon.tooltip.autoRefresh` | `boolean` | `true` | Static mode: regenerate tooltips automatically at each section interval (otherwise only on click) |
-| `resmon.refreshSeconds` | `object` | `{cpu:5, freq:5, temp:5, mem:5, battery:10, disk:10}` | Seconds per section: Static tooltip refresh; battery, disk and temperature are also sampled at this interval (temperature min 2 s) |
+| `resmon.refreshMs` | `object` | `{cpu:5000, freq:5000, temp:5000, mem:5000, battery:10000, disk:10000}` | Milliseconds per section (200 ms to 1 h): Static tooltip refresh; battery, disk and temperature are also sampled at this interval (temperature min 2000 ms). Replaces the pre-release `resmon.refreshSeconds`, still read until `refreshMs` is set |
 | `resmon.tooltip.cpuLayout` | `string` | `"Table"` | CPU core layout in tooltips: `"Table"` (compact monospace grid) or `"List"` (vertical cluster list) |
 | `resmon.loadFormat` | `string` | `"Percent"` | System Load display format on Darwin: `"Percent"` (`34.4% L`) or `"Value"` (`3.44 L`) |
 
