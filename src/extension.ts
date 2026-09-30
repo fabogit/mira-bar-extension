@@ -14,10 +14,10 @@ let lastUpdateError = '';
    independent of the polling interval; a click forces a fresh sample of everything. */
 /**
  * Tooltip regeneration. VS Code has no hover event, so tooltips are rebuilt ahead of time:
- * Live on every tick (at most once per second); Static on click and, when auto-refresh is on,
- * at the per-section interval from `resmon.refreshMs` (limits hover flicker).
+ * Live on every status bar tick; Static on click and, when auto-refresh is on, at the per-section
+ * interval from `resmon.refreshMs` (limits hover flicker). Everything runs on the status bar tick
+ * (`resmon.updatefrequencyms`), so an interval shorter than the tick takes effect once per tick.
  */
-const LIVE_TOOLTIP_REFRESH_MS = 1_000;
 
 let lastBatterySampleAt = 0;
 let lastDiskSampleAt = 0;
@@ -105,7 +105,7 @@ function formatMinutes(minutes: number): string {
  */
 function tooltipIntervalMs(config: ResMonConfig, section: TooltipSection): number {
   if (config.tooltipMode === 'Live') {
-    return LIVE_TOOLTIP_REFRESH_MS;
+    return 0; // every tick
   }
   return config.tooltipAutoRefresh ? config.sectionRefreshMs[section] : Number.POSITIVE_INFINITY;
 }
@@ -127,14 +127,30 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * Formats a local wall-clock time as HH:MM:SS (24h), independent of the host locale.
+ * Formats a local wall-clock time as HH:MM:SS (24h), independent of the host locale, with tenths of
+ * a second when refreshes happen faster than once per second (otherwise they look identical).
  *
  * @param date - Time to format.
+ * @param withTenths - Append tenths of a second ('16:15:27.4').
  * @returns Formatted time string (e.g. '16:15:27').
  */
-function formatClock(date: Date): string {
+function formatClock(date: Date, withTenths = false): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  const base = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return withTenths ? `${base}.${Math.floor(date.getMilliseconds() / 100)}` : base;
+}
+
+/**
+ * Whether an interval has elapsed, tolerating timer jitter: ticks fire every updatefrequencyms but
+ * never exactly on time, so "elapsed >= interval" alone would skip every other tick when the
+ * interval equals the tick (e.g. 200 ms turned into ~3 refreshes per second instead of 5).
+ *
+ * @param elapsedMs - Time since the last refresh.
+ * @param intervalMs - Requested interval.
+ * @param tickMs - Status bar tick (resmon.updatefrequencyms).
+ */
+function intervalElapsed(elapsedMs: number, intervalMs: number, tickMs: number): boolean {
+  return elapsedMs + tickMs / 2 >= intervalMs;
 }
 
 /**
@@ -543,10 +559,10 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const config = getConfig();
       const now = Date.now();
-      tooltipUpdatedAt = formatClock(new Date(now));
+      tooltipUpdatedAt = formatClock(new Date(now), config.updateFrequencyMs < 1000);
       /** True when this section's tooltip must be rebuilt now (records the refresh time). */
       const tooltipDue = (section: TooltipSection): boolean => {
-        if (!forceAll && now - lastTooltipAt[section] < tooltipIntervalMs(config, section)) {
+        if (!forceAll && !intervalElapsed(now - lastTooltipAt[section], tooltipIntervalMs(config, section), config.updateFrequencyMs)) {
           return false;
         }
         lastTooltipAt[section] = now;
@@ -722,7 +738,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       // 3. CPU & System Temperature (4-metric synthesis on Darwin)
-      const cpuTemp = config.showCpuTemp ? platformProvider.sampleTemp(config.sectionRefreshMs.temp) : null;
+      const cpuTemp = config.showCpuTemp ? platformProvider.sampleTemp(Math.max(0, config.sectionRefreshMs.temp - config.updateFrequencyMs / 2)) : null;
       if (cpuTemp) {
         const tempStr = padNum(cpuTemp.tempCelsius.toFixed(2), 5);
         let tempMd: string | null = null;
@@ -878,7 +894,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 5. Battery (with Time Remaining estimation)
       if (config.showBattery && platformProvider.isBatteryAvailable()) {
-        if (forceAll || cachedBattery === null || now - lastBatterySampleAt >= config.sectionRefreshMs.battery) {
+        if (forceAll || cachedBattery === null || intervalElapsed(now - lastBatterySampleAt, config.sectionRefreshMs.battery, config.updateFrequencyMs)) {
           cachedBattery = platformProvider.sampleBattery();
           lastBatterySampleAt = now;
         }
@@ -969,7 +985,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 6. Disk Space (asynchronous statfs with tick decimation)
       if (config.showDisk) {
-        if (forceAll || cachedDisks.length === 0 || now - lastDiskSampleAt >= config.sectionRefreshMs.disk) {
+        if (forceAll || cachedDisks.length === 0 || intervalElapsed(now - lastDiskSampleAt, config.sectionRefreshMs.disk, config.updateFrequencyMs)) {
           lastDiskSampleAt = now;
           const defaultWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
           cachedDisks = await diskProvider.sample(config.diskDrives, defaultWorkspace);

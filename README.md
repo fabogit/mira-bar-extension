@@ -83,7 +83,7 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.show.disk` | `boolean` | `false` | Toggle disk space information |
 | `resmon.show.settings` | `boolean` | `true` | Show the settings (gear) widget after the metrics |
 | `resmon.order` | `string[]` | `["cpu","freq","temp","mem","battery","disk"]` | Left-to-right widget order; missing entries keep their default position |
-| `resmon.updatefrequencyms`| `number` | `2000` | Status bar polling interval in milliseconds (200-15000) |
+| `resmon.updatefrequencyms`| `number` | `2000` | Status bar tick in milliseconds (200-15000): the clock of the extension. Live tooltips follow every tick; section intervals shorter than the tick run once per tick |
 | `resmon.freq.unit` | `string` | `"GHz"` | Unit for CPU frequency (`GHz`, `MHz`, `KHz`, `Hz`) |
 | `resmon.mem.unit` | `string` | `"GB"` | Unit for memory display (`GB`, `MB`, `KB`, `B`) |
 | `resmon.disk.format` | `string` | `"PercentRemaining"` | Disk display format |
@@ -91,7 +91,7 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.disk.multiDisplay` | `string` | `"All"` | Multi-disk status bar display mode: `"All"` (all disks) or `"MostFull"` (single fullest volume) |
 | `resmon.priority` | `number` | `100` | Base priority for status bar positioning (lower/negative shifts right) |
 | `resmon.alignment` | `string` | `"Left"` | Status bar alignment (`"Left"` or `"Right"`) |
-| `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (updated on click and, with auto-refresh, at each section interval) or `"Live"` (every polling tick, at most once per second) |
+| `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (updated on click and, with auto-refresh, at each section interval) or `"Live"` (every status bar tick). The update time shows tenths of a second below 1000 ms |
 | `resmon.tooltip.autoRefresh` | `boolean` | `true` | Static mode: regenerate tooltips automatically at each section interval (otherwise only on click) |
 | `resmon.refreshMs` | `object` | `{cpu:5000, freq:5000, temp:5000, mem:5000, battery:10000, disk:10000}` | Milliseconds per section (200 ms to 1 h): Static tooltip refresh; battery, disk and temperature are also sampled at this interval (temperature min 2000 ms). Replaces the pre-release `resmon.refreshSeconds`, still read until `refreshMs` is set |
 | `resmon.tooltip.cpuLayout` | `string` | `"Table"` | CPU core layout in tooltips: `"Table"` (compact monospace grid) or `"List"` (vertical cluster list) |

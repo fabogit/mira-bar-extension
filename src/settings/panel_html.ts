@@ -82,6 +82,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   .refresh { display: flex; align-items: center; gap: 8px; }
   .refresh input[type="range"] { flex: 1 1 140px; }
   .refresh input[type="number"] { width: 92px; }
+  .eff { display: block; color: var(--muted); font-size: 0.85em; margin-top: 2px; }
   .move { display: inline-flex; gap: 2px; }
   .icon-btn {
     font: inherit; line-height: 1; padding: 3px 6px; border-radius: 3px; cursor: pointer;
@@ -138,7 +139,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   <section aria-labelledby="h-bar">
     <h2 id="h-bar">Status bar</h2>
     <div class="row">
-      <div class="label">Update interval<span class="hint">CPU, load and memory values</span></div>
+      <div class="label">Update interval<span class="hint">Clock of the extension: bar values, Live tooltips; nothing refreshes faster</span></div>
       <div class="control">
         <input type="range" id="freqRange" min="0" step="1" aria-label="Update interval (preset steps)">
         <input type="number" id="freqNumber" min="200" max="15000" step="50" aria-label="Update interval in milliseconds">
@@ -179,8 +180,9 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     </table>
     <p class="note">Drag rows (or use the arrows) to reorder the widgets left to right. Refresh (200 ms to 1 h; the slider
       has preset steps, type any value in the field) sets the Static tooltip auto-refresh; battery, disk and temperature are
-      also sampled at that interval, temperature at least every 2000 ms. Intervals shorter than the status bar update
-      interval take effect at its next tick.</p>
+      also sampled at that interval, temperature at least every 2000 ms. Everything runs on the status bar tick: a
+      shorter interval runs once per tick, a longer one at the closest tick; the note under a row shows when the tooltip
+      refresh differs from the value set.</p>
   </section>
 
   <section aria-labelledby="h-display">
@@ -337,6 +339,20 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   $('reset').addEventListener('click', function () { vscode.postMessage({ type: 'reset' }); });
   $('openJson').addEventListener('click', function () { vscode.postMessage({ type: 'openJson' }); });
 
+  /** What actually happens for a section's tooltip, when it differs from the typed interval. */
+  function effectiveNote(id, ms) {
+    const tick = values.updatefrequencyms;
+    if (values['tooltip.mode'] === 'Live') { return 'tooltip: every tick'; }
+    if (!values['tooltip.autoRefresh']) { return 'tooltip: on click'; }
+    if (ms < tick) { return 'every tick (' + tick + ' ms)'; }
+    return '';
+  }
+
+  function setNote(el, text) {
+    el.textContent = text;
+    el.hidden = text === '';
+  }
+
   function sendRefresh(id, ms) {
     const next = Object.assign({}, values.refreshMs);
     next[id] = ms;
@@ -407,7 +423,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     unit.textContent = 'ms';
     // Steps below the section minimum (temperature: 2000 ms) snap up to it.
     function stepValue() { return Math.max(minMs, stops[Number(range.value)]); }
-    range.addEventListener('input', function () { num.value = stepValue(); });
+    range.addEventListener('input', function () { num.value = stepValue(); setNote(eff, effectiveNote(id, stepValue())); });
     range.addEventListener('change', function () {
       const v = stepValue();
       range.value = String(nearestStop(stops, v));
@@ -417,10 +433,14 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
       const v = clamp(Math.round(Number(num.value) || minMs), minMs, SECTION_MAX);
       num.value = v;
       range.value = String(nearestStop(stops, v));
+      setNote(eff, effectiveNote(id, v));
       sendRefresh(id, v);
     });
+    const eff = document.createElement('span');
+    eff.className = 'eff';
+    setNote(eff, effectiveNote(id, current));
     wrap.append(range, num, unit);
-    tdRefresh.appendChild(wrap);
+    tdRefresh.append(wrap, eff);
 
     const tdMove = document.createElement('td');
     const move = document.createElement('span');
