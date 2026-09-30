@@ -93,7 +93,8 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.alignment` | `string` | `"Left"` | Status bar alignment (`"Left"` or `"Right"`) |
 | `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (updated on click and, with auto-refresh, at each section interval) or `"Live"` (every status bar tick). The update time shows tenths of a second below 1000 ms |
 | `resmon.tooltip.autoRefresh` | `boolean` | `true` | Static mode: regenerate tooltips automatically at each section interval (otherwise only on click) |
-| `resmon.refreshMs` | `object` | `{cpu:5000, freq:5000, temp:5000, mem:5000, battery:10000, disk:10000}` | Milliseconds per section (200 ms to 1 h): Static tooltip refresh; battery, disk and temperature are also sampled at this interval (temperature min 2000 ms). Replaces the pre-release `resmon.refreshSeconds`, still read until `refreshMs` is set |
+| `resmon.refreshMs` | `object` | `{cpu:5000, freq:5000, temp:5000, mem:5000, battery:10000, disk:10000}` | Milliseconds per section (200 ms to 1 h): Static tooltip refresh; battery, disk and temperature are also sampled at this interval. Minimum 2000 ms for temperature, and for battery and disk unless `resmon.allowFastBatteryDiskRefresh` is on. Replaces the pre-release `resmon.refreshSeconds`, still read until `refreshMs` is set |
+| `resmon.allowFastBatteryDiskRefresh` | `boolean` | `false` | **Performance impact:** allows battery and disk refresh below 2000 ms (down to 200 ms). Each battery read queries IOPowerSources/IOKit and each disk read calls `statfs` |
 | `resmon.tooltip.cpuLayout` | `string` | `"Table"` | CPU core layout in tooltips: `"Table"` (compact monospace grid) or `"List"` (vertical cluster list) |
 | `resmon.loadFormat` | `string` | `"Percent"` | System Load display format on Darwin: `"Percent"` (`34.4% L`) or `"Value"` (`3.44 L`) |
 

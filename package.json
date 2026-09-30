@@ -201,11 +201,16 @@
             "freq": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "CPU frequency (Linux) / system load (macOS): Static tooltip refresh (ms)." },
             "temp": { "type": "number", "minimum": 2000, "maximum": 3600000, "description": "Temperature: sampling and Static tooltip refresh (ms; minimum 2000: each sensor pass costs ~16 ms)." },
             "mem": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Memory: Static tooltip refresh (ms)." },
-            "battery": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Battery: sampling and Static tooltip refresh (ms)." },
-            "disk": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Disk: sampling and Static tooltip refresh (ms)." }
+            "battery": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Battery: sampling and Static tooltip refresh (ms; minimum 2000 unless resmon.allowFastBatteryDiskRefresh is on)." },
+            "disk": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Disk: sampling and Static tooltip refresh (ms; minimum 2000 unless resmon.allowFastBatteryDiskRefresh is on)." }
           },
           "additionalProperties": false,
           "description": "Refresh interval in milliseconds for each section (200 ms to 1 h). In Static mode it is the tooltip auto-refresh interval (see 'resmon.tooltip.autoRefresh'); battery, disk and temperature are also sampled at this interval in both modes. Intervals shorter than 'resmon.updatefrequencyms' take effect at the next status bar tick."
+        },
+        "resmon.allowFastBatteryDiskRefresh": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Performance impact.** Allows battery and disk refresh below 2000 ms (down to 200 ms). Each battery read queries IOPowerSources/IOKit and each disk read calls `statfs`: below 2 s this costs CPU time and energy for values that change slowly. Off by default; values set below 2000 ms are kept and apply again when this is turned on."
         },
         "resmon.refreshSeconds": {
           "type": "object",

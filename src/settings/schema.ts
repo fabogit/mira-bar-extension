@@ -28,6 +28,7 @@ export const EDITABLE_SETTINGS: readonly SettingSpec[] = [
   { key: 'tooltip.autoRefresh', kind: 'boolean' },
   { key: 'updatefrequencyms', kind: 'number', min: MIN_UPDATE_FREQUENCY_MS, max: MAX_UPDATE_FREQUENCY_MS },
   { key: 'refreshMs', kind: 'refreshMs' },
+  { key: 'allowFastBatteryDiskRefresh', kind: 'boolean' },
   { key: 'order', kind: 'order' },
   { key: 'show.cpuusage', kind: 'boolean' },
   { key: 'show.cpufreq', kind: 'boolean' },
@@ -90,7 +91,8 @@ export function validateSetting(key: string, value: unknown): ValidationResult {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return { ok: false, reason: 'refreshMs must be an object' };
       }
-      return { ok: true, value: readSectionRefreshMs(value) };
+      // Clamp to the minimums in force now; locking again later re-clamps on read, not in storage.
+      return { ok: true, value: readSectionRefreshMs(value, getConfig().allowFastBatteryDiskRefresh) };
   }
 }
 
@@ -105,6 +107,7 @@ export function readSettingsSnapshot(): Record<string, unknown> {
     'tooltip.autoRefresh': c.tooltipAutoRefresh,
     updatefrequencyms: c.updateFrequencyMs,
     refreshMs: c.sectionRefreshMs,
+    allowFastBatteryDiskRefresh: c.allowFastBatteryDiskRefresh,
     order: c.order,
     'show.cpuusage': c.showCpuUsage,
     'show.cpufreq': c.showCpuFreq,

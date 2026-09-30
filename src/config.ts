@@ -48,6 +48,27 @@ export const MIN_SECTION_REFRESH_MS = 200;
 export const MAX_SECTION_REFRESH_MS = 3_600_000;
 /** A full temperature pass costs ~16 ms of HID IPC (Apple M4), so it is never sampled more often than every 2 s. */
 export const MIN_TEMP_REFRESH_MS = 2000;
+/**
+ * Battery (IOPowerSources / IOKit) and disk (statfs) values change slowly: they are not read more often
+ * than every 2 s unless resmon.allowFastBatteryDiskRefresh unlocks the 200 ms minimum.
+ */
+export const MIN_BATTERY_DISK_REFRESH_MS = 2000;
+
+/**
+ * Minimum refresh interval of a section.
+ *
+ * @param section - Status bar section.
+ * @param allowFastBatteryDisk - resmon.allowFastBatteryDiskRefresh.
+ */
+export function minSectionRefreshMs(section: TooltipSection, allowFastBatteryDisk: boolean): number {
+  if (section === 'temp') {
+    return MIN_TEMP_REFRESH_MS;
+  }
+  if ((section === 'battery' || section === 'disk') && !allowFastBatteryDisk) {
+    return MIN_BATTERY_DISK_REFRESH_MS;
+  }
+  return MIN_SECTION_REFRESH_MS;
+}
 
 /** Polling interval bounds for the status bar values, in milliseconds. */
 export const MIN_UPDATE_FREQUENCY_MS = 200;
@@ -55,16 +76,18 @@ export const MAX_UPDATE_FREQUENCY_MS = 15_000;
 
 /**
  * Validates the per-section refresh object from settings, falling back to defaults for missing or
- * invalid entries and clamping values to [200 ms, 1 h] (temperature: [2 s, 1 h]), whole milliseconds.
+ * invalid entries and clamping values to [minimum, 1 h] in whole milliseconds. Minimums: 200 ms;
+ * temperature 2 s; battery and disk 2 s unless `allowFastBatteryDisk`. A stored value below a locked
+ * minimum is kept in settings and applies again if the minimum is unlocked.
  */
-export function readSectionRefreshMs(raw: unknown): Record<TooltipSection, number> {
+export function readSectionRefreshMs(raw: unknown, allowFastBatteryDisk = false): Record<TooltipSection, number> {
   const result = { ...DEFAULT_SECTION_REFRESH_MS };
   if (raw !== null && typeof raw === 'object') {
     const values = raw as Record<string, unknown>;
     for (const section of TOOLTIP_SECTIONS) {
       const value = values[section];
       if (typeof value === 'number' && Number.isFinite(value)) {
-        const min = section === 'temp' ? MIN_TEMP_REFRESH_MS : MIN_SECTION_REFRESH_MS;
+        const min = minSectionRefreshMs(section, allowFastBatteryDisk);
         result[section] = Math.round(Math.min(MAX_SECTION_REFRESH_MS, Math.max(min, value)));
       }
     }
@@ -138,6 +161,8 @@ export interface ResMonConfig {
    * disk and temperature, their sampling interval (both tooltip modes).
    */
   sectionRefreshMs: Record<TooltipSection, number>;
+  /** Unlocks battery and disk refresh below 2000 ms (performance impact). */
+  allowFastBatteryDiskRefresh: boolean;
   /** CPU core breakdown layout in tooltip: 'Table' (compact side-by-side grid) or 'List' (vertical clusters). */
   cpuTooltipLayout: 'Table' | 'List';
   /** Multi-disk status bar display mode: 'All' or 'MostFull'. */
@@ -176,7 +201,8 @@ export function getConfig(): ResMonConfig {
     alignment: config.get<'Left' | 'Right'>('alignment', 'Left'),
     tooltipMode: config.get<'Static' | 'Live'>('tooltip.mode', 'Static'),
     tooltipAutoRefresh: config.get<boolean>('tooltip.autoRefresh', true),
-    sectionRefreshMs: readSectionRefreshMs(rawSectionRefresh(config)),
+    sectionRefreshMs: readSectionRefreshMs(rawSectionRefresh(config), config.get<boolean>('allowFastBatteryDiskRefresh', false)),
+    allowFastBatteryDiskRefresh: config.get<boolean>('allowFastBatteryDiskRefresh', false),
     cpuTooltipLayout: config.get<'Table' | 'List'>('tooltip.cpuLayout', 'Table'),
     loadFormat: config.get<'Percent' | 'Value'>('loadFormat', 'Percent'),
   };

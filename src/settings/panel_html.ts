@@ -91,6 +91,9 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   .icon-btn:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
   .icon-btn:disabled { opacity: 0.35; cursor: default; }
   .note { color: var(--muted); font-size: 0.88em; margin: 10px 0 0; }
+  .fast { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .warn { color: var(--vscode-editorWarning-foreground, #cca700); font-weight: 600; }
+  .warn-note { color: var(--muted); font-size: 0.88em; margin: 4px 0 0 24px; }
 
   footer { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
   .btn {
@@ -180,9 +183,15 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     </table>
     <p class="note">Drag rows (or use the arrows) to reorder the widgets left to right. Refresh (200 ms to 1 h; the slider
       has preset steps, type any value in the field) sets the Static tooltip auto-refresh; battery, disk and temperature are
-      also sampled at that interval, temperature at least every 2000 ms. Everything runs on the status bar tick: a
+      also sampled at that interval, never faster than every 2000 ms (battery and disk: unless unlocked below). Everything runs on the status bar tick: a
       shorter interval runs once per tick, a longer one at the closest tick; the note under a row shows when the tooltip
       refresh differs from the value set.</p>
+    <div class="fast">
+      <label class="switch"><input type="checkbox" id="allowFast"> Allow battery and disk refresh below 2000 ms<span class="warn">*</span></label>
+      <p class="warn-note"><span class="warn">* Performance impact.</span> Each battery read queries IOPowerSources/IOKit and each
+        disk read calls statfs: below 2 s they cost CPU time and energy for values that change slowly. Values set below
+        2000 ms are kept and apply again whenever this is on. Temperature always stays at 2000 ms or more.</p>
+    </div>
   </section>
 
   <section aria-labelledby="h-display">
@@ -263,7 +272,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   const SECTION_STOPS = [200, 250, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000,
     45000, 60000, 120000, 300000, 600000, 1800000, 3600000];
   const BAR_MIN = 200, BAR_MAX = 15000;
-  const SECTION_MIN = 200, TEMP_MIN = 2000, SECTION_MAX = 3600000;
+  const SECTION_MIN = 200, TEMP_MIN = 2000, SLOW_MIN = 2000, SECTION_MAX = 3600000;
 
   /** Index of the preset closest to ms (log scale), for positioning a slider. */
   function nearestStop(stops, ms) {
@@ -313,6 +322,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
 
   $('autoRefresh').addEventListener('change', function (e) { send('tooltip.autoRefresh', e.target.checked); });
   $('showSettings').addEventListener('change', function (e) { send('show.settings', e.target.checked); });
+  $('allowFast').addEventListener('change', function (e) { send('allowFastBatteryDiskRefresh', e.target.checked); });
 
   // Update interval: the slider previews while dragging and saves on release; the field saves on change.
   $('freqRange').max = String(BAR_STOPS.length - 1);
@@ -374,7 +384,8 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
 
   function makeRow(id, index, count) {
     const meta = SECTIONS[id];
-    const minMs = id === 'temp' ? TEMP_MIN : SECTION_MIN;
+    const minMs = id === 'temp' ? TEMP_MIN
+      : ((id === 'battery' || id === 'disk') && !values.allowFastBatteryDiskRefresh ? SLOW_MIN : SECTION_MIN);
     const stops = SECTION_STOPS; // same steps on every row, so equal values line up
     const current = values.refreshMs[id];
     const tr = document.createElement('tr');
@@ -545,6 +556,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     }
     if (!isFocused($('priority'))) { $('priority').value = values.priority; }
     $('showSettings').checked = Boolean(values['show.settings']);
+    $('allowFast').checked = Boolean(values.allowFastBatteryDiskRefresh);
     if (!isFocused($('diskDrives'))) { $('diskDrives').value = (values['disk.drives'] || []).join('\\n'); }
 
     if (!dragId) { renderSections(); }
