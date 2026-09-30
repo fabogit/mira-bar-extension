@@ -23,6 +23,7 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
   private temp = new CpuTempProvider();
   private lastTemp: CpuTempInfo | null = null;
   private lastTempAt = 0;
+  private tempSeq = 0;
   private mem = new MemoryProvider();
   private batt = new BatteryProvider();
 
@@ -60,7 +61,8 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
     if (this.lastTempAt !== 0 && now - this.lastTempAt < maxAgeMs) {
       return this.lastTemp;
     }
-    this.lastTemp = this.temp.sample();
+    const reading = this.temp.sample();
+    this.lastTemp = reading ? { ...reading, sampleSeq: ++this.tempSeq } : null;
     this.lastTempAt = now;
     return this.lastTemp;
   }

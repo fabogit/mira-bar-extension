@@ -114,6 +114,9 @@ export interface CpuTempInfo {
 
   /** Temperature of the battery cell in °C (if available). */
   batteryCelsius?: number;
+
+  /** Sequence number of the sensor reading: it changes exactly when a new reading is taken. */
+  sampleSeq?: number;
 }
 
 /**

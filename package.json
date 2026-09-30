@@ -248,6 +248,8 @@
     "compile:native": "bash native/darwin/compile.sh",
     "test:darwin": "node test/smoke-darwin.mjs",
     "test:linux": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/smoke-linux.ts'], outfile: 'dist/test-smoke-linux.cjs', bundle: true, platform: 'node', format: 'cjs' });\" && node dist/test-smoke-linux.cjs && rm -f dist/test-smoke-linux.cjs",
+    "bench:darwin": "node test/bench-darwin.mjs",
+    "bench:extension": "node test/bench-extension.mjs",
     "test:integration": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/integration.ts'], outfile: 'dist/test-integration.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['*.node'] });\" && node dist/test-integration.cjs && rm -f dist/test-integration.cjs",
     "package": "vsce package --no-dependencies",
     "package:darwin-arm64": "bash native/darwin/compile.sh && vsce package --target darwin-arm64 --no-dependencies",

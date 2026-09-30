@@ -14,6 +14,7 @@
 #include <mach/mach_host.h>
 #include <mach/processor_info.h>
 #include <sys/sysctl.h>
+#include <time.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/ps/IOPowerSources.h>
 #include <IOKit/ps/IOPSKeys.h>
@@ -295,7 +296,19 @@ struct ThermalReading {
   double nand_celsius = -1.0;
   double battery_celsius = -1.0;
   Clock::time_point taken{};
+  // Cost of the pass that produced this reading, for test/bench-darwin.mjs: wall time and CPU time of
+  // the worker thread (the HID server's share is not included), plus a pass counter.
+  uint64_t pass_seq = 0;
+  double pass_wall_ms = 0.0;
+  double pass_cpu_ms = 0.0;
 };
+
+/** CPU time consumed so far by the calling thread, in milliseconds (0 if unavailable). */
+double ThreadCpuMs() {
+  timespec ts{};
+  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0.0;
+  return static_cast<double>(ts.tv_sec) * 1e3 + static_cast<double>(ts.tv_nsec) / 1e6;
+}
 
 /**
  * Owns the IOHID client and the classified temperature sensors. Used from a single thread
@@ -496,9 +509,14 @@ class ThermalSampler {
       requested_ = false;
       busy_ = true;
       lock.unlock();
+      const Clock::time_point wall_start = Clock::now();
+      const double cpu_start = ThreadCpuMs();
       ThermalReading reading = hid.Sample();  // HID IPC runs without holding the lock
+      reading.pass_cpu_ms = ThreadCpuMs() - cpu_start;
+      reading.pass_wall_ms = std::chrono::duration<double, std::milli>(Clock::now() - wall_start).count();
       lock.lock();
       busy_ = false;
+      reading.pass_seq = ++pass_count_;
       reading_ = std::move(reading);
       has_reading_ = true;
       done_.notify_all();
@@ -513,6 +531,7 @@ class ThermalSampler {
   bool requested_ = false;
   bool busy_ = false;
   bool has_reading_ = false;
+  uint64_t pass_count_ = 0;
   ThermalReading reading_;
   std::thread worker_;
 };
@@ -889,6 +908,9 @@ napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
       .Str("sensorLabel", label);
   if (reading.nand_celsius > 0.0) obj.Double("nandCelsius", reading.nand_celsius);
   if (reading.battery_celsius > 0.0) obj.Double("batteryCelsius", reading.battery_celsius);
+  obj.Double("sampleSeq", static_cast<double>(reading.pass_seq))
+      .Double("passWallMs", reading.pass_wall_ms)
+      .Double("passCpuMs", reading.pass_cpu_ms);
   return obj.Finish();
 }
 

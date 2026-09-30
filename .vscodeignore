@@ -15,3 +15,5 @@ docs/**
 skills-lock.json
 pnpm-workspace.yaml
 **/.DS_Store
+dist/bench-*.cjs
+dist/test-*.cjs
