@@ -2,8 +2,28 @@
 
 Scope: native/darwin/src/addon.cc, native/darwin/compile.sh + binding.gyp, src/platform/darwin/*, src/extension.ts (darwin-relevant paths).
 Baseline: the analysed sources (native/, src/) are byte-identical to `origin/develop` 0e09a22 of fabogit/resource-monitor_code-extension, so every file:line reference applies to develop. The analysis ran on the untracked Resmon copy.
-Rev. 2 re-verified every rev. 1 finding against the code and added the items marked **NEW**. Report only: no source files were changed. The work plan is in the Claude Doc "Resmon darwin: piano di fix memoria e refactor".
+Rev. 2 re-verified every rev. 1 finding against the code and added the items marked **NEW**. The sections below are the original report (file:line references point to develop 0e09a22). The work plan is in the Claude Doc "Resmon darwin: piano di fix memoria e refactor".
 Skills applied: cpp-coding-standards (R.1 RAII, P.8, C.21), memory-safety-patterns, nodejs-core (napi, native-memory).
+
+## Resolution status (2026-09-30)
+
+All 11 items are fixed on the local branch `fix/darwin-memory` of resource-monitor_code-extension (from `develop` 0e09a22, not pushed). Confirmed on the Apple M4 with `test/leak-darwin.mjs`: Mach host port references stable, no RSS growth, memory pressure 62% "Warning" matching the kernel, `getDieTemperature` 2.1 µs per call (was 18,046 µs). Also verified on Linux with mocked Apple APIs under ASan/UBSan (0 live CF objects, 0 host urefs at exit) and TSan.
+
+| # | Resolution |
+|---|------------|
+| 1 | Host port acquired once in `AddonState`, released by `MachSendRight` |
+| 2 | `disposed` guard checked before re-arming; timer and config debounce cleared in `deactivate()` |
+| 3 | Items disposed and tracked outside `context.subscriptions` |
+| 4 | Hidden widgets not sampled; battery, disk and temperature sampled at their section interval |
+| 5 | HID client and classified sensors cached; reads moved to a background `ThermalSampler` thread (a pass costs ~16-18 ms, measured with `tools/hid_bench.cc`) |
+| 6 | Different fix than proposed in §5: on the M4 the mAh values are only in the `BatteryData` sub-dictionary, not readable key by key, so the full snapshot is kept but taken at most every 30 s; `IOPowerSources` runs only when the battery is sampled |
+| 7 | Type-checked getters (`GetInt`, `GetBool`, `GetUtf8`, `GetDictInt`) |
+| 8 | `MACH_PORT_NULL` |
+| 9 | Same flags in `compile.sh` and `binding.gyp`; `DEBUG=1` ASan build |
+| 10 | `100 - kern.memorystatus_level` plus `pressureLevel` from `kern.memorystatus_vm_pressure_level` |
+| 11 | `getCpuTicks(Uint32Array)` double buffer, `>>> 0` deltas |
+
+Still open: the `ResourceMonitor` class of §6 (deferred, see docs/ROADMAP.md Phase 1.1). The refresh model, settings panel and widget order added on the same branch are described in docs/ARCHITECTURE.md; the decisions and their reasons are in the Claude Doc plan.
 
 ## Priority summary
 

@@ -1,6 +1,6 @@
 # Darwin & Apple Silicon (M-Series) Technical Specification & Implementation Architecture
 
-This document formalizes the production architecture, C/Mach/IOKit kernel APIs, Clang toolchain, and verification methodology implemented for native macOS Apple Silicon (`darwin-arm64`) support in **Resource Monitor NG v1.1.0** on Apple M-Series hardware (M1, M2, M3, M4).
+This document formalizes the production architecture, C/Mach/IOKit kernel APIs, Clang toolchain, and verification methodology implemented for native macOS Apple Silicon (`darwin-arm64`) support in **Resource Monitor NG v1.1.x** on Apple M-Series hardware (M1, M2, M3, M4). Phase 1.1 (memory safety and native refactor) is documented in [`audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md).
 
 ---
 
@@ -12,8 +12,8 @@ This document formalizes the production architecture, C/Mach/IOKit kernel APIs, 
 | **Subprocess Cost** | Zero (pure synchronous `fs.readFileSync`) | Zero (pure synchronous Node-API C++ addon `darwin_telemetry.node`) |
 | **CPU Architecture** | Uniform SMP or x86 SMT cores | Asymmetric big.LITTLE (Performance P-Cores + Efficiency E-Cores) |
 | **Clock Frequencies** | `/sys/devices/system/cpu/cpu*/cpufreq/` | Normalized System Load Capacity % across hardware cores |
-| **Thermal Sensors** | `/sys/class/hwmon/` | **Unprivileged `IOHIDEventSystemClient`**: 24 SoC die sensors, NAND SSD & battery |
-| **Memory Metrics** | `/proc/meminfo` (single-pass line scan) | Mach `host_statistics64(HOST_VM_INFO64)` + `sysctl vm.swapusage` |
+| **Thermal Sensors** | `/sys/class/hwmon/` | **Unprivileged `IOHIDEventSystemClient`** on a background thread: 24 SoC die sensors, NAND SSD & battery |
+| **Memory Metrics** | `/proc/meminfo` (single-pass line scan) | Mach `host_statistics64(HOST_VM_INFO64)` + `sysctl vm.swapusage` + `kern.memorystatus_*` pressure |
 | **Battery Metrics** | `/sys/class/power_supply/BAT*` | `IOKit.framework` (`IOPowerSources` + `AppleSmartBattery` health & cycles) |
 | **Disk Space** | `node:fs/promises.statfs` | POSIX `statfs` (100% portable across Linux & Darwin) |
 
@@ -30,25 +30,14 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
   * E-Cores: queried via `sysctlbyname("hw.perflevel1.logicalcpu", ...)`
   * Total Cores: `sysctlbyname("hw.logicalcpu", ...)`
   * Chip Model: `sysctlbyname("machdep.cpu.brand_string", ...)` (e.g. `'Apple M4'`)
-* **Mach Call**:
-  ```c
-  natural_t processor_count = 0;
-  processor_info_array_t processor_info;
-  mach_msg_type_number_t processor_info_count;
-
-  kern_return_t kr = host_processor_info(
-      mach_host_self(),
-      PROCESSOR_CPU_LOAD_INFO,
-      &processor_count,
-      &processor_info,
-      &processor_info_count
-  );
-  ```
-* **Delta Calculation**:
+* **Mach Call**: `host_processor_info(host, PROCESSOR_CPU_LOAD_INFO, ...)` on the host port acquired once at module load (`mach_host_self()` returns a new send right on every call, so calling it per tick leaked 3 urefs per tick).
+* **JavaScript API**: `getCpuTicks(out: Uint32Array): number` writes `user, system, idle, nice` for each core into a caller-owned buffer and returns the core count; nothing is allocated per tick. The provider keeps two buffers and swaps them.
+* **Delta Calculation** (wrap-safe on the 32-bit counters: `(cur - prev) >>> 0`):
   $$\Delta \text{Total}_i = \Delta \text{user}_i + \Delta \text{system}_i + \Delta \text{idle}_i + \Delta \text{nice}_i$$
   $$\Delta \text{Active}_i = \Delta \text{user}_i + \Delta \text{system}_i + \Delta \text{nice}_i$$
   $$\text{Usage \%}_i = \frac{\Delta \text{Active}_i}{\Delta \text{Total}_i} \times 100$$
-* **Deallocation**: Mach shared memory is promptly freed via `vm_deallocate(mach_task_self(), ...)`.
+  Intervals with fewer than 5 ticks per core keep the previous value to avoid noise at 200 ms.
+* **Deallocation**: the kernel-allocated array is owned by a `VmRegion` RAII wrapper and released with `vm_deallocate(mach_task_self(), ...)` on every path.
 
 ### 2.2. Memory & Swap Statistics
 * **Physical RAM**: Queried via `sysctl({ CTL_HW, HW_MEMSIZE })`.
@@ -62,18 +51,20 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
   * **Available RAM**: `(vm_stat.inactive_count + vm_stat.free_count) * page_size`
   * **Compressed Pages**: `vm_stat.compressor_page_count * page_size`
 * **Swap Space**: Queried via `sysctlbyname("vm.swapusage", &swap, &len, NULL, 0)`.
+* **Memory Pressure**: `pressurePercent = 100 - kern.memorystatus_level`; `pressureLevel = kern.memorystatus_vm_pressure_level` (1 Normal, 2 Warning, 4 Critical). `vm.memory_pressure` is a counter, not a percentage, and is not used.
 
 ### 2.3. Battery Health, Nominal Capacity & Power State
 * **Framework / Headers**: `<IOKit/ps/IOPowerSources.h>`, `<IOKit/ps/IOPSKeys.h>`, `<IOKit/IOKitLib.h>`
-* **State & Time Remaining**: `IOPSGetPowerSourceDescription` provides real-time charging status (`Charging`, `Discharging`, `AC Connected`, `Full`) and minutes remaining to empty/full.
-* **Health & Capacity (Kernel Registry)**:
-  Directly reads `AppleSmartBattery` from the IOKit registry without root privileges:
-  * `DesignCapacity`: Factory nominal capacity in `mAh` (e.g. 4629 mAh).
-  * `AppleRawMaxCapacity`: Current calibrated maximum capacity in `mAh` (e.g. 4506 mAh).
-  * `AppleRawCurrentCapacity`: Real-time residual charge in `mAh` (e.g. 2929 mAh).
-  * `CycleCount`: Completed hardware discharge cycles (e.g. 136).
-  * **Health % Formula**:
-    $$\text{Health \%} = \min\left(100.0, \frac{\text{AppleRawMaxCapacity}}{\text{DesignCapacity}} \times 100\right)$$
+* **State & Time Remaining**: `IOPSCopyPowerSourcesInfo` / `IOPSGetPowerSourceDescription` on every battery sample (an XPC round trip to `powerd`): percentage, charging state and minutes to empty/full. The internal battery is preferred over UPS devices.
+* **Health & Capacity (Kernel Registry)**: one `IORegistryEntryCreateCFProperties` snapshot of `AppleSmartBattery` at most every 30 s. Recent macOS releases (verified on an M4) publish the mAh values only inside the `BatteryData` sub-dictionary; the top-level `MaxCapacity` / `CurrentCapacity` are percentages and must not be used:
+  * `DesignCapacity`: factory design capacity (mAh).
+  * `NominalChargeCapacity`: nominal full-charge capacity (mAh).
+  * `FullChargeCapacity` (or `AppleRawMaxCapacity` on older releases): current full-charge capacity (mAh).
+  * `RemainingCapacity` (or `AppleRawCurrentCapacity`): residual charge (mAh).
+  * `CycleCount`: completed charge cycles.
+  * **Nominal vs Design**:
+    $$\min\left(100, \frac{\text{NominalChargeCapacity}}{\text{DesignCapacity}} \times 100\right)$$
+    falling back to the full-charge capacity. macOS "Maximum Capacity" is computed internally (100% vs 99.4% on the test M4), so the tooltip does not label this figure "Battery Health".
 
 ### 2.4. Unprivileged Thermal Telemetry (`IOHIDEventSystemClient`)
 * **Framework**: `IOKit.framework` (HID Event System).
@@ -83,6 +74,7 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
   * 24 SoC die thermal sensors (SoC Die Average, SoC Die Peak).
   * NAND Flash SSD thermal sensor.
   * Battery cell temperature sensor.
+* **Cost & Background Sampler**: one pass costs ~16-18 ms on an M4, evenly spread (~0.6 ms of IPC per sensor, measured with `native/darwin/tools/hid_bench.cc`). The client and the classified sensor list are cached, and a native worker thread (`ThermalSampler`) performs the passes. `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and wakes the worker when it is older than `maxAgeMs`; only the very first call waits for a reading. The worker is joined when the addon is unloaded.
 
 ---
 
@@ -91,23 +83,35 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
 ```
 resource-monitor/
 ├── src/
-│   ├── extension.ts               # Status bar widgets, polling loop, ASCII table rendering
-│   ├── config.ts                  # ResMonConfig, settings parsing
+│   ├── extension.ts               # Status bar widgets, polling loop, tooltips, commands
+│   ├── config.ts                  # ResMonConfig, settings parsing, refresh limits, widget order
 │   ├── types.ts                   # BatteryInfo, CpuUsageInfo, MemoryInfo, etc.
+│   ├── settings/
+│   │   ├── schema.ts              # Editable settings whitelist, validation, read/write
+│   │   ├── panel.ts               # Settings webview panel (singleton)
+│   │   └── panel_html.ts          # Panel markup, CSP and client script
 │   ├── platform/
 │   │   ├── factory.ts             # Instantiates Linux vs. Darwin providers dynamically
 │   │   ├── interface.ts           # Universal TelemetryPlatformProvider interface
 │   │   ├── linux/                 # Zero-subprocess /proc and /sys synchronous providers
 │   │   └── darwin/                # macOS N-API Native Bridge
-│   │       ├── native_loader.ts   # Dynamic N-API loader with candidate path search
+│   │       ├── native_loader.ts   # N-API loader (extension-relative paths only)
 │   │       └── darwin_provider.ts # TelemetryPlatformProvider implementation
 │   └── disk/
 │       └── disk_provider.ts       # Pure POSIX statfs provider (zero VS Code coupling)
 ├── native/
 │   └── darwin/
-│       ├── compile.sh             # Direct Clang compilation script
-│       └── src/
-│           └── addon.cc           # Standalone N-API module linking IOKit, Mach, CoreFoundation
+│       ├── compile.sh             # Direct Clang compilation script (DEBUG=1: ASan)
+│       ├── binding.gyp            # node-gyp alternative with the same flags
+│       ├── src/
+│       │   └── addon.cc           # N-API module: RAII wrappers, thermal sampler, battery snapshot
+│       └── tools/
+│           └── hid_bench.cc       # Standalone thermal sensor cost benchmark
+├── test/
+│   ├── smoke-darwin.mjs           # Native assertions on macOS
+│   ├── leak-darwin.mjs            # Native leak & cost probe (µs/call, RSS, Mach ports)
+│   ├── smoke-linux.ts             # Linux smoke test
+│   └── integration.ts             # Cross-platform provider integration test
 └── package.json
 ```
 
@@ -124,10 +128,11 @@ pnpm run compile:native
 ```
 
 Compilation details:
-* Uses Apple Clang targeting Apple Silicon `arm64`.
-* Flags: `-O3 -Wall -shared -undefined dynamic_lookup -fPIC`.
+* Uses Apple Clang targeting Apple Silicon `arm64`, C++17.
+* Flags: `-O3 -Wall -Wextra -Wunguarded-availability-new -mmacosx-version-min=11.0 -DNAPI_VERSION=8 -fvisibility=hidden -shared -undefined dynamic_lookup`.
+* `DEBUG=1` builds with `-O1 -g -fsanitize=address` for leak and memory-error testing.
 * Links: `-framework CoreFoundation -framework IOKit`.
-* Outputs directly to `dist/native/darwin_telemetry.node` (52.9 KB).
+* Outputs directly to `dist/native/darwin_telemetry.node`.
 
 ---
 
@@ -143,7 +148,15 @@ Compilation details:
    ```bash
    pnpm run test:integration
    ```
-   Exercises `createPlatformProvider()` on Darwin, validating cold-start Tick 0 instantaneous sampling, system load average calculations, dynamic multi-rate decimation, and non-blocking `statfs` filesystem checks.
+   Exercises `createPlatformProvider()` on Darwin, validating cold-start Tick 0 instantaneous sampling, system load average calculations and non-blocking `statfs` filesystem checks.
+
+3. **Native Leak & Cost Probe**:
+   ```bash
+   node --expose-gc test/leak-darwin.mjs          # add --pause to inspect with lsmp / leaks
+   ```
+   Reports µs per call, RSS growth after warm-up and Mach host port references for every exported function. Reference results on an M4 after Phase 1.1: host port refs stable, no RSS growth, `getDieTemperature` ~2 µs (was ~18 ms).
+
+4. **Thermal Sensor Benchmark**: `native/darwin/tools/hid_bench.cc` (build command in the file header) times each sensor read to locate the cost of a sampler pass.
 
 ---
 
@@ -156,8 +169,7 @@ Platform-specific VSIX packages are built using VS Code's official target archit
 pnpm run package:darwin-arm64
 ```
 
-Output:
-* `resource-monitor-ng-darwin-arm64-1.1.0.vsix` (39.6 KB, 0 warnings, verified production artifact).
+Output: `resource-monitor-ng-darwin-arm64-<version>.vsix`. `vscode:prepublish` rebuilds the production bundle, and `.vscodeignore` excludes local agent files (`.claude/`, `.agents/`, `skills-lock.json`).
 
 ---
 
@@ -169,5 +181,5 @@ Output:
   Pre-samples Mach processor ticks in the `DarwinTelemetryProvider` constructor, ensuring that hover popups display valid core percentages and hardware topologies on first hover without waiting for an interval tick.
 * **Semantic Battery Iconography**:
   Dynamically maps power state to `$(zap) %` (actively charging), `🔋 %` (discharging on battery), and `$(plug) %` (connected to AC power at full capacity).
-* **Deterministic Tooltip Footers**:
-  Formats footer settings and toggle links as Markdown list items (`- **Key**: [Action](command:...)`), eliminating horizontal hover widget ballooning caused by CommonMark line collapse.
+* **Tooltip Footers**:
+  Every data tooltip ends with its update time and links to *Settings* and *Refresh* on separate lines; options and toggles live in the gear widget's tooltip and in the settings panel.

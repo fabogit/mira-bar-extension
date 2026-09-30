@@ -87,13 +87,14 @@ Phase 1 restructured the codebase into a strict modular architecture, eliminated
 
 ## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v1.1.1) [IN PROGRESS]
 
-> Branch: `fix/darwin-memory` (from `develop`) • **Status: In progress** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
+> Branch: `fix/darwin-memory` (from `develop`, local commits) • **Status: Implemented, pending test in VS Code on Apple Silicon** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
 
-Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin native addon and in the extension lifecycle, and corrects the memory pressure metric. Every step is verified on Apple Silicon with `test/leak-darwin.mjs`, `lsmp`, `leaks` and an optional ASan build.
+Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin native addon and in the extension lifecycle, corrects the memory pressure and battery metrics, and reworks the refresh model and settings UI. Native changes are verified on Apple Silicon with `test/leak-darwin.mjs`, `lsmp` and `leaks`, and on Linux with mocked Apple APIs under ASan/UBSan/TSan.
 
 - [x] **Build & Test Baseline**:
-  - `compile.sh` flags: `-mmacosx-version-min=11.0`, `NAPI_VERSION=8`, `-Wextra`, availability warnings, hidden visibility; `DEBUG=1` ASan variant.
+  - `compile.sh` flags: `-mmacosx-version-min=11.0`, `NAPI_VERSION=8`, `-Wextra`, availability warnings, hidden visibility; `DEBUG=1` ASan variant. Same warnings in `binding.gyp`.
   - Native leak & cost probe `test/leak-darwin.mjs` (µs/call, RSS growth, Mach host port refs).
+  - `pnpm run typecheck` covers `src/` and `test/` (`test/tsconfig.json`); the stale `test/smoke.mjs` (imported the removed `src/providers/`) is gone.
 - [x] **Leak Fixes**:
   - Host port acquired once and released (`mach_host_self()` send-right leak, 3 urefs per tick).
   - Polling timer can no longer be re-armed after `deactivate()`.
@@ -104,33 +105,31 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
 - [x] **Per-Tick Overhead Reduction**:
   - Hidden widgets are not sampled.
   - Cached `IOHIDEventSystemClient` and classified thermal sensors.
-  - Battery presence cached; AppleSmartBattery keys read individually instead of copying the whole registry dictionary.
+  - Battery: `IOPowerSources` on each battery sample, `AppleSmartBattery` registry snapshot at most every 30 s (on the M4 the mAh values live in the `BatteryData` sub-dictionary, so single-key reads are not enough).
   - Zero-allocation CPU ticks (`Uint32Array` double buffer, wrap-safe 32-bit deltas).
 - [x] **Correctness**:
   - Memory pressure from `kern.memorystatus_level` / `kern.memorystatus_vm_pressure_level` (replaces `vm.memory_pressure`, which is not a percentage).
+  - Battery capacities in mAh from `BatteryData`; "Nominal vs Design" instead of "Battery Health" (macOS "Maximum Capacity" uses an internal calculation not exposed to apps: 100% vs 99.4% on the test M4).
   - macOS 11 compatibility (`MACH_PORT_NULL` instead of `kIOMainPortDefault`).
   - Native loader no longer resolves `.node` files from `process.cwd()`.
 - [x] **Thermal Sampling Off the Extension Host Thread**:
-  - Measured on Apple M4: `getDieTemperature()` costs ~18 ms per call (24 tdie + NAND + battery sensors), above the 1 ms SLA.
+  - Measured on Apple M4: `getDieTemperature()` cost ~18 ms per call (24 tdie + NAND + battery sensors), above the 1 ms SLA.
   - Profiled with `native/darwin/tools/hid_bench.cc`: cost evenly spread (~0.6 ms per sensor IPC), no single slow sensor.
-  - Native background sampler (`ThermalSampler`): `getDieTemperature()` returns the latest reading without blocking; readings at most 5 s old (~0.3% of one core).
-  - Battery and disk sampled on a time basis (5 s / 10 s) instead of tick decimation; a click refreshes everything.
-- [ ] **Extension Lifecycle Refactor**:
-  - `ResourceMonitor` class implementing `vscode.Disposable`; `update()` split into per-widget renderers; cached configuration; throttled Live tooltips.
-
-**Follow-ups (after the hardening work):**
-
-- [x] **Static Tooltip Freshness**:
-  - In `Static` mode tooltips are regenerated only on click/refresh, so hovering shows the values from the last refresh (or from the switch out of `Live`) while the status bar text keeps updating.
-  - VS Code exposes no hover event, so tooltips cannot be computed on hover. Static regenerates tooltips on click and, with `resmon.tooltip.autoRefresh` (default on, toggle from the tooltip or the command palette), at per-section intervals from `resmon.refreshSeconds` (default 5 s; battery and disk 10 s). Live regenerates at most once per second.
-  - `resmon.refreshSeconds` also sets how often battery, disk and temperature are sampled (temperature minimum 2 s); `resmon.updatefrequencyms` (200-15000 ms) drives the status bar values.
-  - Battery tooltip shows "Nominal vs Design" (NominalChargeCapacity / DesignCapacity) instead of "Battery Health": macOS "Maximum Capacity" uses an internal calculation not exposed to apps (100% vs 99.4% on the test M4).
-  - Every tooltip ends with the update time and the refresh hint on separate lines.
+  - Native background sampler (`ThermalSampler`): `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and asks the worker for a new pass when it is older than requested.
+- [x] **Refresh Model**:
+  - `resmon.updatefrequencyms` (200-15000 ms) is the clock: status bar values every tick, Live tooltips every tick.
+  - `resmon.refreshMs` per section (200 ms to 1 h): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `resmon.allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaces the pre-release `resmon.refreshSeconds`, still read as a fallback.
+  - Half-tick tolerance so an interval equal to the tick fires every tick; update time with tenths of a second below 1000 ms; a click refreshes everything.
+  - Configuration changes debounced (100 ms) so slider drags do not recreate the widgets on every step.
 - [x] **Settings Widget & Panel**:
-  - Gear status bar widget: tooltip with the current values and quick toggles; click opens a webview settings panel (sliders and number fields for the status bar interval and per-section refresh, visibility, units, disk options).
-  - The panel writes validated values to the user settings (single source of truth); data tooltips keep only metrics, update time and Settings / Refresh links.
+  - Gear status bar widget: tooltip with the current values and quick toggles; click opens a webview settings panel (preset sliders plus millisecond fields, visibility, drag-and-drop order, units, disk options). Strict CSP with nonce; rows updated in place so external changes never interrupt typing or dragging.
+  - The panel writes validated values to the user settings (single source of truth); stored values are never rewritten by unrelated edits. Data tooltips keep only metrics, update time and Settings / Refresh links.
 - [x] **Configurable Widget Order**:
-  - `resmon.order` (drag and drop in the settings panel) mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
+  - `resmon.order` mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
+- [ ] **Verification in VS Code on Apple Silicon**:
+  - Install the `darwin-arm64` VSIX and check the settings panel, Static/Live tooltips at 200 ms and the battery/disk lock.
+- [ ] **Extension Lifecycle Refactor** (deferred):
+  - `ResourceMonitor` class implementing `vscode.Disposable`; `update()` split into per-widget renderers; cached configuration. Worth doing before Phase 3 adds a third provider.
 
 ---
 
