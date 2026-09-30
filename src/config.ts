@@ -70,9 +70,13 @@ export function minSectionRefreshMs(section: TooltipSection, allowFastBatteryDis
   return MIN_SECTION_REFRESH_MS;
 }
 
-/** Polling interval bounds for the status bar values, in milliseconds. */
+/** Status bar tick bounds, in milliseconds. */
 export const MIN_UPDATE_FREQUENCY_MS = 200;
 export const MAX_UPDATE_FREQUENCY_MS = 15_000;
+
+/** Status bar base priority bounds. */
+export const MIN_PRIORITY = -10_000;
+export const MAX_PRIORITY = 10_000;
 
 /**
  * Validates the per-section refresh object from settings, falling back to defaults for missing or
@@ -119,6 +123,14 @@ function rawSectionRefresh(config: vscode.WorkspaceConfiguration): unknown {
 }
 
 /**
+ * Per-section refresh as stored by the user, clamped only to the fixed floors (200 ms, temperature
+ * 2000 ms): values below the battery / disk lock are kept, for the settings panel.
+ */
+export function readStoredSectionRefreshMs(): Record<TooltipSection, number> {
+  return readSectionRefreshMs(rawSectionRefresh(vscode.workspace.getConfiguration('resmon')), true);
+}
+
+/**
  * Strongly typed configuration options for Resource Monitor NG.
  */
 export interface ResMonConfig {
@@ -142,7 +154,10 @@ export interface ResMonConfig {
   diskFormat: DiskSpaceFormat;
   /** Explicit filesystem mount points to monitor. Empty means active workspace or root. */
   diskDrives: string[];
-  /** Sampling and refresh interval in milliseconds (minimum 200 ms). */
+  /**
+   * Status bar tick in milliseconds (200-15000): the clock of the extension. Battery, disk and
+   * temperature are sampled at their section interval (sectionRefreshMs), on this tick.
+   */
   updateFrequencyMs: number;
   /** Display unit for CPU frequency (GHz, MHz, KHz, Hz). */
   freqUnit: FreqUnit;
@@ -157,8 +172,9 @@ export interface ResMonConfig {
   /** Static mode: whether tooltips auto-refresh at the per-section intervals (sectionRefreshMs). */
   tooltipAutoRefresh: boolean;
   /**
-   * Refresh interval per section, in milliseconds: Static tooltip auto-refresh interval and, for battery,
-   * disk and temperature, their sampling interval (both tooltip modes).
+   * Effective refresh interval per section, in milliseconds (minimums applied, including the battery /
+   * disk lock): Static tooltip auto-refresh interval and, for battery, disk and temperature, their
+   * sampling interval (both tooltip modes).
    */
   sectionRefreshMs: Record<TooltipSection, number>;
   /** Unlocks battery and disk refresh below 2000 ms (performance impact). */
@@ -197,7 +213,7 @@ export function getConfig(): ResMonConfig {
     ),
     freqUnit: config.get<FreqUnit>('freq.unit', 'GHz'),
     memUnit: config.get<MemUnit>('mem.unit', 'GB'),
-    priority: config.get<number>('priority', 100),
+    priority: Math.min(MAX_PRIORITY, Math.max(MIN_PRIORITY, config.get<number>('priority', 100))),
     alignment: config.get<'Left' | 'Right'>('alignment', 'Left'),
     tooltipMode: config.get<'Static' | 'Live'>('tooltip.mode', 'Static'),
     tooltipAutoRefresh: config.get<boolean>('tooltip.autoRefresh', true),

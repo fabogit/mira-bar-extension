@@ -23,7 +23,7 @@ async function run() {
     await ctx.watch();
     console.log('[esbuild] Watching for changes...');
   } else {
-    const result = await esbuild.build(buildOptions);
+    await esbuild.build(buildOptions);
     console.log('[esbuild] Build complete.');
   }
 }

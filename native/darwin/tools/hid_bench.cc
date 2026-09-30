@@ -160,7 +160,7 @@ int main(int argc, char** argv) {
                 s.last_celsius, s.failures);
   }
 
-  std::printf("\nMedian cost of one full pass, by category (what the addon pays per tick):\n");
+  std::printf("\nMedian cost of one full pass, by category (what the addon's background sampler pays per pass):\n");
   double total = 0.0;
   for (Kind kind : {Kind::Die, Kind::Nand, Kind::Battery, Kind::Other}) {
     int n = 0;

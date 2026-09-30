@@ -1,9 +1,12 @@
 import * as vscode from 'vscode';
 import {
   getConfig,
+  MAX_PRIORITY,
   MAX_UPDATE_FREQUENCY_MS,
+  MIN_PRIORITY,
   MIN_UPDATE_FREQUENCY_MS,
   readSectionRefreshMs,
+  readStoredSectionRefreshMs,
   readWidgetOrder,
 } from '../config.js';
 
@@ -45,7 +48,7 @@ export const EDITABLE_SETTINGS: readonly SettingSpec[] = [
   { key: 'disk.multiDisplay', kind: 'enum', options: ['All', 'MostFull'] },
   { key: 'disk.drives', kind: 'stringArray' },
   { key: 'alignment', kind: 'enum', options: ['Left', 'Right'] },
-  { key: 'priority', kind: 'number', min: -10_000, max: 10_000 },
+  { key: 'priority', kind: 'number', min: MIN_PRIORITY, max: MAX_PRIORITY },
 ];
 
 export type ValidationResult = { ok: true; value: unknown } | { ok: false; reason: string };
@@ -91,22 +94,23 @@ export function validateSetting(key: string, value: unknown): ValidationResult {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         return { ok: false, reason: 'refreshMs must be an object' };
       }
-      // Clamp to the minimums in force now; locking again later re-clamps on read, not in storage.
-      return { ok: true, value: readSectionRefreshMs(value, getConfig().allowFastBatteryDiskRefresh) };
+      // Fixed floors only: the battery / disk lock is applied on read (getConfig), so values stored
+      // while it was unlocked survive edits to other rows and apply again when it is unlocked.
+      return { ok: true, value: readSectionRefreshMs(value, true) };
   }
 }
 
 /**
- * Current effective values (defaults applied, clamped) keyed like the settings, for the panel.
+ * Current values keyed like the settings, for the panel: defaults applied and clamped; refreshMs is the
+ * stored value (the battery / disk lock is shown by the panel, not applied here).
  */
 export function readSettingsSnapshot(): Record<string, unknown> {
   const c = getConfig();
-  const raw = vscode.workspace.getConfiguration('resmon');
   return {
     'tooltip.mode': c.tooltipMode,
     'tooltip.autoRefresh': c.tooltipAutoRefresh,
     updatefrequencyms: c.updateFrequencyMs,
-    refreshMs: c.sectionRefreshMs,
+    refreshMs: readStoredSectionRefreshMs(),
     allowFastBatteryDiskRefresh: c.allowFastBatteryDiskRefresh,
     order: c.order,
     'show.cpuusage': c.showCpuUsage,
@@ -124,7 +128,7 @@ export function readSettingsSnapshot(): Record<string, unknown> {
     'disk.multiDisplay': c.diskMultiDisplay,
     'disk.drives': c.diskDrives,
     alignment: c.alignment,
-    priority: raw.get<number>('priority', c.priority),
+    priority: c.priority,
   };
 }
 

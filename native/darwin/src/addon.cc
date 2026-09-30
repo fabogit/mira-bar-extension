@@ -518,15 +518,15 @@ class ThermalSampler {
 };
 
 struct AddonState {
-  // Acquired once: fixes the mach_host_self() send-right leak (3 urefs per tick before).
+  // Acquired once and released in the destructor (mach_host_self() adds a send-right uref per call).
   MachSendRight host{mach_host_self()};
 
   // Constant for the lifetime of the process: read once.
   vm_size_t page_size = 0;
   uint64_t total_ram = 0;
 
-  // Thermal: sampled on a background thread (see ThermalSampler). Destroyed first among the
-  // members that matter, joining the worker before anything else is torn down.
+  // Thermal: sampled on a background thread (see ThermalSampler); its destructor joins the worker.
+  // The worker only touches its own ThermalHid, so destruction order among members does not matter.
   ThermalSampler thermal;
 
   // Battery: service looked up once (retried if missing). The mAh / cycle details change slowly
@@ -769,7 +769,7 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
 
   // AppleSmartBattery details. Some keys (DesignCapacity, AppleRaw*) are only published in the
   // serialized property table, not through IORegistryEntryCreateCFProperty, so take one full
-  // snapshot every kBatteryRegistryRefresh instead of per key (the old code copied it every tick).
+  // snapshot, refreshed every kBatteryRegistryRefresh.
   const Clock::time_point now = Clock::now();
   if (!state->smart_battery && now >= state->next_battery_lookup) {
     state->next_battery_lookup = now + kBatteryLookupRetry;
@@ -815,8 +815,9 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
   const int raw_current_capacity = state->raw_current_capacity;
   const int nominal_capacity = state->nominal_capacity;
 
-  // Health: nominal full-charge capacity vs design when available (the figure macOS reports as
-  // "Maximum Capacity"), otherwise the current full-charge capacity.
+  // Health: nominal full-charge capacity vs design when available, otherwise the current full-charge
+  // capacity. macOS computes its own "Maximum Capacity" (100% vs 99.4% on the test M4), so the
+  // extension labels this figure "Nominal vs Design".
   double health_percent = -1.0;
   const int health_capacity = nominal_capacity > 0 ? nominal_capacity : raw_max_capacity;
   if (state->design_capacity > 0 && health_capacity > 0) {
@@ -849,8 +850,8 @@ constexpr double kDefaultThermalMaxAgeMs = 5000.0;
 /**
  * getDieTemperature(maxAgeMs = 5000): returns the latest SoC die average / peak, NAND and battery
  * temperatures, or null if unavailable. Never blocks on HID IPC after the first call: a new pass
- * runs in the background when the latest reading is older than `maxAgeMs`, so values can be up to
- * maxAgeMs + one pass (~20 ms) old.
+ * runs in the background when the latest reading is older than `maxAgeMs`; its result is returned by
+ * a later call, so a value can be up to maxAgeMs plus the caller's call interval old.
  */
 napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
   size_t argc = 1;

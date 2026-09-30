@@ -10,14 +10,14 @@ let disposed = false;
 let isUpdating = false;
 let pendingForceUpdate = false;
 let lastUpdateError = '';
-/* Battery, disk and temperature are sampled at their section interval (resmon.refreshMs),
-   independent of the polling interval; a click forces a fresh sample of everything. */
-/**
- * Tooltip regeneration. VS Code has no hover event, so tooltips are rebuilt ahead of time:
- * Live on every status bar tick; Static on click and, when auto-refresh is on, at the per-section
- * interval from `resmon.refreshMs` (limits hover flicker). Everything runs on the status bar tick
- * (`resmon.updatefrequencyms`), so an interval shorter than the tick takes effect once per tick.
- */
+// Refresh model: everything runs on the status bar tick (resmon.updatefrequencyms). Battery, disk and
+// temperature are sampled at their section interval (resmon.refreshMs). VS Code has no hover event, so
+// tooltips are rebuilt ahead of time: Live on every tick; Static on click and, with auto-refresh, at the
+// section interval. A click (resmon.refresh) forces a fresh sample of everything.
+
+/** Configuration changes arrive in bursts (e.g. "Restore defaults" writes ~20 keys): apply them once. */
+const CONFIG_CHANGE_DEBOUNCE_MS = 100;
+let configChangeTimer: NodeJS.Timeout | null = null;
 
 let lastBatterySampleAt = 0;
 let lastDiskSampleAt = 0;
@@ -464,6 +464,16 @@ function buildSettingsTooltip(config: ResMonConfig): string {
   return lines.join('\n');
 }
 
+/** Full section names, as in the settings panel ('freq' is system load on macOS, frequency on Linux). */
+const SECTION_LABELS: Record<TooltipSection, (isDarwin: boolean) => string> = {
+  cpu: () => 'CPU usage',
+  freq: (isDarwin) => (isDarwin ? 'System load' : 'CPU frequency'),
+  temp: () => 'Temperature',
+  mem: () => 'Memory',
+  battery: () => 'Battery',
+  disk: () => 'Disk',
+};
+
 /** Short section names for compact summaries ('freq' is system load on macOS, frequency on Linux). */
 const SECTION_SHORT_LABELS: Record<TooltipSection, (isDarwin: boolean) => string> = {
   cpu: () => 'CPU',
@@ -492,7 +502,7 @@ function createWidgets(config: ResMonConfig): StatusBarWidgets {
   config.order.forEach((section, index) => {
     const item = vscode.window.createStatusBarItem(align, priorityOf(index));
     item.command = 'resmon.refresh';
-    item.name = `Resource Monitor: ${SECTION_SHORT_LABELS[section](process.platform === 'darwin')}`;
+    item.name = `Resource Monitor: ${SECTION_LABELS[section](process.platform === 'darwin')}`;
     created[section] = item;
   });
 
@@ -519,13 +529,12 @@ function createWidgets(config: ResMonConfig): StatusBarWidgets {
  * @param context - Extension runtime context provided by VS Code.
  */
 export function activate(context: vscode.ExtensionContext): void {
-  console.log('[Resource Monitor NG] Activated successfully');
-
   disposed = false;
   pendingForceUpdate = false;
   lastUpdateError = '';
   const log = vscode.window.createOutputChannel('Resource Monitor NG', { log: true });
   context.subscriptions.push(log);
+  log.info('Activated');
   let currentConfig = getConfig();
   widgets = createWidgets(currentConfig);
   context.subscriptions.push({ dispose: disposeWidgets });
@@ -535,13 +544,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const diskProvider = new DiskProvider();
 
   /**
-   * Executes a polling tick across active resource providers and updates individual widgets.
+   * One status bar tick: samples the providers and updates the widgets.
    *
-   * Fast in-memory telemetry (CPU, Freq/Load, Temp, RAM) is polled on every tick.
-   * Battery, disk and temperature are sampled at their section interval (resmon.refreshMs).
-   * Tooltip Markdown content is refreshed on every tick in 'Live' mode, or on-demand when forceAll is true in 'Static' mode.
+   * CPU, load/frequency and memory are sampled on every tick; battery, disk and temperature at their
+   * section interval (resmon.refreshMs). Tooltips are rebuilt on every tick in Live mode; in Static mode
+   * at the section interval when auto-refresh is on, otherwise only when forced.
    *
-   * @param forceAll - When true, bypasses tick decimation and forces all providers and tooltips to refresh.
+   * @param forceAll - Forces a fresh sample of every provider and a rebuild of every tooltip (click, config change).
    */
   async function update(forceAll = false): Promise<void> {
     if (disposed || !widgets) {
@@ -894,7 +903,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // 5. Battery (with Time Remaining estimation)
       if (config.showBattery && platformProvider.isBatteryAvailable()) {
-        if (forceAll || cachedBattery === null || intervalElapsed(now - lastBatterySampleAt, config.sectionRefreshMs.battery, config.updateFrequencyMs)) {
+        // Time-gated even when the last read failed, so a failing read never runs on every tick.
+        if (forceAll || lastBatterySampleAt === 0 || intervalElapsed(now - lastBatterySampleAt, config.sectionRefreshMs.battery, config.updateFrequencyMs)) {
           cachedBattery = platformProvider.sampleBattery();
           lastBatterySampleAt = now;
         }
@@ -944,7 +954,7 @@ export function activate(context: vscode.ExtensionContext): void {
             } else if (cachedBattery.timeRemainingMinutes === -1 && cachedBattery.status === 'Discharging') {
               timeStr = 'Estimating...';
             } else {
-              timeStr = cachedBattery.status === 'Charged' || cachedBattery.status === 'Full' ? 'Fully charged' : 'AC Connected';
+              timeStr = cachedBattery.status === 'Full' ? 'Fully charged' : 'AC Connected';
             }
             batRows.push([
               'Power State',
@@ -983,9 +993,9 @@ export function activate(context: vscode.ExtensionContext): void {
         updateWidget(widgets.battery, '', '', false);
       }
 
-      // 6. Disk Space (asynchronous statfs with tick decimation)
+      // 6. Disk Space (asynchronous statfs, sampled every refreshMs.disk)
       if (config.showDisk) {
-        if (forceAll || cachedDisks.length === 0 || intervalElapsed(now - lastDiskSampleAt, config.sectionRefreshMs.disk, config.updateFrequencyMs)) {
+        if (forceAll || lastDiskSampleAt === 0 || intervalElapsed(now - lastDiskSampleAt, config.sectionRefreshMs.disk, config.updateFrequencyMs)) {
           lastDiskSampleAt = now;
           const defaultWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
           cachedDisks = await diskProvider.sample(config.diskDrives, defaultWorkspace);
@@ -1169,32 +1179,45 @@ export function activate(context: vscode.ExtensionContext): void {
   // Configuration change listener
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('resmon')) {
-        const newConfig = getConfig();
-        if (
-          newConfig.priority !== currentConfig.priority ||
-          newConfig.alignment !== currentConfig.alignment ||
-          newConfig.showSettings !== currentConfig.showSettings ||
-          newConfig.order.join() !== currentConfig.order.join()
-        ) {
-          // Placement changed: recreate the widgets (VS Code cannot move an existing item)
-          disposeWidgets();
-          widgets = createWidgets(newConfig);
-        } else if (settingsItem) {
-          const md = new vscode.MarkdownString(buildSettingsTooltip(newConfig), true);
-          md.isTrusted = true;
-          settingsItem.tooltip = md;
-        }
-        currentConfig = newConfig;
-        SettingsPanel.notifyConfigChanged();
-
-        cachedBattery = null;
-        cachedDisks = [];
-        void update(true);
-        scheduleNext();
+      if (!e.affectsConfiguration('resmon')) {
+        return;
       }
+      if (configChangeTimer) {
+        clearTimeout(configChangeTimer);
+      }
+      configChangeTimer = setTimeout(applyConfigChange, CONFIG_CHANGE_DEBOUNCE_MS);
     })
   );
+
+  /** Applies a (debounced) configuration change: placement, gear tooltip, panel, forced refresh. */
+  function applyConfigChange(): void {
+    configChangeTimer = null;
+    if (disposed) {
+      return;
+    }
+    const newConfig = getConfig();
+    if (
+      newConfig.priority !== currentConfig.priority ||
+      newConfig.alignment !== currentConfig.alignment ||
+      newConfig.showSettings !== currentConfig.showSettings ||
+      newConfig.order.join() !== currentConfig.order.join()
+    ) {
+      // Placement changed: recreate the widgets (VS Code cannot move an existing item)
+      disposeWidgets();
+      widgets = createWidgets(newConfig);
+    } else if (settingsItem) {
+      const md = new vscode.MarkdownString(buildSettingsTooltip(newConfig), true);
+      md.isTrusted = true;
+      settingsItem.tooltip = md;
+    }
+    currentConfig = newConfig;
+    SettingsPanel.notifyConfigChanged();
+
+    cachedBattery = null;
+    cachedDisks = [];
+    void update(true);
+    scheduleNext();
+  }
 
   // Initial update and scheduling
   void update(true);
@@ -1206,6 +1229,10 @@ export function activate(context: vscode.ExtensionContext): void {
  */
 export function deactivate(): void {
   disposed = true;
+  if (configChangeTimer) {
+    clearTimeout(configChangeTimer);
+    configChangeTimer = null;
+  }
   SettingsPanel.disposeCurrent();
   if (updateTimer) {
     clearTimeout(updateTimer);

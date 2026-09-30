@@ -1,3 +1,31 @@
+import {
+  MAX_PRIORITY,
+  MAX_SECTION_REFRESH_MS,
+  MAX_UPDATE_FREQUENCY_MS,
+  MIN_BATTERY_DISK_REFRESH_MS,
+  MIN_PRIORITY,
+  MIN_SECTION_REFRESH_MS,
+  MIN_TEMP_REFRESH_MS,
+  MIN_UPDATE_FREQUENCY_MS,
+} from '../config.js';
+
+/** Limits shared with config.ts (single source), injected into the panel script and texts. */
+const LIMITS = {
+  barMin: MIN_UPDATE_FREQUENCY_MS,
+  barMax: MAX_UPDATE_FREQUENCY_MS,
+  sectionMin: MIN_SECTION_REFRESH_MS,
+  sectionMax: MAX_SECTION_REFRESH_MS,
+  tempMin: MIN_TEMP_REFRESH_MS,
+  slowMin: MIN_BATTERY_DISK_REFRESH_MS,
+  priorityMin: MIN_PRIORITY,
+  priorityMax: MAX_PRIORITY,
+} as const;
+
+/** '3600000' -> '1 h', '2000' -> '2000 ms': compact labels for the explanatory texts. */
+function label(ms: number): string {
+  return ms >= 3_600_000 && ms % 3_600_000 === 0 ? `${ms / 3_600_000} h` : `${ms} ms`;
+}
+
 /**
  * HTML for the settings webview. Self-contained: no remote resources, strict CSP, a per-load
  * nonce for the inline style and script, and VS Code theme variables for every color so the
@@ -123,7 +151,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   <section aria-labelledby="h-tooltips">
     <h2 id="h-tooltips">Tooltips</h2>
     <div class="row">
-      <div class="label">Refresh mode<span class="hint">Live follows every status bar tick</span></div>
+      <div class="label">Tooltip mode<span class="hint">Live follows every status bar tick</span></div>
       <div class="control">
         <div class="segmented" role="group" aria-label="Tooltip refresh mode" data-setting="tooltip.mode">
           <button type="button" data-value="Static">Static</button>
@@ -142,10 +170,10 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   <section aria-labelledby="h-bar">
     <h2 id="h-bar">Status bar</h2>
     <div class="row">
-      <div class="label">Update interval<span class="hint">Clock of the extension: bar values, Live tooltips; nothing refreshes faster</span></div>
+      <div class="label">Status bar interval<span class="hint">Clock of the extension: bar values, Live tooltips; nothing refreshes faster</span></div>
       <div class="control">
-        <input type="range" id="freqRange" min="0" step="1" aria-label="Update interval (preset steps)">
-        <input type="number" id="freqNumber" min="200" max="15000" step="50" aria-label="Update interval in milliseconds">
+        <input type="range" id="freqRange" min="0" step="1" aria-label="Status bar interval (preset steps)">
+        <input type="number" id="freqNumber" min="${LIMITS.barMin}" max="${LIMITS.barMax}" step="50" aria-label="Status bar interval in milliseconds">
         <span class="unit">ms</span>
       </div>
     </div>
@@ -156,7 +184,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
           <button type="button" data-value="Left">Left</button>
           <button type="button" data-value="Right">Right</button>
         </div>
-        <label>Priority <input type="number" id="priority" min="-10000" max="10000" step="1" aria-label="Status bar priority"></label>
+        <label>Priority <input type="number" id="priority" min="${LIMITS.priorityMin}" max="${LIMITS.priorityMax}" step="1" aria-label="Status bar priority"></label>
       </div>
     </div>
     <div class="row">
@@ -181,16 +209,16 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
       </thead>
       <tbody id="sections"></tbody>
     </table>
-    <p class="note">Drag rows (or use the arrows) to reorder the widgets left to right. Refresh (200 ms to 1 h; the slider
+    <p class="note">Drag rows (or use the arrows) to reorder the widgets left to right. Refresh (${label(LIMITS.sectionMin)} to ${label(LIMITS.sectionMax)}; the slider
       has preset steps, type any value in the field) sets the Static tooltip auto-refresh; battery, disk and temperature are
-      also sampled at that interval, never faster than every 2000 ms (battery and disk: unless unlocked below). Everything runs on the status bar tick: a
+      also sampled at that interval, never faster than every ${label(LIMITS.tempMin)} (battery and disk: unless unlocked below). Everything runs on the status bar tick: a
       shorter interval runs once per tick, a longer one at the closest tick; the note under a row shows when the tooltip
       refresh differs from the value set.</p>
     <div class="fast">
-      <label class="switch"><input type="checkbox" id="allowFast"> Allow battery and disk refresh below 2000 ms<span class="warn">*</span></label>
+      <label class="switch"><input type="checkbox" id="allowFast"> Allow battery and disk refresh below ${label(LIMITS.slowMin)}<span class="warn">*</span></label>
       <p class="warn-note"><span class="warn">* Performance impact.</span> Each battery read queries IOPowerSources/IOKit and each
         disk read calls statfs: below 2 s they cost CPU time and energy for values that change slowly. Values set below
-        2000 ms are kept and apply again whenever this is on. Temperature always stays at 2000 ms or more.</p>
+        ${label(LIMITS.slowMin)} are kept and apply again whenever this is on. Temperature always stays at ${label(LIMITS.tempMin)} or more.</p>
     </div>
   </section>
 
@@ -271,8 +299,9 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   const BAR_STOPS = [200, 250, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000, 15000];
   const SECTION_STOPS = [200, 250, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000,
     45000, 60000, 120000, 300000, 600000, 1800000, 3600000];
-  const BAR_MIN = 200, BAR_MAX = 15000;
-  const SECTION_MIN = 200, TEMP_MIN = 2000, SLOW_MIN = 2000, SECTION_MAX = 3600000;
+  const LIMITS = ${JSON.stringify(LIMITS)};
+  const BAR_MIN = LIMITS.barMin, BAR_MAX = LIMITS.barMax;
+  const SECTION_MIN = LIMITS.sectionMin, TEMP_MIN = LIMITS.tempMin, SLOW_MIN = LIMITS.slowMin, SECTION_MAX = LIMITS.sectionMax;
 
   /** Index of the preset closest to ms (log scale), for positioning a slider. */
   function nearestStop(stops, ms) {
@@ -324,7 +353,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   $('showSettings').addEventListener('change', function (e) { send('show.settings', e.target.checked); });
   $('allowFast').addEventListener('change', function (e) { send('allowFastBatteryDiskRefresh', e.target.checked); });
 
-  // Update interval: the slider previews while dragging and saves on release; the field saves on change.
+  // Status bar interval: the slider previews while dragging and saves on release; the field saves on change.
   $('freqRange').max = String(BAR_STOPS.length - 1);
   $('freqRange').addEventListener('input', function (e) { $('freqNumber').value = BAR_STOPS[Number(e.target.value)]; });
   $('freqRange').addEventListener('change', function (e) { send('updatefrequencyms', BAR_STOPS[Number(e.target.value)]); });
@@ -336,7 +365,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   });
 
   $('priority').addEventListener('change', function (e) {
-    const v = clamp(Math.round(Number(e.target.value) || 0), -10000, 10000);
+    const v = clamp(Math.round(Number(e.target.value) || 0), LIMITS.priorityMin, LIMITS.priorityMax);
     e.target.value = v;
     send('priority', v);
   });
@@ -349,13 +378,23 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
   $('reset').addEventListener('click', function () { vscode.postMessage({ type: 'reset' }); });
   $('openJson').addEventListener('click', function () { vscode.postMessage({ type: 'openJson' }); });
 
-  /** What actually happens for a section's tooltip, when it differs from the typed interval. */
+  /** Minimum interval of a section with the current lock setting. */
+  function minFor(id) {
+    if (id === 'temp') { return TEMP_MIN; }
+    if ((id === 'battery' || id === 'disk') && !values.allowFastBatteryDiskRefresh) { return SLOW_MIN; }
+    return SECTION_MIN;
+  }
+
+  /** What actually happens for a section, when it differs from the value set. */
   function effectiveNote(id, ms) {
     const tick = values.updatefrequencyms;
-    if (values['tooltip.mode'] === 'Live') { return 'tooltip: every tick'; }
-    if (!values['tooltip.autoRefresh']) { return 'tooltip: on click'; }
-    if (ms < tick) { return 'every tick (' + tick + ' ms)'; }
-    return '';
+    const min = minFor(id);
+    const locked = ms < min ? 'locked at ' + min + ' ms (fast refresh off)' : '';
+    if (values['tooltip.mode'] === 'Live') { return locked || 'tooltip: every tick'; }
+    if (!values['tooltip.autoRefresh']) { return locked || 'tooltip: on click'; }
+    const effective = Math.max(ms, min);
+    if (effective < tick) { return 'every tick (' + tick + ' ms)'; }
+    return locked;
   }
 
   function setNote(el, text) {
@@ -382,12 +421,13 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     send('order', order);
   }
 
-  function makeRow(id, index, count) {
+  /** DOM references of each section row, so state updates can be applied in place. */
+  const rows = {};
+
+  /** Creates a section row (structure and listeners only); values are applied by updateRow(). */
+  function makeRow(id) {
     const meta = SECTIONS[id];
-    const minMs = id === 'temp' ? TEMP_MIN
-      : ((id === 'battery' || id === 'disk') && !values.allowFastBatteryDiskRefresh ? SLOW_MIN : SECTION_MIN);
     const stops = SECTION_STOPS; // same steps on every row, so equal values line up
-    const current = values.refreshMs[id];
     const tr = document.createElement('tr');
     tr.draggable = true;
     tr.dataset.id = id;
@@ -403,14 +443,12 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     const tdShow = document.createElement('td');
     const show = document.createElement('input');
     show.type = 'checkbox';
-    show.checked = Boolean(values[meta.show]);
     show.setAttribute('aria-label', 'Show ' + meta.label);
     show.addEventListener('change', function () { send(meta.show, show.checked); });
     tdShow.appendChild(show);
 
     const tdName = document.createElement('td');
     tdName.className = 'name';
-    tdName.textContent = meta.label;
 
     const tdRefresh = document.createElement('td');
     const wrap = document.createElement('div');
@@ -420,20 +458,19 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     range.min = '0';
     range.max = String(stops.length - 1);
     range.step = '1';
-    range.value = String(nearestStop(stops, current));
     range.setAttribute('aria-label', meta.label + ' refresh (preset steps)');
     const num = document.createElement('input');
     num.type = 'number';
-    num.min = String(minMs);
     num.max = String(SECTION_MAX);
     num.step = '50';
-    num.value = String(current);
     num.setAttribute('aria-label', meta.label + ' refresh in milliseconds');
     const unit = document.createElement('span');
     unit.className = 'unit';
     unit.textContent = 'ms';
-    // Steps below the section minimum (temperature: 2000 ms) snap up to it.
-    function stepValue() { return Math.max(minMs, stops[Number(range.value)]); }
+    const eff = document.createElement('span');
+    eff.className = 'eff';
+    // Steps below the section minimum (temperature; battery and disk while locked) snap up to it.
+    function stepValue() { return Math.max(minFor(id), stops[Number(range.value)]); }
     range.addEventListener('input', function () { num.value = stepValue(); setNote(eff, effectiveNote(id, stepValue())); });
     range.addEventListener('change', function () {
       const v = stepValue();
@@ -441,15 +478,13 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
       sendRefresh(id, v);
     });
     num.addEventListener('change', function () {
-      const v = clamp(Math.round(Number(num.value) || minMs), minMs, SECTION_MAX);
+      const min = minFor(id);
+      const v = clamp(Math.round(Number(num.value) || min), min, SECTION_MAX);
       num.value = v;
       range.value = String(nearestStop(stops, v));
       setNote(eff, effectiveNote(id, v));
       sendRefresh(id, v);
     });
-    const eff = document.createElement('span');
-    eff.className = 'eff';
-    setNote(eff, effectiveNote(id, current));
     wrap.append(range, num, unit);
     tdRefresh.append(wrap, eff);
 
@@ -460,14 +495,12 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     up.type = 'button';
     up.className = 'icon-btn';
     up.textContent = '\\u25B2';
-    up.disabled = index === 0;
     up.setAttribute('aria-label', 'Move ' + meta.label + ' left');
     up.addEventListener('click', function () { moveSection(id, -1); });
     const down = document.createElement('button');
     down.type = 'button';
     down.className = 'icon-btn';
     down.textContent = '\\u25BC';
-    down.disabled = index === count - 1;
     down.setAttribute('aria-label', 'Move ' + meta.label + ' right');
     down.addEventListener('click', function () { moveSection(id, 1); });
     move.append(up, down);
@@ -508,23 +541,48 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
       renderSections();
       send('order', order);
     });
+
+    rows[id] = { tr: tr, show: show, name: tdName, range: range, num: num, eff: eff, up: up, down: down };
     return tr;
   }
 
+  /** Applies the current state to a row, leaving a field the user is editing untouched. */
+  function updateRow(id, index, count) {
+    const r = rows[id];
+    const meta = SECTIONS[id];
+    const current = values.refreshMs[id];
+    r.name.textContent = meta.label;
+    r.show.checked = Boolean(values[meta.show]);
+    r.num.min = String(minFor(id));
+    if (!isFocused(r.num) && !isFocused(r.range)) {
+      r.num.value = String(current);
+      r.range.value = String(nearestStop(SECTION_STOPS, current));
+    }
+    setNote(r.eff, effectiveNote(id, isFocused(r.num) ? Number(r.num.value) || current : current));
+    r.up.disabled = index === 0;
+    r.down.disabled = index === count - 1;
+  }
+
+  /**
+   * Renders the section rows. Rows are updated in place on every state message (so typing, focus and
+   * drag and drop are never interrupted); the table is rebuilt only when the order changes.
+   */
   function renderSections() {
     const tbody = $('sections');
-    const active = document.activeElement;
-    // Do not rebuild while the user is editing a field in the table.
-    if (active && tbody.contains(active) && active.tagName === 'INPUT' && active.type === 'number') { return; }
-    const focusKey = active && tbody.contains(active) ? active.getAttribute('aria-label') : null;
-    tbody.replaceChildren();
-    values.order.forEach(function (id, i) { tbody.appendChild(makeRow(id, i, values.order.length)); });
-    if (focusKey) {
-      const again = Array.prototype.find.call(tbody.querySelectorAll('[aria-label]'), function (el) {
-        return el.getAttribute('aria-label') === focusKey;
-      });
-      if (again && !again.disabled) { again.focus(); }
+    const shown = Array.prototype.map.call(tbody.children, function (tr) { return tr.dataset.id; });
+    if (shown.join() !== values.order.join()) {
+      const active = document.activeElement;
+      const focusKey = active && tbody.contains(active) ? active.getAttribute('aria-label') : null;
+      tbody.replaceChildren();
+      values.order.forEach(function (id) { tbody.appendChild(rows[id] ? rows[id].tr : makeRow(id)); });
+      if (focusKey) {
+        const again = Array.prototype.find.call(tbody.querySelectorAll('[aria-label]'), function (el) {
+          return el.getAttribute('aria-label') === focusKey;
+        });
+        if (again) { again.focus(); }
+      }
     }
+    values.order.forEach(function (id, i) { updateRow(id, i, values.order.length); });
   }
 
   function render() {

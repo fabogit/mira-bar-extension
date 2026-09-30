@@ -17,7 +17,8 @@
             "CLANG_CXX_LIBRARY": "libc++",
             "CLANG_CXX_LANGUAGE_STANDARD": "c++17",
             "GCC_SYMBOLS_PRIVATE_EXTERN": "YES",
-            "WARNING_CFLAGS": [ "-Wextra", "-Wunguarded-availability-new" ]
+            "WARNING_CFLAGS": [ "-Wall", "-Wextra", "-Wunguarded-availability-new" ],
+            "OTHER_CPLUSPLUSFLAGS": [ "-fvisibility=hidden" ]
           }
         }]
       ]

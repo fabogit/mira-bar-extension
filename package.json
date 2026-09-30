@@ -64,7 +64,7 @@
         "resmon.show.cpufreq": {
           "type": "boolean",
           "default": true,
-          "description": "Toggles the display of CPU frequency."
+          "description": "Toggles the display of CPU frequency (Linux) or system load average (macOS)."
         },
         "resmon.show.cputemp": {
           "type": "boolean",
@@ -134,7 +134,7 @@
           "default": 2000,
           "minimum": 200,
           "maximum": 15000,
-          "description": "Polling interval of the status bar values in milliseconds (200-15000). It is the clock of the extension: in Live mode tooltips follow every tick, and per-section refresh intervals shorter than it take effect once per tick."
+          "description": "Status bar interval in milliseconds (200-15000). It is the clock of the extension: in Live mode tooltips follow every tick, and per-section refresh intervals shorter than it take effect once per tick."
         },
         "resmon.freq.unit": {
           "type": "string",
@@ -161,6 +161,8 @@
         "resmon.priority": {
           "type": "number",
           "default": 100,
+          "minimum": -10000,
+          "maximum": 10000,
           "description": "Base priority for status bar positioning. Higher values place it further to the left; lower or negative values place it further to the right."
         },
         "resmon.alignment": {
@@ -199,7 +201,7 @@
           "properties": {
             "cpu": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "CPU utilization: Static tooltip refresh (ms)." },
             "freq": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "CPU frequency (Linux) / system load (macOS): Static tooltip refresh (ms)." },
-            "temp": { "type": "number", "minimum": 2000, "maximum": 3600000, "description": "Temperature: sampling and Static tooltip refresh (ms; minimum 2000: each sensor pass costs ~16 ms)." },
+            "temp": { "type": "number", "minimum": 2000, "maximum": 3600000, "description": "Temperature: sampling and Static tooltip refresh (ms; minimum 2000: on macOS each sensor pass costs ~16 ms of HID IPC)." },
             "mem": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Memory: Static tooltip refresh (ms)." },
             "battery": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Battery: sampling and Static tooltip refresh (ms; minimum 2000 unless resmon.allowFastBatteryDiskRefresh is on)." },
             "disk": { "type": "number", "minimum": 200, "maximum": 3600000, "description": "Disk: sampling and Static tooltip refresh (ms; minimum 2000 unless resmon.allowFastBatteryDiskRefresh is on)." }
@@ -242,7 +244,7 @@
     "vscode:prepublish": "node esbuild.js --production",
     "build": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
     "compile:native": "bash native/darwin/compile.sh",
     "test:darwin": "node test/smoke-darwin.mjs",
     "test:linux": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/smoke-linux.ts'], outfile: 'dist/test-smoke-linux.cjs', bundle: true, platform: 'node', format: 'cjs' });\" && node dist/test-smoke-linux.cjs && rm -f dist/test-smoke-linux.cjs",
