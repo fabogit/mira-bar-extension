@@ -96,6 +96,8 @@ High-frequency telemetry (e.g. 200 ms) is valuable for observing short CPU load 
 - **Intervals** (`resmon.refreshMs`, 200 ms to 1 h, defaults 5 s; battery and disk 10 s) are measured in time, not in ticks, with a tolerance of half a tick so an interval equal to the tick fires on every tick. Intervals shorter than the tick run once per tick.
 - **Floors**: temperature at least 2000 ms (a sampler pass costs ~16 ms of a background thread); battery and disk at least 2000 ms unless `resmon.allowFastBatteryDiskRefresh` is enabled, since every battery read is an XPC round trip to `powerd` and every disk read a `statfs` call.
 - **Hidden widgets** are not sampled. A failed read is retried at its interval, not on every tick.
+- **Disk off the tick**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other widgets updating; no new request for the same paths starts until it returns, while a change of `resmon.disk.drives` starts one at once and drops the stale result.
+- **Live tooltips follow new data**: CPU, load and memory tooltips are rebuilt on every tick; battery, disk and temperature only when a new reading arrives, so an unchanged tooltip is not re-sent to the renderer.
 - **Manual refresh** (`resmon.refresh` or a click on any widget) samples every visible subsystem, rebuilds all tooltips and restarts the timer.
 - **Configuration changes** are debounced (100 ms), so dragging a slider in the settings panel does not recreate the widgets on every step.
 
@@ -117,7 +119,7 @@ Resource Monitor NG enforces two UI stability invariants:
 4. **Dual Tooltip Modes (`Static` vs `Live`)**:
    - VS Code exposes no hover event, so tooltips are rebuilt ahead of time and a hover shows the last version.
    - **`Static` (Default)**: tooltips are rebuilt on click and, with `resmon.tooltip.autoRefresh` (default on), at each section interval, so they change rarely while the status bar text keeps streaming.
-   - **`Live`**: tooltips are rebuilt on every status bar tick.
+   - **`Live`**: tooltips are rebuilt on every status bar tick that brings new data for them (battery, disk and temperature at their sampling interval).
    - Every tooltip ends with its update time (tenths of a second when the tick is below 1000 ms) and links to *Settings* and *Refresh*.
    - Switchable via `resmon.toggleTooltipMode` / `resmon.toggleTooltipAutoRefresh` or from the gear widget's tooltip.
 5. **Unified Monospace ASCII Table Engine (`renderDynamicAsciiTable`)**:

@@ -12,15 +12,29 @@ let pendingForceUpdate = false;
 let lastUpdateError = '';
 // Refresh model: everything runs on the status bar tick (resmon.updatefrequencyms). Battery, disk and
 // temperature are sampled at their section interval (resmon.refreshMs). VS Code has no hover event, so
-// tooltips are rebuilt ahead of time: Live on every tick; Static on click and, with auto-refresh, at the
-// section interval. A click (resmon.refresh) forces a fresh sample of everything.
+// tooltips are rebuilt ahead of time: Live on every tick with new data; Static on click and, with
+// auto-refresh, at the section interval. A click (resmon.refresh) forces a fresh sample of everything.
+// Hidden widgets are not sampled; statfs runs off the tick so a dead network mount cannot stall it.
 
 /** Configuration changes arrive in bursts (e.g. "Restore defaults" writes ~20 keys): apply them once. */
 const CONFIG_CHANGE_DEBOUNCE_MS = 100;
 let configChangeTimer: NodeJS.Timeout | null = null;
 
+/** Incremented by every activate(): callbacks from an older activation (e.g. a late statfs) are ignored. */
+let activationGeneration = 0;
+
 let lastBatterySampleAt = 0;
 let lastDiskSampleAt = 0;
+/** Time the last disk sample completed (statfs runs off the tick, see update()). */
+let lastDiskResultAt = 0;
+/**
+ * The disk sample in flight, if any. A hung statfs (dead network mount) never piles up requests for
+ * the same paths; a change of paths starts a new request and results of older ones are dropped.
+ */
+let diskPending: { seq: number; key: string; forced: boolean } | null = null;
+let diskRequestSeq = 0;
+/** Values shown in the last temperature tooltip: Live mode rebuilds it only when they change. */
+let lastTempTooltipKey = '';
 const lastTooltipAt: Record<TooltipSection, number> = { cpu: 0, freq: 0, temp: 0, mem: 0, battery: 0, disk: 0 };
 let tooltipUpdatedAt = '';
 let cachedBattery: BatteryInfo | null = null;
@@ -530,6 +544,7 @@ function createWidgets(config: ResMonConfig): StatusBarWidgets {
  */
 export function activate(context: vscode.ExtensionContext): void {
   disposed = false;
+  const generation = ++activationGeneration;
   pendingForceUpdate = false;
   lastUpdateError = '';
   const log = vscode.window.createOutputChannel('Resource Monitor NG', { log: true });
@@ -544,16 +559,137 @@ export function activate(context: vscode.ExtensionContext): void {
   const diskProvider = new DiskProvider();
 
   /**
+   * Renders the disk widget from the last statfs result (`cachedDisks`).
+   *
+   * @param config - Current configuration.
+   * @param rebuildTooltip - Whether to regenerate the tooltip (otherwise the current one is kept).
+   */
+  function renderDisk(config: ResMonConfig, rebuildTooltip: boolean): void {
+    if (!widgets) {
+      return;
+    }
+    if (!config.showDisk || cachedDisks.length === 0) {
+      updateWidget(widgets.disk, '', '', false);
+      return;
+    }
+    const formatMetric = (d: { freePercent: number; usedPercent: number; freeBytes: number; usedBytes: number; totalBytes: number }): string => {
+      switch (config.diskFormat) {
+        case 'PercentRemaining':
+          return `${padNum(d.freePercent.toFixed(1), 5)}% free`;
+        case 'PercentUsed':
+          return `${padNum(d.usedPercent.toFixed(1), 5)}% used`;
+        case 'Remaining':
+          return `${formatBytes(d.freeBytes)} free`;
+        case 'UsedOutOfTotal':
+          return `${formatBytes(d.usedBytes)}/${formatBytes(d.totalBytes)}`;
+      }
+    };
+
+    const getShortDiskName = (mountPath: string): string => {
+      if (mountPath === '/' || mountPath === '') {
+        return '/';
+      }
+      const clean = mountPath.endsWith('/') ? mountPath.slice(0, -1) : mountPath;
+      const parts = clean.split(/[/\\]/).filter(Boolean);
+      return parts[parts.length - 1] ?? mountPath;
+    };
+
+    let diskDisplayStr = '';
+    if (cachedDisks.length === 1) {
+      diskDisplayStr = formatMetric(cachedDisks[0]!);
+    } else if (config.diskMultiDisplay === 'MostFull') {
+      let worst = cachedDisks[0]!;
+      for (let i = 1; i < cachedDisks.length; i++) {
+        if (cachedDisks[i]!.usedPercent > worst.usedPercent) {
+          worst = cachedDisks[i]!;
+        }
+      }
+      diskDisplayStr = `${getShortDiskName(worst.mountPath)}: ${formatMetric(worst)}`;
+    } else {
+      diskDisplayStr = cachedDisks
+        .map((d) => `${getShortDiskName(d.mountPath)}: ${formatMetric(d)}`)
+        .join(' | ');
+    }
+
+    let diskMd: string | null = null;
+    if (rebuildTooltip) {
+      const lines = ['### Storage Utilization', ''];
+      const storageCols: ColumnDef[] = [
+        { header: 'Mount', align: 'left', minWidth: 5, maxWidth: 28, truncatePath: true },
+        { header: 'Used Space', align: 'left' },
+        { header: 'Available Space', align: 'left' },
+      ];
+      const storageRows: string[][] = cachedDisks.map((d) => [
+        d.mountPath,
+        `${renderBar(d.usedPercent, 6, false)}  ${d.usedPercent.toFixed(1).padStart(5, ' ')}%`,
+        `${formatBytes(d.freeBytes)} of ${formatBytes(d.totalBytes)}`,
+      ]);
+      lines.push(...renderDynamicAsciiTable(storageCols, storageRows));
+      lines.push(...getTooltipFooter());
+      diskMd = lines.join('\n');
+    }
+    updateWidget(widgets.disk, `$(database) ${diskDisplayStr}`, diskMd, true);
+  }
+
+  /**
+   * Starts a disk sample off the tick. statfs can hang on a dead network mount: the other widgets keep
+   * updating, and no new sample for the same paths starts until the pending one returns.
+   *
+   * @param config - Configuration at the time of the request.
+   * @param key - Identity of the sampled paths (see update()).
+   * @param defaultPath - Workspace folder sampled when no drives are configured.
+   * @param forced - Rebuild the tooltip with the result (click or configuration change).
+   */
+  function startDiskSample(config: ResMonConfig, key: string, defaultPath: string, forced: boolean): void {
+    const seq = ++diskRequestSeq;
+    diskPending = { seq, key, forced };
+    /** True when this request is still the current one of the current activation. */
+    const current = (): boolean => generation === activationGeneration && diskPending?.seq === seq;
+    diskProvider.sample(config.diskDrives, defaultPath).then(
+      (disks) => {
+        if (!current()) {
+          return; // superseded by a request for other paths, or by a newer activation
+        }
+        const rebuildForced = diskPending!.forced;
+        diskPending = null;
+        if (disposed) {
+          return;
+        }
+        cachedDisks = disks;
+        lastDiskResultAt = Date.now();
+        const cfg = currentConfig;
+        const interval = tooltipIntervalMs(cfg, 'disk');
+        const rebuild =
+          rebuildForced ||
+          lastTooltipAt.disk === 0 ||
+          interval === 0 ||
+          intervalElapsed(lastDiskResultAt - lastTooltipAt.disk, interval, cfg.updateFrequencyMs);
+        if (rebuild) {
+          lastTooltipAt.disk = lastDiskResultAt;
+          tooltipUpdatedAt = formatClock(new Date(lastDiskResultAt), cfg.updateFrequencyMs < 1000);
+        }
+        renderDisk(cfg, rebuild);
+      },
+      () => {
+        if (current()) {
+          diskPending = null;
+        }
+      }
+    );
+  }
+
+  /**
    * One status bar tick: samples the providers and updates the widgets.
    *
-   * CPU, load/frequency and memory are sampled on every tick; battery, disk and temperature at their
-   * section interval (resmon.refreshMs). Tooltips are rebuilt on every tick in Live mode; in Static mode
-   * at the section interval when auto-refresh is on, otherwise only when forced.
+   * Only visible widgets are sampled. CPU, load/frequency and memory are sampled on every tick; battery,
+   * disk and temperature at their section interval (resmon.refreshMs), disk off the tick. Live mode
+   * rebuilds a tooltip on every tick that brings new data for it; Static mode at the section interval
+   * when auto-refresh is on, otherwise only when forced.
    *
    * @param forceAll - Forces a fresh sample of every provider and a rebuild of every tooltip (click, config change).
    */
   async function update(forceAll = false): Promise<void> {
-    if (disposed || !widgets) {
+    if (disposed || !widgets || generation !== activationGeneration) {
       return;
     }
     if (isUpdating) {
@@ -566,21 +702,31 @@ export function activate(context: vscode.ExtensionContext): void {
     isUpdating = true;
 
     try {
-      const config = getConfig();
+      // Kept current by applyConfigChange(); reading it here avoids ~25 config lookups per tick.
+      const config = currentConfig;
       const now = Date.now();
       tooltipUpdatedAt = formatClock(new Date(now), config.updateFrequencyMs < 1000);
-      /** True when this section's tooltip must be rebuilt now (records the refresh time). */
-      const tooltipDue = (section: TooltipSection): boolean => {
-        if (!forceAll && !intervalElapsed(now - lastTooltipAt[section], tooltipIntervalMs(config, section), config.updateFrequencyMs)) {
-          return false;
+      /**
+       * True when this section's tooltip must be rebuilt now (records the refresh time).
+       *
+       * @param fresh - Whether the section has new data since its last tooltip. Live mode rebuilds on
+       *   every tick only for sections with new data (battery, disk and temperature change at their
+       *   own interval), so an unchanged tooltip is not re-sent to the renderer five times a second.
+       */
+      const tooltipDue = (section: TooltipSection, fresh = true): boolean => {
+        if (!forceAll) {
+          const interval = tooltipIntervalMs(config, section);
+          if (interval === 0 ? !fresh : !intervalElapsed(now - lastTooltipAt[section], interval, config.updateFrequencyMs)) {
+            return false;
+          }
         }
         lastTooltipAt[section] = now;
         return true;
       };
 
-      // 1. CPU Usage & 2. CPU Frequency (Linux) or System Load Average (macOS)
-      const cpuUsage = platformProvider.sampleCpu();
-      const freqOrLoad = platformProvider.sampleFreqOrLoad();
+      // 1. CPU Usage & 2. CPU Frequency (Linux) or System Load Average (macOS). Hidden widgets are not sampled.
+      const cpuUsage = config.showCpuUsage ? platformProvider.sampleCpu() : null;
+      const freqOrLoad = config.showCpuFreq ? platformProvider.sampleFreqOrLoad() : null;
 
       if (cpuUsage && config.showCpuUsage) {
         const cpuStr = padNum(cpuUsage.overallPercent.toFixed(2), 5);
@@ -751,7 +897,9 @@ export function activate(context: vscode.ExtensionContext): void {
       if (cpuTemp) {
         const tempStr = padNum(cpuTemp.tempCelsius.toFixed(2), 5);
         let tempMd: string | null = null;
-        if (tooltipDue('temp')) {
+        const tempKey = `${cpuTemp.tempCelsius}|${cpuTemp.peakCelsius}|${cpuTemp.nandCelsius}|${cpuTemp.batteryCelsius}|${cpuTemp.sensorLabel}`;
+        if (tooltipDue('temp', tempKey !== lastTempTooltipKey)) {
+          lastTempTooltipKey = tempKey;
           const tempColumns: ColumnDef[] = [
             { header: 'Component', align: 'left' },
             { header: 'Heat Saturation', align: 'left' },
@@ -820,7 +968,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       // 4. Memory & Swap (with Memory Pressure on macOS)
-      const mem = platformProvider.sampleMemory();
+      const mem = config.showMem ? platformProvider.sampleMemory() : null;
       if (mem && config.showMem) {
         const divisor = UNIT_DIVISORS[config.memUnit] || UNIT_DIVISORS['GB']!;
         const usedStr = padNum((mem.usedBytes / divisor).toFixed(2), 5);
@@ -911,7 +1059,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (cachedBattery) {
           const batStr = padNum(String(cachedBattery.percent), 3);
           let batMd: string | null = null;
-          if (tooltipDue('battery')) {
+          if (tooltipDue('battery', lastBatterySampleAt > lastTooltipAt.battery)) {
             const batCols: ColumnDef[] = [
               { header: 'Metric', align: 'left' },
               { header: 'Level / State', align: 'left' },
@@ -993,78 +1141,20 @@ export function activate(context: vscode.ExtensionContext): void {
         updateWidget(widgets.battery, '', '', false);
       }
 
-      // 6. Disk Space (asynchronous statfs, sampled every refreshMs.disk)
+      // 6. Disk Space: statfs runs off the tick (startDiskSample); the widget shows the last result and is
+      // rendered again as soon as a new one arrives, which then also rebuilds its tooltip when due.
       if (config.showDisk) {
-        if (forceAll || lastDiskSampleAt === 0 || intervalElapsed(now - lastDiskSampleAt, config.sectionRefreshMs.disk, config.updateFrequencyMs)) {
+        const defaultPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
+        const key = JSON.stringify([config.diskDrives, defaultPath]);
+        const due = forceAll || lastDiskSampleAt === 0 || intervalElapsed(now - lastDiskSampleAt, config.sectionRefreshMs.disk, config.updateFrequencyMs);
+        if (due && (!diskPending || diskPending.key !== key)) {
           lastDiskSampleAt = now;
-          const defaultWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '/';
-          cachedDisks = await diskProvider.sample(config.diskDrives, defaultWorkspace);
-          // deactivate() may have disposed the widgets while statfs was pending.
-          if (disposed || !widgets) {
-            return;
-          }
+          startDiskSample(config, key, defaultPath, forceAll);
+        } else if (forceAll && diskPending) {
+          diskPending.forced = true; // same paths already in flight: its result rebuilds the tooltip
         }
-        if (cachedDisks.length > 0) {
-          const formatMetric = (d: { freePercent: number; usedPercent: number; freeBytes: number; usedBytes: number; totalBytes: number }): string => {
-            switch (config.diskFormat) {
-              case 'PercentRemaining':
-                return `${padNum(d.freePercent.toFixed(1), 5)}% free`;
-              case 'PercentUsed':
-                return `${padNum(d.usedPercent.toFixed(1), 5)}% used`;
-              case 'Remaining':
-                return `${formatBytes(d.freeBytes)} free`;
-              case 'UsedOutOfTotal':
-                return `${formatBytes(d.usedBytes)}/${formatBytes(d.totalBytes)}`;
-            }
-          };
-
-          const getShortDiskName = (mountPath: string): string => {
-            if (mountPath === '/' || mountPath === '') {
-              return '/';
-            }
-            const clean = mountPath.endsWith('/') ? mountPath.slice(0, -1) : mountPath;
-            const parts = clean.split(/[/\\]/).filter(Boolean);
-            return parts[parts.length - 1] ?? mountPath;
-          };
-
-          let diskDisplayStr = '';
-          if (cachedDisks.length === 1) {
-            diskDisplayStr = formatMetric(cachedDisks[0]!);
-          } else if (config.diskMultiDisplay === 'MostFull') {
-            let worst = cachedDisks[0]!;
-            for (let i = 1; i < cachedDisks.length; i++) {
-              if (cachedDisks[i]!.usedPercent > worst.usedPercent) {
-                worst = cachedDisks[i]!;
-              }
-            }
-            diskDisplayStr = `${getShortDiskName(worst.mountPath)}: ${formatMetric(worst)}`;
-          } else {
-            diskDisplayStr = cachedDisks
-              .map((d) => `${getShortDiskName(d.mountPath)}: ${formatMetric(d)}`)
-              .join(' | ');
-          }
-
-          let diskMd: string | null = null;
-          if (tooltipDue('disk')) {
-            const lines = ['### Storage Utilization', ''];
-            const storageCols: ColumnDef[] = [
-              { header: 'Mount', align: 'left', minWidth: 5, maxWidth: 28, truncatePath: true },
-              { header: 'Used Space', align: 'left' },
-              { header: 'Available Space', align: 'left' },
-            ];
-            const storageRows: string[][] = cachedDisks.map((d) => [
-              d.mountPath,
-              `${renderBar(d.usedPercent, 6, false)}  ${d.usedPercent.toFixed(1).padStart(5, ' ')}%`,
-              `${formatBytes(d.freeBytes)} of ${formatBytes(d.totalBytes)}`,
-            ]);
-            lines.push(...renderDynamicAsciiTable(storageCols, storageRows));
-            lines.push(...getTooltipFooter());
-            diskMd = lines.join('\n');
-          }
-          updateWidget(widgets.disk, `$(database) ${diskDisplayStr}`, diskMd, true);
-        } else {
-          updateWidget(widgets.disk, '', '', false);
-        }
+        // While a sample is in flight the tooltip waits for it, so its update time never labels old data.
+        renderDisk(config, !diskPending && tooltipDue('disk', lastDiskResultAt > lastTooltipAt.disk));
       } else {
         updateWidget(widgets.disk, '', '', false);
       }
@@ -1096,14 +1186,13 @@ export function activate(context: vscode.ExtensionContext): void {
     if (disposed) {
       return;
     }
-    const config = getConfig();
     updateTimer = setTimeout(async () => {
       await update();
-      // deactivate() may have run while update() was awaiting: never re-arm after dispose.
-      if (!disposed) {
+      // deactivate() (or a newer activation) may have run meanwhile: never re-arm a stale loop.
+      if (!disposed && generation === activationGeneration) {
         scheduleNext();
       }
-    }, config.updateFrequencyMs);
+    }, currentConfig.updateFrequencyMs);
     updateTimer.unref();
   }
 
@@ -1213,8 +1302,9 @@ export function activate(context: vscode.ExtensionContext): void {
     currentConfig = newConfig;
     SettingsPanel.notifyConfigChanged();
 
+    // Battery is re-read synchronously by update(true); the disk result is kept until the forced sample
+    // returns, so the disk widget does not blink on every change.
     cachedBattery = null;
-    cachedDisks = [];
     void update(true);
     scheduleNext();
   }
@@ -1243,6 +1333,9 @@ export function deactivate(): void {
   cachedDisks = [];
   lastBatterySampleAt = 0;
   lastDiskSampleAt = 0;
+  lastDiskResultAt = 0;
+  diskPending = null;
+  lastTempTooltipKey = '';
   for (const section of TOOLTIP_SECTIONS) {
     lastTooltipAt[section] = 0;
   }

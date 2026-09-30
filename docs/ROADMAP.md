@@ -121,6 +121,12 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - `resmon.refreshMs` per section (200 ms to 1 h): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `resmon.allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaces the pre-release `resmon.refreshSeconds`, still read as a fallback.
   - Half-tick tolerance so an interval equal to the tick fires every tick; update time with tenths of a second below 1000 ms; a click refreshes everything.
   - Configuration changes debounced (100 ms) so slider drags do not recreate the widgets on every step.
+- [x] **Final Check**:
+  - Hidden CPU, load and memory widgets are no longer sampled (only temperature and battery were gated before).
+  - Live tooltips of battery, disk and temperature rebuilt only when a new reading arrives (was 5 times a second at 200 ms).
+  - `statfs` off the tick: a dead network mount cannot freeze the status bar; at most one pending request per set of paths, and removing the mount from `resmon.disk.drives` recovers at once.
+  - Configuration read once per change instead of twice per tick; activation generation guard for late callbacks.
+  - Linux: cores without `cpufreq` skipped (no failing reads per tick), cores rescanned once a minute for hotplug.
 - [x] **Settings Widget & Panel**:
   - Gear status bar widget: tooltip with the current values and quick toggles; click opens a webview settings panel (preset sliders plus millisecond fields, visibility, drag-and-drop order, units, disk options). Strict CSP with nonce; rows updated in place so external changes never interrupt typing or dragging.
   - The panel writes validated values to the user settings (single source of truth); stored values are never rewritten by unrelated edits. Data tooltips keep only metrics, update time and Settings / Refresh links.

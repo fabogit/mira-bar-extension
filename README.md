@@ -15,7 +15,7 @@ Ultra-fast, zero-subprocess, lightweight resource monitor for VS Code and Antigr
 - **100% Unified Monospace ASCII Tables**: Deterministic box-drawing tables (`┌─┬─┐`, `│ │ │`, `├─┼─┤`, `└─┴─┘`) rendered in monospace across all 6 telemetry tooltips for pixel-perfect column alignment in all VS Code themes.
 - **Modular Widgets & Dedicated Tooltips**: Each resource component is an independent status bar widget with its own focused tooltip.
 - **Fixed-Width Tabular Rendering**: Unicode Figure Space (`\u2007`) padding prevents UI jitter and shifts as values change digits.
-- **Multi-Rate Polling**: The status bar updates every tick (200 ms to 15 s). Each section has its own refresh interval for tooltips; battery, disk and temperature are also sampled at that interval, with a 2000 ms floor (battery and disk can be unlocked below it, at a performance cost).
+- **Multi-Rate Polling**: Only visible widgets are sampled. The status bar updates every tick (200 ms to 15 s). Each section has its own refresh interval for tooltips; battery, disk and temperature are also sampled at that interval, with a 2000 ms floor (battery and disk can be unlocked below it, at a performance cost).
 - **Tooltip Hover Stability**: Content diffing prevents active tooltips from flickering or collapsing during background refresh cycles.
 - **Settings Panel**: A gear widget with quick toggles and a panel with sliders, millisecond fields and drag-and-drop widget order.
 - **Zero Process Spawning**: No `df`, `ps`, `free`, or `powermetrics` subprocesses. Zero `node_modules` runtime dependencies.
@@ -65,7 +65,7 @@ The panel is only a front-end for the regular settings below: every change is va
 | :--- | :--- | :--- |
 | `resmon.refresh` | Resource Monitor: Refresh Stats | Immediately samples all providers and restarts the polling timer. Also triggered by clicking on any metric widget. |
 | `resmon.openSettings` | Resource Monitor: Open Settings Panel | Opens the settings panel (also the gear widget's click action). |
-| `resmon.toggleTooltipMode` | Resource Monitor: Toggle Tooltip Mode (Static / Live) | Toggles tooltip update mode between `Static` (flicker-free, updated on click and, with auto-refresh, at each section interval) and `Live` (updated every status bar tick). Also available in the gear widget's tooltip. |
+| `resmon.toggleTooltipMode` | Resource Monitor: Toggle Tooltip Mode (Static / Live) | Toggles tooltip update mode between `Static` (flicker-free, updated on click and, with auto-refresh, at each section interval) and `Live` (updated every status bar tick; battery, disk and temperature when a new reading arrives). Also available in the gear widget's tooltip. |
 | `resmon.toggleTooltipAutoRefresh` | Resource Monitor: Toggle Static Tooltip Auto-Refresh | Static mode: turns the per-section automatic tooltip refresh on or off (off = click only). Also available in the gear widget's tooltip. |
 | `resmon.toggleCpuLayout` | Resource Monitor: Toggle CPU Tooltip Layout (Table / List) | Toggles CPU per-core breakdown layout between `Table` (monospaced side-by-side grid) and `List` (vertical clusters). |
 | `resmon.toggleLoadFormat` | Resource Monitor: Toggle System Load Format (Percent / Value) | Toggles System Load display on Darwin between normalized capacity percentage (`34.4% L`) and raw POSIX queue depth (`3.44 L`). |
@@ -93,7 +93,7 @@ Configure these settings from the settings panel or directly in your VS Code / A
 | `resmon.disk.multiDisplay` | `string` | `"All"` | Multi-disk status bar display mode: `"All"` (all disks) or `"MostFull"` (single fullest volume) |
 | `resmon.priority` | `number` | `100` | Base priority for status bar positioning (lower/negative shifts right) |
 | `resmon.alignment` | `string` | `"Left"` | Status bar alignment (`"Left"` or `"Right"`) |
-| `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (updated on click and, with auto-refresh, at each section interval) or `"Live"` (every status bar tick). The update time shows tenths of a second below 1000 ms |
+| `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (updated on click and, with auto-refresh, at each section interval) or `"Live"` (every status bar tick; battery, disk and temperature when a new reading arrives). The update time shows tenths of a second below 1000 ms |
 | `resmon.tooltip.autoRefresh` | `boolean` | `true` | Static mode: regenerate tooltips automatically at each section interval (otherwise only on click) |
 | `resmon.refreshMs` | `object` | `{cpu:5000, freq:5000, temp:5000, mem:5000, battery:10000, disk:10000}` | Milliseconds per section (200 ms to 1 h): Static tooltip refresh; battery, disk and temperature are also sampled at this interval. Minimum 2000 ms for temperature, and for battery and disk unless `resmon.allowFastBatteryDiskRefresh` is on. Replaces the pre-release `resmon.refreshSeconds`, still read until `refreshMs` is set |
 | `resmon.allowFastBatteryDiskRefresh` | `boolean` | `false` | **Performance impact:** allows battery and disk refresh below 2000 ms (down to 200 ms). Each battery read queries IOPowerSources/IOKit and each disk read calls `statfs` |
