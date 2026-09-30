@@ -122,7 +122,8 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
 
 - [x] **Static Tooltip Freshness**:
   - In `Static` mode tooltips are regenerated only on click/refresh, so hovering shows the values from the last refresh (or from the switch out of `Live`) while the status bar text keeps updating.
-  - VS Code exposes no hover event, so tooltips cannot be computed on hover. Static now regenerates tooltips every 5 s (and on click), Live at most once per second; every tooltip ends with "Updated at HH:MM:SS".
+  - VS Code exposes no hover event, so tooltips cannot be computed on hover. Static regenerates tooltips on click and, with `resmon.tooltip.autoRefresh` (default on, toggle from the tooltip or the command palette), at per-section intervals from `resmon.tooltip.refreshSeconds` (default 5 s; battery and disk 10 s). Live regenerates at most once per second.
+  - Every tooltip ends with the update time and the refresh hint on separate lines.
 - [ ] **Configurable Widget Order**:
   - New setting (e.g. `resmon.order`: ordered list of `cpu`, `freq`/`load`, `temp`, `mem`, `battery`, `disk`) mapped to status bar priorities, applied live on configuration change; unknown or missing entries fall back to the default order.
 

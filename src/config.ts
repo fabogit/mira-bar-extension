@@ -1,6 +1,42 @@
 import * as vscode from 'vscode';
 import type { DiskSpaceFormat, FreqUnit, MemUnit } from './types.js';
 
+/** Status bar sections that own a tooltip ('freq' is CPU frequency on Linux, system load on macOS). */
+export type TooltipSection = 'cpu' | 'freq' | 'temp' | 'mem' | 'battery' | 'disk';
+
+export const TOOLTIP_SECTIONS: readonly TooltipSection[] = ['cpu', 'freq', 'temp', 'mem', 'battery', 'disk'];
+
+/** Default Static-mode tooltip auto-refresh interval per section, in seconds. */
+export const DEFAULT_TOOLTIP_REFRESH_SECONDS: Readonly<Record<TooltipSection, number>> = {
+  cpu: 5,
+  freq: 5,
+  temp: 5,
+  mem: 5,
+  battery: 10,
+  disk: 10,
+};
+
+const MIN_TOOLTIP_REFRESH_SECONDS = 1;
+const MAX_TOOLTIP_REFRESH_SECONDS = 3600;
+
+/**
+ * Validates the per-section refresh object from settings, falling back to defaults for
+ * missing or invalid entries and clamping values to [1, 3600] seconds.
+ */
+function readTooltipRefreshSeconds(raw: unknown): Record<TooltipSection, number> {
+  const result = { ...DEFAULT_TOOLTIP_REFRESH_SECONDS };
+  if (raw !== null && typeof raw === 'object') {
+    const values = raw as Record<string, unknown>;
+    for (const section of TOOLTIP_SECTIONS) {
+      const value = values[section];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        result[section] = Math.min(MAX_TOOLTIP_REFRESH_SECONDS, Math.max(MIN_TOOLTIP_REFRESH_SECONDS, value));
+      }
+    }
+  }
+  return result;
+}
+
 /**
  * Strongly typed configuration options for Resource Monitor NG.
  */
@@ -31,8 +67,12 @@ export interface ResMonConfig {
   priority: number;
   /** Status bar alignment side ('Left' | 'Right'). */
   alignment: 'Left' | 'Right';
-  /** Tooltip refresh mode: 'Static' (on-demand) or 'Live' (continuous real-time). */
+  /** Tooltip refresh mode: 'Static' (on click, plus optional timed auto-refresh) or 'Live' (every tick). */
   tooltipMode: 'Static' | 'Live';
+  /** Static mode: whether tooltips auto-refresh at the per-section intervals. */
+  tooltipAutoRefresh: boolean;
+  /** Static mode: tooltip auto-refresh interval per section, in seconds. */
+  tooltipRefreshSeconds: Record<TooltipSection, number>;
   /** CPU core breakdown layout in tooltip: 'Table' (compact side-by-side grid) or 'List' (vertical clusters). */
   cpuTooltipLayout: 'Table' | 'List';
   /** Multi-disk status bar display mode: 'All' or 'MostFull'. */
@@ -65,6 +105,8 @@ export function getConfig(): ResMonConfig {
     priority: config.get<number>('priority', 100),
     alignment: config.get<'Left' | 'Right'>('alignment', 'Left'),
     tooltipMode: config.get<'Static' | 'Live'>('tooltip.mode', 'Static'),
+    tooltipAutoRefresh: config.get<boolean>('tooltip.autoRefresh', true),
+    tooltipRefreshSeconds: readTooltipRefreshSeconds(config.get<unknown>('tooltip.refreshSeconds')),
     cpuTooltipLayout: config.get<'Table' | 'List'>('tooltip.cpuLayout', 'Table'),
     loadFormat: config.get<'Percent' | 'Value'>('loadFormat', 'Percent'),
   };

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getConfig, UNIT_DIVISORS } from './config.js';
+import { getConfig, TOOLTIP_SECTIONS, UNIT_DIVISORS, type ResMonConfig, type TooltipSection } from './config.js';
 import { createPlatformProvider } from './platform/factory.js';
 import { DiskProvider } from './disk/disk_provider.js';
 import type { BatteryInfo, DiskDriveInfo } from './types.js';
@@ -12,13 +12,16 @@ let lastUpdateError = '';
 /** Slow metrics are sampled on a time basis, independent of the polling interval (a click forces all). */
 const BATTERY_REFRESH_MS = 5_000;
 const DISK_REFRESH_MS = 10_000;
-/** Tooltip regeneration: Static refreshes slowly to limit hover flicker; Live is throttled to 1 s. */
-const STATIC_TOOLTIP_REFRESH_MS = 5_000;
+/**
+ * Tooltip regeneration. VS Code has no hover event, so tooltips are rebuilt ahead of time:
+ * Live on every tick (at most once per second); Static on click and, when auto-refresh is on,
+ * at the per-section interval from `resmon.tooltip.refreshSeconds` (limits hover flicker).
+ */
 const LIVE_TOOLTIP_REFRESH_MS = 1_000;
 
 let lastBatterySampleAt = 0;
 let lastDiskSampleAt = 0;
-let lastTooltipRefreshAt = 0;
+const lastTooltipAt: Record<TooltipSection, number> = { cpu: 0, freq: 0, temp: 0, mem: 0, battery: 0, disk: 0 };
 let tooltipUpdatedAt = '';
 let cachedBattery: BatteryInfo | null = null;
 let cachedDisks: DiskDriveInfo[] = [];
@@ -86,6 +89,20 @@ function formatMinutes(minutes: number): string {
   return `${mins}m`;
 }
 
+
+/**
+ * Returns how often a section's tooltip is regenerated with the current settings.
+ *
+ * @param config - Current configuration.
+ * @param section - Status bar section.
+ * @returns Interval in milliseconds (Infinity when Static auto-refresh is off: click only).
+ */
+function tooltipIntervalMs(config: ResMonConfig, section: TooltipSection): number {
+  if (config.tooltipMode === 'Live') {
+    return LIVE_TOOLTIP_REFRESH_MS;
+  }
+  return config.tooltipAutoRefresh ? config.tooltipRefreshSeconds[section] * 1000 : Number.POSITIVE_INFINITY;
+}
 
 /**
  * Formats a local wall-clock time as HH:MM:SS (24h), independent of the host locale.
@@ -357,30 +374,40 @@ function updateWidget(
 }
 
 /**
- * Generates the common Markdown footer for tooltips, reflecting the active display mode
- * and providing interactive command links to toggle settings.
+ * Builds the common tooltip footer: mode switch, Static auto-refresh switch, optional extra toggle,
+ * then the update time and the refresh hint on separate lines.
  *
- * @param mode - The currently active tooltip mode ('Static' | 'Live').
- * @param extraCommand - Optional secondary command toggle (e.g. CPU layout switch or load format).
- * @returns Array of markdown lines for the tooltip footer.
+ * @param config - Current configuration.
+ * @param section - Status bar section the tooltip belongs to.
+ * @param extraCommand - Optional section-specific toggle (layout, format, multi-disk).
+ * @returns Markdown lines.
  */
 function getTooltipFooter(
-  mode: 'Static' | 'Live',
+  config: ResMonConfig,
+  section: TooltipSection,
   extraCommand?: { label: string; command: string; prefix?: string }
 ): string[] {
+  const mode = config.tooltipMode;
   const nextMode = mode === 'Static' ? 'Live' : 'Static';
   const lines = [
     '---',
     `- **Tooltip Mode**: \`${mode}\` ([Switch to ${nextMode}](command:resmon.toggleTooltipMode))`,
   ];
+  if (mode === 'Static') {
+    lines.push(config.tooltipAutoRefresh
+      ? `- **Auto-refresh**: every ${config.tooltipRefreshSeconds[section]} s ([Turn off](command:resmon.toggleTooltipAutoRefresh))`
+      : '- **Auto-refresh**: off ([Turn on](command:resmon.toggleTooltipAutoRefresh))');
+  }
   if (extraCommand) {
     const prefix = extraCommand.prefix ?? 'CPU Layout';
     lines.push(`- **${prefix}**: [${extraCommand.label}](command:${extraCommand.command})`);
   }
-  const refresh = mode === 'Static'
-    ? `refreshes every ${STATIC_TOOLTIP_REFRESH_MS / 1000} s, click widget to refresh now`
-    : 'auto-refreshing';
-  lines.push('', `*Updated at ${tooltipUpdatedAt} (${refresh})*`);
+  lines.push(
+    '',
+    `*Updated at ${tooltipUpdatedAt}*`,
+    '',
+    mode === 'Static' ? '*Click the widget to refresh now*' : '*Refreshing on every tick*'
+  );
   return lines;
 }
 
@@ -462,12 +489,15 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const config = getConfig();
       const now = Date.now();
-      const tooltipRefreshMs = config.tooltipMode === 'Live' ? LIVE_TOOLTIP_REFRESH_MS : STATIC_TOOLTIP_REFRESH_MS;
-      const updateTooltips = forceAll || now - lastTooltipRefreshAt >= tooltipRefreshMs;
-      if (updateTooltips) {
-        lastTooltipRefreshAt = now;
-        tooltipUpdatedAt = formatClock(new Date(now));
-      }
+      tooltipUpdatedAt = formatClock(new Date(now));
+      /** True when this section's tooltip must be rebuilt now (records the refresh time). */
+      const tooltipDue = (section: TooltipSection): boolean => {
+        if (!forceAll && now - lastTooltipAt[section] < tooltipIntervalMs(config, section)) {
+          return false;
+        }
+        lastTooltipAt[section] = now;
+        return true;
+      };
 
       // 1. CPU Usage & 2. CPU Frequency (Linux) or System Load Average (macOS)
       const cpuUsage = platformProvider.sampleCpu();
@@ -476,7 +506,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (cpuUsage && config.showCpuUsage) {
         const cpuStr = padNum(cpuUsage.overallPercent.toFixed(2), 5);
         let cpuMd: string | null = null;
-        if (updateTooltips) {
+        if (tooltipDue('cpu')) {
           const topoDesc = platformProvider.getTopologyDescription ? platformProvider.getTopologyDescription() : '';
           const lines = [
             `### CPU Utilization: ${cpuUsage.overallPercent.toFixed(1)}%`,
@@ -547,7 +577,7 @@ export function activate(context: vscode.ExtensionContext): void {
             command: 'resmon.toggleCpuLayout',
             prefix: 'CPU Layout',
           };
-          lines.push(...getTooltipFooter(config.tooltipMode, layoutToggle));
+          lines.push(...getTooltipFooter(config, 'cpu', layoutToggle));
           cpuMd = lines.join('\n');
         }
         updateWidget(widgets.cpu, `$(pulse) ${cpuStr}%`, cpuMd, true);
@@ -568,7 +598,7 @@ export function activate(context: vscode.ExtensionContext): void {
             : `${padNum(load.load1.toFixed(2), 4)} L`;
 
           let loadMd: string | null = null;
-          if (updateTooltips) {
+          if (tooltipDue('freq')) {
             const formatToggle = {
               label: config.loadFormat === 'Percent' ? 'Switch to Raw Value' : 'Switch to Normalized %',
               command: 'resmon.toggleLoadFormat',
@@ -591,7 +621,7 @@ export function activate(context: vscode.ExtensionContext): void {
               `Normalized capacity across **${load.totalCores} logical cores**:`,
               '',
               ...renderDynamicAsciiTable(loadColumns, loadRows),
-              ...getTooltipFooter(config.tooltipMode, formatToggle),
+              ...getTooltipFooter(config, 'freq', formatToggle),
             ].join('\n');
           }
           updateWidget(widgets.freq, `$(dashboard) ${loadStr}`, loadMd, true);
@@ -600,7 +630,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const divisor = UNIT_DIVISORS[config.freqUnit] || UNIT_DIVISORS['GHz']!;
           const freqStr = padNum((cpuFreq.avgHz / divisor).toFixed(2), config.freqUnit === 'MHz' ? 7 : 4);
           let freqMd: string | null = null;
-          if (updateTooltips) {
+          if (tooltipDue('freq')) {
             const lines = [
               '### CPU Clock Frequency',
               '',
@@ -615,7 +645,7 @@ export function activate(context: vscode.ExtensionContext): void {
               });
               lines.push(...coreFreqs);
             }
-            lines.push(...getTooltipFooter(config.tooltipMode));
+            lines.push(...getTooltipFooter(config, 'freq'));
             freqMd = lines.join('\n');
           }
           updateWidget(widgets.freq, `$(dashboard) ${freqStr} ${config.freqUnit}`, freqMd, true);
@@ -629,7 +659,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (cpuTemp) {
         const tempStr = padNum(cpuTemp.tempCelsius.toFixed(2), 5);
         let tempMd: string | null = null;
-        if (updateTooltips) {
+        if (tooltipDue('temp')) {
           const tempColumns: ColumnDef[] = [
             { header: 'Component', align: 'left' },
             { header: 'Heat Saturation', align: 'left' },
@@ -688,7 +718,7 @@ export function activate(context: vscode.ExtensionContext): void {
             '### CPU & System Temperature',
             '',
             ...renderDynamicAsciiTable(tempColumns, tempRows),
-            ...getTooltipFooter(config.tooltipMode),
+            ...getTooltipFooter(config, 'temp'),
           ];
           tempMd = tempLines.join('\n');
         }
@@ -704,7 +734,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const usedStr = padNum((mem.usedBytes / divisor).toFixed(2), 5);
         const totalStr = padNum((mem.totalBytes / divisor).toFixed(2), 5);
         let memMd: string | null = null;
-        if (updateTooltips) {
+        if (tooltipDue('mem')) {
           const swapType = mem.pressurePercent !== undefined ? 'Dynamic VM' : 'Swap Space';
           const memLines = [
             '### Memory Usage',
@@ -771,7 +801,7 @@ export function activate(context: vscode.ExtensionContext): void {
             memLines.push(...renderDynamicAsciiTable(allocCols, allocRows));
           }
 
-          memLines.push(...getTooltipFooter(config.tooltipMode));
+          memLines.push(...getTooltipFooter(config, 'mem'));
           memMd = memLines.join('\n');
         }
         updateWidget(widgets.mem, `$(ellipsis) ${usedStr}/${totalStr} ${config.memUnit}`, memMd, true);
@@ -788,7 +818,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (cachedBattery) {
           const batStr = padNum(String(cachedBattery.percent), 3);
           let batMd: string | null = null;
-          if (updateTooltips) {
+          if (tooltipDue('battery')) {
             const batCols: ColumnDef[] = [
               { header: 'Metric', align: 'left' },
               { header: 'Level / State', align: 'left' },
@@ -850,7 +880,7 @@ export function activate(context: vscode.ExtensionContext): void {
               '### Battery Status & Health',
               '',
               ...renderDynamicAsciiTable(batCols, batRows),
-              ...getTooltipFooter(config.tooltipMode),
+              ...getTooltipFooter(config, 'battery'),
             ];
             batMd = batLines.join('\n');
           }
@@ -920,7 +950,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
 
           let diskMd: string | null = null;
-          if (updateTooltips) {
+          if (tooltipDue('disk')) {
             const lines = ['### Storage Utilization', ''];
             const storageCols: ColumnDef[] = [
               { header: 'Mount', align: 'left', minWidth: 5, maxWidth: 28, truncatePath: true },
@@ -938,7 +968,7 @@ export function activate(context: vscode.ExtensionContext): void {
               command: 'resmon.toggleDiskMultiDisplay',
               prefix: 'Multi-Disk',
             } : undefined;
-            lines.push(...getTooltipFooter(config.tooltipMode, multiToggle));
+            lines.push(...getTooltipFooter(config, 'disk', multiToggle));
             diskMd = lines.join('\n');
           }
           updateWidget(widgets.disk, `$(database) ${diskDisplayStr}`, diskMd, true);
@@ -1003,6 +1033,16 @@ export function activate(context: vscode.ExtensionContext): void {
       const configuration = vscode.workspace.getConfiguration('resmon');
       await configuration.update('tooltip.mode', next, vscode.ConfigurationTarget.Global);
       vscode.window.showInformationMessage(`Resource Monitor: Tooltip mode set to ${next}`);
+    })
+  );
+
+  // Register toggle for Static-mode tooltip auto-refresh
+  context.subscriptions.push(
+    vscode.commands.registerCommand('resmon.toggleTooltipAutoRefresh', async () => {
+      const next = !getConfig().tooltipAutoRefresh;
+      const configuration = vscode.workspace.getConfiguration('resmon');
+      await configuration.update('tooltip.autoRefresh', next, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(`Resource Monitor: Static tooltip auto-refresh ${next ? 'on' : 'off'}`);
     })
   );
 
@@ -1081,5 +1121,7 @@ export function deactivate(): void {
   cachedDisks = [];
   lastBatterySampleAt = 0;
   lastDiskSampleAt = 0;
-  lastTooltipRefreshAt = 0;
+  for (const section of TOOLTIP_SECTIONS) {
+    lastTooltipAt[section] = 0;
+  }
 }
