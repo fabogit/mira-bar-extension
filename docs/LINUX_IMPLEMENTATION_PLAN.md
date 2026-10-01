@@ -1,6 +1,6 @@
 # Linux v1.1.0 Implementation Plan: Architectural Parity & Release Pipeline
 
-This document establishes the formal engineering specification and execution roadmap for bringing **Linux (`linux-x64`)** support in **Resource Monitor NG** to complete feature, visual, and performance parity with **v1.1.0** on macOS Apple Silicon (`darwin-arm64`).
+This document establishes the formal engineering specification and execution roadmap for bringing **Linux (`linux-x64`)** support in **MiraBar** to complete feature, visual, and performance parity with **v1.1.0** on macOS Apple Silicon (`darwin-arm64`).
 
 ---
 
@@ -199,7 +199,7 @@ When testing and developing on the Linux PC, execute the following steps in sequ
   - Status bar widget rendering without horizontal jitter.
   - Tooltip hover stability (no flickering in Static mode).
   - Monospace ASCII table alignment for CPU frequency and load.
-  - Multi-disk toggle command (`resmon.toggleDiskMultiDisplay`).
+  - Multi-disk toggle command (`mirabar.toggleDiskMultiDisplay`).
 
 ### Phase 4: CI/CD Workflow Finalization
 - [x] Update [`.github/workflows/release.yml`](../.github/workflows/release.yml) with dual-runner matrix (`macos-14` + `ubuntu-latest`) and `workflow_dispatch`.
