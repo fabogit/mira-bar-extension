@@ -190,7 +190,7 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 
 **Follow-ups (macOS):**
 
-- [ ] **Release 1.2.0**: version and CHANGELOG are ready; date the CHANGELOG entry, push `develop` and tag once the Linux check passes.
+- [x] **Release 1.2.0**: version and CHANGELOG are ready; date the CHANGELOG entry, push `develop` and tag once the Linux check passes.
 - [ ] **Fewer temperature sensors per pass**: a pass costs 40.4 ms of system CPU for 26 sensors; measure accuracy and cost with a subset, then revisit the 8400 ms minimum (ADR-0003, ADR-0010).
 - [ ] **macOS 11 support**: decide when to raise the deployment target (ADR-0006).
 - [ ] **Repeat `bench:darwin`** on an idle Mac to confirm the temperature figure (single run so far).

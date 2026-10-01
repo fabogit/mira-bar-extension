@@ -2,7 +2,7 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/). Decisions behind the changes: [docs/adr/](docs/adr/README.md).
 
-## [1.2.0] - unreleased
+## [1.2.0] - 2026-10-01
 
 First release as **MiraBar** (`fabogit.mirabar`): settings and commands `mirabar.*`, commands grouped under the *MiraBar* category ([ADR-0015](docs/adr/0015-name-and-settings-namespace.md)). It includes the work of roadmap Phases 1.1 and 1.2.
 
