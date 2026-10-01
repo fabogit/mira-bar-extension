@@ -12,6 +12,22 @@ Resource Monitor NG is designed as an ultra-lightweight, zero-overhead hardware 
   * **Win32/Windows**: Direct Win32 API bindings (PDH, `GlobalMemoryStatusEx`, `GetSystemPowerStatus`, `GetDiskFreeSpaceExW`).
 * **Decoupled Platform Architecture**: Telemetry collection is isolated behind the `PlatformProvider` abstraction (`src/types.ts`), allowing the UI status bar items, configuration system, and tooltip rendering to remain platform-agnostic while presenting a modular, platform-tailored view.
 
+* **Decisions**: the reasons behind the architecture are recorded as ADRs in [`docs/adr/`](adr/README.md).
+
+### Status at a glance (2026-10-01)
+
+| Phase | Platform | Status | Next step |
+| :--- | :--- | :--- | :--- |
+| 0 – Foundation & Linux genesis (v1.0.x) | Linux | Done, released | — |
+| 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, released | — |
+| 1.1 – Darwin memory safety & native refactor | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
+| 1.2 – Per-section refresh & measured minimums | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
+| 2 – Linux modernization & parity (v1.2.0) | Linux | Open | Start with the Linux check below |
+| 3 – Windows (v1.3.0) | Windows | Not started | Blueprint (#7) |
+| 4 – Localization (v1.4.0) | All | Backlog | — |
+
+Phases 1.1 and 1.2 are merged into the local `develop` (`12e90e6`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. Release as v1.1.1 after that check (version bump and release notes still to do; there is no CHANGELOG yet).
+
 ---
 
 ## 2. Phase 0: Foundation & Linux Genesis (v1.0.0 – v1.0.1) [COMPLETED]
@@ -132,9 +148,10 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - The panel writes validated values to the user settings (single source of truth); stored values are never rewritten by unrelated edits. Data tooltips keep only metrics, update time and Settings / Refresh links.
 - [x] **Configurable Widget Order**:
   - `resmon.order` mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
-- [x] **Verification in VS Code on Apple Silicon** (2026-10-01):
-  - Install the `darwin-arm64` VSIX and check the settings panel, Static/Live tooltips at 200 ms and the battery/disk lock.
+- [x] **Verification in VS Code on Apple Silicon** (2026-10-01): VSIX installed on an M4; settings panel and Static/Live tooltips checked (the battery/disk lock it also covered was later removed by Phase 1.2).
 - [x] **Extension Lifecycle Refactor**: done in Phase 1.2 below.
+
+Decisions: ADR-0002 (RAII, addon state), ADR-0003 (thermal background thread), ADR-0004 (battery sources), ADR-0005 (memory pressure), ADR-0006 (build, macOS 11), ADR-0007 (settings panel), ADR-0008 (widget order), ADR-0011 (disk off the event loop), ADR-0013 (packaging, workflow), ADR-0014 (verification).
 
 ---
 
@@ -165,25 +182,44 @@ Each section gets its own status bar and tooltip intervals, and the minimums are
   - Battery driver publishes new data every 60 s; the 10 s default only serves power adapter changes.
 - [x] **Verification in VS Code on Apple Silicon** (2026-10-01): per-section intervals, settings panel, gear tooltip tables, minimums.
 
+Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from measurements), ADR-0012 (legacy settings), ADR-0007 (gear tooltip tables).
+
+**Follow-ups (macOS):**
+
+- [ ] **Release v1.1.1**: version bump, release notes (no CHANGELOG yet), push `develop` once the Linux check passes.
+- [ ] **Fewer temperature sensors per pass**: a pass costs 40.4 ms of system CPU for 26 sensors; measure accuracy and cost with a subset, then revisit the 8400 ms minimum (ADR-0003, ADR-0010).
+- [ ] **macOS 11 support**: decide when to raise the deployment target (ADR-0006).
+- [ ] **Repeat `bench:darwin`** on an idle Mac to confirm the temperature figure (single run so far).
+
 ---
 
 ## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.2.0) [IN PROGRESS]
 
 > Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/3) • **Status: Open** (Active Target)
 
-Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectural standard, establishing empirical performance baselines, and verifying telemetry directly on a native Linux workstation.
+Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectural standard, establishing empirical performance baselines, and verifying telemetry directly on a native Linux workstation. Details and checklist: [`docs/LINUX_IMPLEMENTATION_PLAN.md`](LINUX_IMPLEMENTATION_PLAN.md).
+
+**First: check what Phases 1.1 and 1.2 changed (blocks pushing `develop`):**
+
+- [ ] On a Linux machine with real sensors: `pnpm run typecheck`, `test:linux`, `test:integration`, `test:extension`, `package:linux-x64`; install the VSIX and check the status bar, the settings panel, the gear tooltip, Static/Live tooltips.
+- [ ] Linux-specific code changed in Phase 1.1/1.2: `cpufreq` skips cores without `scaling_cur_freq` and rescans every 60 s; temperature is cached per interval and reports `sampleSeq` / `ageMs`. Check on hardware with cpufreq and hwmon, and on a laptop (battery).
+- [ ] **Per-platform refresh minimums** (ADR-0010): the minimums are macOS measurements applied everywhere (temperature 8400 ms). Measure Linux with `bench:extension` plus a Linux source bench (sysfs/procfs read cost), and make `MEASURED_MIN_STATUS_BAR_MS` per platform.
+- [ ] **CI**: run `test:extension` in both release jobs.
+
+**Linux parity items:**
 
 - [ ] [#1](https://github.com/fabogit/resource-monitor_code-extension/issues/1) **CPU Cold-Start Synchronization (Tick 0)**:
   - Pre-sample `/proc/stat` in constructor of `CpuProvider` to prime tick counters immediately.
 - [ ] [#2](https://github.com/fabogit/resource-monitor_code-extension/issues/2) **CPU Frequency Monospace Table Layout**:
-  - Convert Markdown bulleted core frequency list into compact monospace ASCII cluster table for `freqOrLoad.kind === 'freq'`.
+  - Convert Markdown bulleted core frequency list into compact monospace ASCII cluster table for `freqOrLoad.kind === 'freq'` (now in `renderFreqOrLoad`, `src/sections.ts`).
 - [ ] [#3](https://github.com/fabogit/resource-monitor_code-extension/issues/3) **Battery Autonomy & Time Remaining**:
   - Parse sysfs `power_now` / `current_now` and `time_to_empty_now` / `time_to_full_now` to calculate `timeRemainingMinutes`.
 - [ ] [#4](https://github.com/fabogit/resource-monitor_code-extension/issues/4) **Dynamic Hardware Thermal Trip Points**:
-  - Detect `temp*_crit` / `temp*_max` from `/sys/class/hwmon/` to dynamically populate `critCelsius` instead of hardcoded 100 °C.
+  - Detect `temp*_crit` / `temp*_max` from `/sys/class/hwmon/` to dynamically populate `critCelsius` instead of hardcoded 100 °C (limit column in `renderTemp`, `src/sections.ts`).
 - [ ] [#5](https://github.com/fabogit/resource-monitor_code-extension/issues/5) **Empirical Benchmarking & Scientific Evaluation**:
   - Measure execution latency of TypeScript VFS reader at 200 ms polling intervals (`performance.now()`) against the < 250 µs SLA budget.
   - Profile V8 garbage collection overhead and heap allocation stability.
+  - Tools available since Phase 1.2: `pnpm run bench:extension` (extension CPU per configuration and per section) and the heap check in `pnpm run test:extension`; the result feeds the per-platform minimums above.
 - [x] [#6](https://github.com/fabogit/resource-monitor_code-extension/issues/6) **Cross-Platform Dual-Runner CI/CD**:
   - Configured `.github/workflows/release.yml` with decoupled dual-runner matrix (`macos-14` + `ubuntu-latest`), hardened least-privilege permissions, concurrency controls, and `workflow_dispatch` manual build testing.
 
@@ -194,6 +230,8 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 > Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/4) • **Status: Open** (Future Roadmap)
 
 Phase 3 introduces native Windows support through direct Win32 API bindings, adhering to the modular UI strategy and pragmatic hardware constraints.
+
+What Phases 1.1–1.2 already provide: the platform-independent monitor, renderers, settings panel and scheduler (ADR-0009) only need a `TelemetryPlatformProvider` (`src/platform/interface.ts`; `requestTempRefresh` is optional, for sources that read asynchronously). Native code should follow ADR-0002 (RAII, per-environment state) and ADR-0003 if a source is slow; minimums are measured on Windows with the ADR-0010 rule (a WMI thermal query is likely the expensive source).
 
 - [ ] [#7](https://github.com/fabogit/resource-monitor_code-extension/issues/7) **Architectural Blueprint & Toolchain**:
   - Design `WindowsTelemetryProvider` conforming to `TelemetryPlatformProvider`.
@@ -221,7 +259,7 @@ Phase 4 externalizes and translates user-facing strings once the underlying tele
 
 - [ ] [#14](https://github.com/fabogit/resource-monitor_code-extension/issues/14) **Localization Infrastructure**:
   - Integrate VS Code official `vscode.l10n` API.
-  - Extract all hardcoded strings from `src/extension.ts` into source bundle `l10n/bundle.core.json`.
+  - Extract all hardcoded strings (now in `src/sections.ts`, `src/monitor.ts` and `src/settings/panel_html.ts`) into source bundle `l10n/bundle.core.json`.
   - Localize command titles, categories, and configuration settings in `package.nls.json`.
 - [ ] [#15](https://github.com/fabogit/resource-monitor_code-extension/issues/15) **Translation Bundles**:
   - Italian (`bundle.core.it.json`), German (`bundle.core.de.json`), French (`bundle.core.fr.json`), Spanish (`bundle.core.es.json`), Japanese (`bundle.core.ja.json`), Simplified Chinese (`bundle.core.zh-cn.json`).

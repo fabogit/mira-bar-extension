@@ -2,6 +2,8 @@
 
 ## Overview
 
+> The reasons behind these designs, with the measurements and rejected alternatives, are in the ADRs: [`docs/adr/`](adr/README.md).
+
 **Resource Monitor NG** is an ultra-lightweight, cross-platform (Linux & macOS Apple Silicon) extension for VS Code and Antigravity-IDE designed to replace legacy system monitoring extensions that rely on heavy subprocess spawning (e.g. `systeminformation` spawning `ps`, `df`, `free`, or `powermetrics`).
 
 ## Zero Subprocess Dual-Platform Architecture

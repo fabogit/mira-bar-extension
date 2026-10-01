@@ -4,6 +4,25 @@ This document establishes the formal engineering specification and execution roa
 
 ---
 
+## 0. What Phases 1.1 and 1.2 Changed for Linux (2026-10-01)
+
+Phases 1.1 and 1.2 focused on macOS, but most of the extension is shared. On Linux they change:
+
+| Area | Change | Where | Tested on Linux |
+| :--- | :--- | :--- | :--- |
+| Refresh model | Per-section status bar and tooltip intervals, one timer at the earliest deadline, hidden sections never read (ADR-0009) | `src/monitor.ts`, `src/config.ts` | VM only |
+| Minimums | Measured on macOS and applied everywhere: temperature 8400 ms, the rest 200 ms (ADR-0010). Likely too conservative for sysfs temperature | `src/config.ts` | — |
+| Settings | Gear widget with tables, webview settings panel, widget order (ADR-0007, ADR-0008) | `src/settings/`, `src/monitor.ts` | VM + Chromium |
+| Rendering | Tooltips moved from `extension.ts` into renderers per section | `src/sections.ts`, `src/format.ts` | VM only |
+| Disk | `statfs` off the event loop, capped requests in flight (ADR-0011) | `src/monitor.ts` | VM (simulated hang) |
+| CPU frequency | Cores without `cpufreq/scaling_cur_freq` skipped; cores rescanned every 60 s | `src/platform/linux/cpufreq.ts` | VM without cpufreq |
+| Temperature | Cached for half the status bar interval; readings carry `sampleSeq` and `ageMs` | `src/platform/linux/linux_provider.ts` | VM without hwmon |
+| Tests | `pnpm run test:extension` (behaviour, cross-platform), `pnpm run bench:extension` (cost) | `test/` | VM |
+
+"VM only" means a cloud machine without temperature sensors, battery or cpufreq: those paths have never run on real hardware. Checking them is the first step of Phase 2 and blocks pushing `develop` (see §5, Phase 1).
+
+---
+
 ## 1. Scope & Architectural Goals
 
 The goal of this phase is to align the Linux implementation with the architectural advancements introduced in v1.1.0:
@@ -19,9 +38,9 @@ The goal of this phase is to align the Linux implementation with the architectur
 ## 2. Technical Gap Analysis & Proposed Solutions
 
 ### 2.1. CPU Frequency Monospace Table Layout
-* **Current State**: In [`src/extension.ts`](../src/extension.ts#L551-L574), when `freqOrLoad.kind === 'freq'` (Linux), the core speeds are emitted as a plain Markdown bullet list (`- **Core 0**: 3.20 GHz`). On high-core count machines (16, 32, 64 cores), this causes catastrophic vertical expansion of the tooltip.
+* **Current State**: In `renderFreqOrLoad` ([`src/sections.ts`](../src/sections.ts)), when `freqOrLoad.kind === 'freq'` (Linux), the core speeds are emitted as a plain Markdown bullet list (`- **Core 0**: 3.20 GHz`). On high-core count machines (16, 32, 64 cores), this causes catastrophic vertical expansion of the tooltip.
 * **Proposed Design**:
-  * Utilize [`renderDynamicAsciiTable`](../src/extension.ts#L182-L225) or a dual-cluster layout matching the CPU utilization table:
+  * Utilize [`renderDynamicAsciiTable`](../src/format.ts) or a dual-cluster layout matching the CPU utilization table:
     * For $\ge 4$ cores: Split into two columns (`Cluster 0` / `Cluster 1` or `Cores 0-N` / `Cores N-M`) with format:
       ```text
       Cluster 0 (C0 - C3)     │ Cluster 1 (C4 - C7)    
@@ -68,7 +87,7 @@ The goal of this phase is to align the Linux implementation with the architectur
     * Analogous calculations for charging state with `energy_full - energy_now`.
 
 ### 2.4. Thermal Trip Point Discovery (`hwmon`)
-* **Current State**: In [`src/extension.ts`](../src/extension.ts#L630-L637), the thermal limit column is hardcoded to `'100 °C'`.
+* **Current State**: In `renderTemp` ([`src/sections.ts`](../src/sections.ts)), the thermal limit column is hardcoded to `'100 °C'`.
 * **Proposed Design**:
   * In [`CpuTempProvider`](../src/platform/linux/cputemp.ts#L103-L136), check for `temp1_crit` or `temp1_max` adjacent to `temp1_input`.
   * If found, expose `critCelsius` in `CpuTempInfo` (e.g. 95 °C for AMD Ryzen, 105 °C for Intel Core).
@@ -156,10 +175,15 @@ When testing and developing on the Linux PC, execute the following steps in sequ
 - [ ] Run `pnpm install --frozen-lockfile`.
 - [ ] Verify Node version (`node -v` >= 20.x) and pnpm version.
 - [ ] Run `pnpm run typecheck` and `pnpm run build`.
+- [ ] Run `pnpm run test:linux`, `pnpm run test:integration` and `pnpm run test:extension`.
+- [ ] Install the `linux-x64` VSIX and check the status bar, the gear tooltip, the settings panel and Static/Live tooltips (§0).
+- [ ] On hardware with cpufreq and hwmon, and on a laptop: check CPU frequency, temperature and battery (the paths changed in §0).
+- [ ] If all good: push `develop` (Phases 1.1 and 1.2).
 
 ### Phase 2: Implementation of Linux Parity
 - [ ] **CPU Cold-Start**: Edit [`src/platform/linux/cpu.ts`](../src/platform/linux/cpu.ts) to pre-sample in constructor.
-- [ ] **Frequency Monospace Table**: Edit [`src/extension.ts`](../src/extension.ts) to replace bullet list with monospace ASCII table for `freqOrLoad.kind === 'freq'`.
+- [ ] **Frequency Monospace Table**: Edit `renderFreqOrLoad` in [`src/sections.ts`](../src/sections.ts) to replace bullet list with monospace ASCII table for `freqOrLoad.kind === 'freq'`.
+- [ ] **Linux refresh minimums**: measure the read cost of each Linux source (procfs, sysfs, hwmon, power_supply) and `pnpm run bench:extension` on Linux, then make `MEASURED_MIN_STATUS_BAR_MS` per platform with the ADR-0010 rule.
 - [ ] **Battery Time Remaining**: Edit [`src/platform/linux/battery.ts`](../src/platform/linux/battery.ts) to parse `power_now`/`current_now`/`time_to_empty_now`.
 - [ ] **Thermal Limits**: Edit [`src/platform/linux/cputemp.ts`](../src/platform/linux/cputemp.ts) to parse `temp1_crit`/`temp1_max`.
 
