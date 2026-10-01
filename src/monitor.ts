@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { TOOLTIP_SECTIONS, type ResMonConfig, type TooltipSection } from './config.js';
-import { formatClock, formatDuration } from './format.js';
+import { readStoredIntervals, TOOLTIP_SECTIONS, type ResMonConfig, type TooltipSection } from './config.js';
+import { formatClock, formatDuration, renderDynamicAsciiTable } from './format.js';
 import {
   renderBattery,
   renderCpu,
@@ -9,7 +9,6 @@ import {
   renderMemory,
   renderTemp,
   SECTION_LABELS,
-  SECTION_SHORT_LABELS,
   type RenderContext,
   type Rendered,
 } from './sections.js';
@@ -404,47 +403,86 @@ function trustedMarkdown(value: string): vscode.MarkdownString {
 }
 
 /**
- * Tooltip of the settings (gear) widget: the intervals in use, one-click toggles, and a link to the
- * full panel.
+ * Tooltip of the settings (gear) widget, as two tables: the sections (shown, status bar and tooltip
+ * intervals in effect, in status bar order) and the display options with one-click toggles, plus a
+ * link to the full panel.
  */
 export function buildSettingsTooltip(config: ResMonConfig): string {
   const isDarwin = process.platform === 'darwin';
-  const perSection = (values: Record<TooltipSection, number>): string =>
-    TOOLTIP_SECTIONS.map((s) => `${SECTION_SHORT_LABELS[s](isDarwin)} ${formatDuration(values[s])}`).join(' · ');
   const mode = config.tooltipMode;
-  let tooltips: string;
-  if (mode === 'Live') {
-    tooltips = 'with every status bar update';
-  } else if (!config.tooltipAutoRefresh) {
-    tooltips = 'on click';
-  } else {
-    tooltips = perSection(config.tooltipMs);
+  const shown: Record<TooltipSection, boolean> = {
+    cpu: config.showCpuUsage,
+    freq: config.showCpuFreq,
+    temp: config.showCpuTemp,
+    mem: config.showMem,
+    battery: config.showBattery,
+    disk: config.showDisk,
+  };
+  // Stored values, to flag where what applies differs from what is set.
+  const stored = readStoredIntervals();
+  let raised = false;
+  const barCell = (section: TooltipSection): string => {
+    if (config.statusBarMs[section] > stored.statusBarMs[section]) {
+      raised = true;
+      return `${formatDuration(config.statusBarMs[section])} *`;
+    }
+    return formatDuration(config.statusBarMs[section]);
+  };
+  const tooltipCell = (section: TooltipSection): string => {
+    if (mode === 'Live' || (config.tooltipAutoRefresh && stored.tooltipMs[section] < config.statusBarMs[section])) {
+      return 'with bar'; // Live, or a tooltip interval shorter than the status bar
+    }
+    return config.tooltipAutoRefresh ? formatDuration(config.tooltipMs[section]) : 'on click';
+  };
+  const sectionRows = config.order.map((section) => [
+    SECTION_LABELS[section](isDarwin),
+    shown[section] ? 'yes' : 'no',
+    barCell(section),
+    tooltipCell(section),
+  ]);
+  const notes: string[] = [];
+  if (raised) {
+    notes.push('\\* raised to its measured minimum ([details](command:resmon.openSettings))');
   }
-  const lines = [
-    '### Resource Monitor Settings',
-    '',
-    `- **Tooltip mode**: \`${mode}\` — [switch to ${mode === 'Static' ? 'Live' : 'Static'}](command:resmon.toggleTooltipMode)`,
+
+  // Options: a Markdown table, because the toggles are command links (not possible in a code block).
+  const option = (name: string, current: string, action: string, command: string): string =>
+    `| ${name} | ${current} | [${action}](command:${command}) |`;
+  const options = [
+    '| Option | Current | |',
+    '| :--- | :--- | :--- |',
+    option('Tooltip mode', mode, `switch to ${mode === 'Static' ? 'Live' : 'Static'}`, 'resmon.toggleTooltipMode'),
   ];
   if (mode === 'Static') {
-    lines.push(
-      `- **Auto-refresh**: ${config.tooltipAutoRefresh ? 'on' : 'off'} — [turn ${config.tooltipAutoRefresh ? 'off' : 'on'}](command:resmon.toggleTooltipAutoRefresh)`
-    );
+    options.push(option('Auto-refresh', config.tooltipAutoRefresh ? 'on' : 'off',
+      `turn ${config.tooltipAutoRefresh ? 'off' : 'on'}`, 'resmon.toggleTooltipAutoRefresh'));
   }
-  lines.push(
-    `- **Status bar**: ${perSection(config.statusBarMs)}`,
-    `- **Tooltips**: ${tooltips}`,
-    `- **CPU cores**: ${config.cpuTooltipLayout} — [switch to ${config.cpuTooltipLayout === 'Table' ? 'List' : 'Table'}](command:resmon.toggleCpuLayout)`
-  );
+  options.push(option('CPU cores', config.cpuTooltipLayout,
+    `switch to ${config.cpuTooltipLayout === 'Table' ? 'List' : 'Table'}`, 'resmon.toggleCpuLayout'));
   if (isDarwin) {
-    lines.push(
-      `- **System load**: ${config.loadFormat} — [switch to ${config.loadFormat === 'Percent' ? 'Value' : 'Percent'}](command:resmon.toggleLoadFormat)`
-    );
+    options.push(option('System load', config.loadFormat,
+      `switch to ${config.loadFormat === 'Percent' ? 'Value' : 'Percent'}`, 'resmon.toggleLoadFormat'));
   }
-  lines.push(
-    `- **Several disks**: ${config.diskMultiDisplay === 'All' ? 'All' : 'Most full'} — [switch to ${config.diskMultiDisplay === 'All' ? 'Most full' : 'All'}](command:resmon.toggleDiskMultiDisplay)`,
+  options.push(option('Several disks', config.diskMultiDisplay === 'All' ? 'All' : 'Most full',
+    `switch to ${config.diskMultiDisplay === 'All' ? 'Most full' : 'All'}`, 'resmon.toggleDiskMultiDisplay'));
+
+  return [
+    '### Resource Monitor Settings',
+    '',
+    ...renderDynamicAsciiTable(
+      [
+        { header: 'Section', align: 'left' },
+        { header: 'Shown', align: 'left' },
+        { header: 'Status bar', align: 'right' },
+        { header: 'Tooltip', align: 'right' },
+      ],
+      sectionRows
+    ),
+    ...notes,
+    '',
+    ...options,
     '',
     '---',
-    '[$(settings-gear) Open settings panel](command:resmon.openSettings)'
-  );
-  return lines.join('\n');
+    '[$(settings-gear) Open settings panel](command:resmon.openSettings)',
+  ].join('\n');
 }

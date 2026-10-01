@@ -29,6 +29,12 @@ const keepAlive = setInterval(() => {}, 1000); // the extension timer is unref()
 const live = () => s.items.filter((i) => !i.disposed);
 const item = (label) => live().find((i) => i.name === `Resource Monitor: ${label}`);
 const gear = () => live().find((i) => i.text === '$(settings-gear)');
+/** Row of the gear tooltip's section table: { shown, bar, tooltip } as displayed. */
+const row = (label) => {
+  const line = gear().tooltip.value.split('\n').find((l) => l.startsWith(label + ' ') && l.includes('│'));
+  const [, shown, bar, tooltip] = line.split('│').map((c) => c.trim());
+  return { shown, bar, tooltip };
+};
 const setCfg = async (patch, wait = 250) => {
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) delete s.cfg[k];
@@ -56,8 +62,10 @@ await sleep(500);
   const g = gear();
   assert.ok(g && g.command === 'resmon.openSettings');
   assert.ok(live().every((i) => i === g || i.priority > g.priority), 'gear after the metrics');
-  assert.match(g.tooltip.value, /\*\*Status bar\*\*: CPU 2 s · .* Mem 2 s · Battery 10 s · Disk 10 s/);
-  assert.match(g.tooltip.value, /\*\*Tooltips\*\*: CPU 5 s/);
+  assert.deepEqual(row('CPU usage'), { shown: 'yes', bar: '2 s', tooltip: '5 s' });
+  assert.deepEqual(row('Temperature'), { shown: 'yes', bar: '10 s', tooltip: '10 s' });
+  assert.deepEqual([row('Battery').bar, row('Disk').bar, row('Disk').shown], ['10 s', '10 s', 'yes']);
+  assert.ok(g.tooltip.value.includes('| Tooltip mode | Static | [switch to Live](command:resmon.toggleTooltipMode) |'), 'options table');
   for (const cmd of ['toggleTooltipMode', 'toggleTooltipAutoRefresh', 'toggleCpuLayout', 'toggleDiskMultiDisplay', 'openSettings']) {
     assert.ok(g.tooltip.value.includes(`command:resmon.${cmd}`), `gear links ${cmd}`);
   }
@@ -88,7 +96,7 @@ await sleep(500);
   const frozen = item('CPU usage').tooltip.value;
   await sleep(1500);
   assert.equal(item('CPU usage').tooltip.value, frozen, 'no auto-refresh when off');
-  assert.ok(gear().tooltip.value.includes('**Tooltips**: on click'));
+  assert.equal(row('CPU usage').tooltip, 'on click');
   await sleep(1000);
   s.cmds['resmon.refresh']();
   assert.notEqual(item('CPU usage').tooltip.value, frozen, 'click rebuilds the tooltip');
@@ -99,13 +107,14 @@ await sleep(500);
 // Measured minimums on the status bar interval, unlockable.
 {
   await setCfg({ statusBarMs: { temp: 200, battery: 200, disk: 200, cpu: 200, mem: 200, freq: 200 } });
-  const g = gear().tooltip.value;
-  assert.ok(g.includes('Temp 8.4 s'), 'temperature locked at its measured minimum');
-  assert.ok(g.includes('CPU 200 ms') && g.includes('Mem 200 ms') && g.includes('Battery 200 ms') && g.includes('Disk 200 ms'), 'cheap sections at 200 ms');
+  assert.equal(row('Temperature').bar, '8.4 s *', 'temperature raised to its measured minimum, flagged');
+  assert.ok(gear().tooltip.value.includes('raised to its measured minimum'), 'note under the table');
+  assert.deepEqual(['CPU usage', 'Memory', 'Battery', 'Disk'].map((l) => row(l).bar), ['200 ms', '200 ms', '200 ms', '200 ms'], 'cheap sections at 200 ms');
+  assert.equal(row('CPU usage').tooltip, '5 s');
   await setCfg({ allowFastRefresh: true });
-  assert.ok(gear().tooltip.value.includes('Temp 200 ms'), 'unlocked');
+  assert.equal(row('Temperature').bar, '200 ms', 'unlocked');
   await setCfg({ allowFastRefresh: undefined, allowFastBatteryDiskRefresh: true });
-  assert.ok(gear().tooltip.value.includes('Temp 200 ms'), 'legacy unlock still read');
+  assert.equal(row('Temperature').bar, '200 ms', 'legacy unlock still read');
   await setCfg({ allowFastBatteryDiskRefresh: undefined, statusBarMs: undefined });
   step('measured minimums');
 }
@@ -113,13 +122,11 @@ await sleep(500);
 // Legacy settings: updatefrequencyms for cpu/freq/mem, refreshMs for tooltips and slow sections.
 {
   await setCfg({ updatefrequencyms: 500, refreshMs: { cpu: 3000, battery: 20000 } });
-  const g = gear().tooltip.value;
-  assert.ok(g.includes('CPU 500 ms') && g.includes('Mem 500 ms'), 'updatefrequencyms applies to cpu and memory');
-  assert.ok(g.includes('Battery 20 s'), 'refreshMs.battery keeps its sampling interval');
-  assert.ok(/Tooltips\*\*: CPU 3 s/.test(g), 'refreshMs.cpu becomes the tooltip interval');
+  assert.deepEqual([row('CPU usage').bar, row('Memory').bar], ['500 ms', '500 ms'], 'updatefrequencyms applies to cpu and memory');
+  assert.equal(row('Battery').bar, '20 s', 'refreshMs.battery keeps its sampling interval');
+  assert.equal(row('CPU usage').tooltip, '3 s', 'refreshMs.cpu becomes the tooltip interval');
   await setCfg({ updatefrequencyms: 15000, refreshMs: undefined });
-  const slow = gear().tooltip.value;
-  assert.ok(slow.includes('CPU 15 s') && slow.includes('Temp 15 s') && slow.includes('Disk 15 s'), 'a slow single interval keeps every section at least that slow');
+  assert.deepEqual(['CPU usage', 'Temperature', 'Disk'].map((l) => row(l).bar), ['15 s', '15 s', '15 s'], 'a slow single interval keeps every section at least that slow');
   await setCfg({ updatefrequencyms: 500, refreshMs: { cpu: 3000, battery: 20000 } });
   step('legacy settings read');
 }
@@ -167,7 +174,7 @@ await sleep(500);
   await write('statusBarMs', { ...s.cfg.statusBarMs, temp: 300 });
   assert.equal(s.cfg.statusBarMs.temp, 300, 'stored below the minimum (applied on read)');
   await sleep(200);
-  assert.ok(gear().tooltip.value.includes('Temp 8.4 s'), 'effective value is the minimum');
+  assert.equal(row('Temperature').bar, '8.4 s *', 'effective value is the minimum');
   assert.deepEqual(await write('order', ['disk', 'bogus', 'disk', 'cpu']), ['disk', 'cpu', 'freq', 'temp', 'mem', 'battery']);
   const before = JSON.stringify(s.cfg);
   s.posted.length = 0;

@@ -54,7 +54,7 @@ antigravity --install-extension resource-monitor-ng-darwin-arm64-1.1.0.vsix
 
 The gear widget at the end of the status bar group collects the options:
 
-- **Hover** it for the intervals in use and one-click toggles (tooltip mode, Static auto-refresh, CPU core layout, load format, multi-disk display).
+- **Hover** it for two tables: the sections in status bar order (shown or not, status bar and tooltip intervals in effect, `*` where a value was raised to its measured minimum) and the display options with one-click toggles (tooltip mode, Static auto-refresh, CPU core layout, load format, multi-disk display).
 - **Click** it (or run *Resource Monitor: Open Settings Panel*) to open the settings panel: for each section a status bar interval (preset slider plus millisecond field) and a tooltip interval, section visibility, drag-and-drop widget order, units and disk options. A note under a value shows what actually applies when it differs from what you set (for example a value below the measured minimum).
 
 The panel is only a front-end for the regular settings below: every change is validated and written to your user `settings.json`, and edits made there are reflected in the panel. The data tooltips keep only the metrics, the time of their last update and links to *Settings* and *Refresh*.

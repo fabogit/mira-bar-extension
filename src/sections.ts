@@ -42,16 +42,6 @@ export const SECTION_LABELS: Record<TooltipSection, (isDarwin: boolean) => strin
   disk: () => 'Disk',
 };
 
-/** Short section names for compact summaries. */
-export const SECTION_SHORT_LABELS: Record<TooltipSection, (isDarwin: boolean) => string> = {
-  cpu: () => 'CPU',
-  freq: (isDarwin) => (isDarwin ? 'Load' : 'Freq'),
-  temp: () => 'Temp',
-  mem: () => 'Mem',
-  battery: () => 'Battery',
-  disk: () => 'Disk',
-};
-
 /**
  * Common tooltip footer: the time of the reading shown and the settings / refresh links, on two lines.
  *
