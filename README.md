@@ -4,8 +4,6 @@
 
 ![MiraBar](images/icon.png)
 
-> **Formerly Resource Monitor NG.** MiraBar 1.2.0 is the same extension under a new identity (`fabogit.mirabar`, settings `mirabar.*`). Settings are not carried over: see [Migrating from Resource Monitor NG](#migrating-from-resource-monitor-ng).
-
 ## Features
 
 - **CPU Usage (`$(pulse)`)**: Instant overall and per-core utilization parsed directly from `/proc/stat` (Linux) or Mach host APIs (macOS Apple Silicon). Pre-samples on startup (Tick 0) to eliminate empty hover tables.
@@ -136,17 +134,9 @@ To provide actionable telemetry without generating inaccurate estimates, MiraBar
 - **Queue Semantics**: Unlike standard CPU utilization (clamped at 100%), POSIX Load Average measures the total count of threads running plus threads waiting in the queue. Values $> 100\%$ indicate that the CPU is fully saturated and processes are queued for execution.
 - Toggle between normalized percentage (`34.4% L`) and classic raw queue depth (`3.44 L`) via `mirabar.loadFormat` or the command palette.
 
-## Migrating from Resource Monitor NG
-
-MiraBar 1.2.0 replaces Resource Monitor NG (`fabogit.resource-monitor-ng`), with a new extension ID, settings prefix and command IDs:
-
-1. Uninstall *Resource Monitor NG*, otherwise both extensions run side by side.
-2. Install MiraBar from its VSIX (see [Installation](#installation)).
-3. Settings are not carried over. To keep yours, rename the keys in your user `settings.json` from `resmon.` to `mirabar.` (for example `resmon.order` → `mirabar.order`). The pre-release keys `resmon.updatefrequencyms`, `resmon.refreshMs`, `resmon.refreshSeconds` and `resmon.allowFastBatteryDiskRefresh` no longer exist: use `mirabar.statusBarMs`, `mirabar.tooltipMs` and `mirabar.allowFastRefresh`.
-
 ## Project Status & Documentation
 
-- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship in 1.2.0 together with the rename to MiraBar).
+- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship in 1.2.0, the first public release).
 - **Linux**: works with the same features; the code shared with macOS changed and still needs a check on real hardware, then Linux parity work (Phase 2).
 - **Windows**: not started (Phase 3).
 

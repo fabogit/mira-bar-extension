@@ -9,7 +9,7 @@ The data tooltips had accumulated mode and layout toggles, and interval settings
 
 ## Decision
 
-- A gear widget after the metrics (`resmon.show.settings`). Its tooltip holds two tables: the sections in status bar order (shown, status bar and tooltip intervals in effect, `*` where a value was raised to its measured minimum) and the display options with one-click toggles (a Markdown table, because command links cannot live in a code block). A click opens the panel.
+- A gear widget after the metrics (`mirabar.show.settings`). Its tooltip holds two tables: the sections in status bar order (shown, status bar and tooltip intervals in effect, `*` where a value was raised to its measured minimum) and the display options with one-click toggles (a Markdown table, because command links cannot live in a code block). A click opens the panel.
 - A webview panel (`src/settings/`), singleton, that is **only a front-end**: every message is checked against a whitelist (`EDITABLE_SETTINGS`), validated and clamped, then written to the user settings. `settings.json` stays the single source of truth; edits made there are reflected in the panel.
 - Strict Content Security Policy with a per-load nonce, no remote resources, VS Code theme variables only.
 - Rows are updated in place (a state message never interrupts typing or dragging); stored values that the user did not edit are never rewritten; messages are handled one at a time.
@@ -23,5 +23,5 @@ The data tooltips had accumulated mode and layout toggles, and interval settings
 
 ## Consequences
 
-- One panel to keep in sync with `package.json`; `test/extension.test.mjs` checks the whitelist, validation, migration and CSP.
+- One panel to keep in sync with `package.json`; `test/extension.test.mjs` checks the whitelist, validation, message order and CSP.
 - The panel test in Chromium (theme, narrow width, drag and drop) runs outside the repository for now (ADR-0014).
