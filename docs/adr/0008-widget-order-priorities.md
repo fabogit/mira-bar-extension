@@ -9,7 +9,7 @@ The user asked to reorder the sections. VS Code orders status bar items by prior
 
 ## Decision
 
-- `resmon.order` is a list of section ids. It is translated into descending priorities from `resmon.priority` (higher priority = further left on both sides). Unknown or duplicate ids are dropped and missing sections keep their default position, so a partial list never hides a widget.
+- `mirabar.order` is a list of section ids. It is translated into descending priorities from `mirabar.priority` (higher priority = further left on both sides). Unknown or duplicate ids are dropped and missing sections keep their default position, so a partial list never hides a widget.
 - A change of order, alignment, base priority or gear visibility recreates the widgets; other changes update them in place.
 - The panel reorders by drag and drop or with arrow buttons.
 

@@ -10,7 +10,7 @@ The tick awaited `statfs` before re-arming itself. The default disk path is the 
 ## Decision
 
 - `statfs` is started without awaiting it; the disk widget is rendered when the result arrives, and its tooltip waits for that result so the reading time never labels old data.
-- At most one request is pending for the same paths; a change of `resmon.disk.drives` (or of the workspace folder) starts a new request and drops the stale result.
+- At most one request is pending for the same paths; a change of `mirabar.disk.drives` (or of the workspace folder) starts a new request and drops the stale result.
 - At most two requests are in flight at once (the current one and one superseded, possibly hung).
 - A failed read is retried at the next disk interval, not on every wake-up.
 
@@ -21,5 +21,5 @@ The tick awaited `statfs` before re-arming itself. The default disk path is the 
 
 ## Consequences
 
-- A dead mount leaves the other sections running; removing it from `resmon.disk.drives` recovers at once.
+- A dead mount leaves the other sections running; removing it from `mirabar.disk.drives` recovers at once.
 - Covered by `test/extension.test.mjs` ("disk isolation") with a simulated hung `statfs`.

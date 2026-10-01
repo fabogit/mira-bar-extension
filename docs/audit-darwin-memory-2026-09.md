@@ -1,8 +1,8 @@
-# Resmon: memory leak and refactor audit, darwin (2026-09-29, rev. 2)
+# MiraBar: memory leak and refactor audit, darwin (2026-09-29, rev. 2)
 
 Scope: native/darwin/src/addon.cc, native/darwin/compile.sh + binding.gyp, src/platform/darwin/*, src/extension.ts (darwin-relevant paths).
-Baseline: the analysed sources (native/, src/) are byte-identical to `origin/develop` 0e09a22 of fabogit/resource-monitor_code-extension, so every file:line reference applies to develop. The analysis ran on the untracked Resmon copy.
-Rev. 2 re-verified every rev. 1 finding against the code and added the items marked **NEW**. The sections below are the original report (file:line references point to develop 0e09a22). The work plan is in the Claude Doc "Resmon darwin: piano di fix memoria e refactor".
+Baseline: the analysed sources (native/, src/) are byte-identical to `origin/develop` 0e09a22 of fabogit/resource-monitor_code-extension, so every file:line reference applies to develop. The analysis ran on an untracked copy of the sources.
+Rev. 2 re-verified every rev. 1 finding against the code and added the items marked **NEW**. The sections below are the original report (file:line references point to develop 0e09a22). The work plan was kept in a separate Claude Doc.
 Skills applied: cpp-coding-standards (R.1 RAII, P.8, C.21), memory-safety-patterns, nodejs-core (napi, native-memory).
 
 ## Resolution status (2026-10-01)
@@ -222,7 +222,7 @@ Also:
    Note the `µs/call` column. `getDieTemperature` and `getBatteryStats` should be the most expensive.
 2. After the fixes: host urefs stay flat, `µs/call` for HID and battery should drop sharply, and `leaks` still reports 0.
 3. Optional ASan build: add `-fsanitize=address -g -O1` to compile.sh and run with `DYLD_INSERT_LIBRARIES=$(clang -print-file-name=libclang_rt.asan_osx_dynamic.dylib)`. This works with an nvm/Homebrew node, not a SIP-protected binary.
-4. In VS Code: change `resmon.alignment` 20 times, then run Developer: Reload Window during a tick. The `[Resource Monitor NG]` logs must stop after deactivate.
+4. In VS Code: change `mirabar.alignment` 20 times, then run Developer: Reload Window during a tick. The `[MiraBar]` logs must stop after deactivate.
 
 Work on a branch from develop (`git switch -c develop origin/develop && git switch -c fix/darwin-memory`). The macos-14 CI job already runs `test:darwin` and `test:integration`; test/leak-darwin.mjs can be added there.
 The session's device_bash runs in a Linux VM, so the macOS addon cannot be compiled or run from the session. The user runs the tests on the Mac.

@@ -2,7 +2,7 @@
 
 ## 1. Vision & Core Architectural Principles
 
-MiraBar (formerly Resource Monitor NG) is designed as an ultra-lightweight, zero-overhead hardware telemetry monitor for the Visual Studio Code Status Bar.
+MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry monitor for the Visual Studio Code Status Bar.
 
 * **Strict SLA Budget**: Target total CPU overhead must remain strictly below **0.5% of a single core**, with instantaneous sampling latency under **1 ms**.
 * **Zero Child Process Spawning**: Invocations of external shell utilities (`top`, `htop`, `df`, `vm_stat`, `wmic`, `powershell`) are strictly prohibited to prevent process creation overhead, IPC lag, and CPU spikes.
@@ -22,7 +22,7 @@ MiraBar (formerly Resource Monitor NG) is designed as an ultra-lightweight, zero
 | 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, released | — |
 | 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
 | 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
-| 1.3 – Rename to MiraBar (v1.2.0) | All | Done, merged locally | Rename the GitHub repository, release |
+| 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, merged locally | Rename the GitHub repository, release |
 | 2 – Linux modernization & parity (v1.3.0) | Linux | Open | Start with the Linux check below |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
@@ -30,7 +30,7 @@ MiraBar (formerly Resource Monitor NG) is designed as an ultra-lightweight, zero
 
 Phases 1.1 to 1.3 are merged into the local `develop` (`c5ebaba`, `7b4c977`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **1.2.0**, the first MiraBar release, after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
 
-The rename ([ADR-0015](adr/0015-rename-to-mirabar.md)) changed every setting and command prefix from `resmon.` to `mirabar.`. The rename release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones keep their old titles until renamed). Phase 0 and 1 below use the current `mirabar.` keys; legacy keys removed in 1.2.0 are named without prefix.
+The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-settings-namespace.md). The first public release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones keep their old titles until renamed). Beta interval settings removed in 1.2.0 are named without prefix.
 
 ---
 
@@ -61,7 +61,7 @@ The foundational phase established the core extension functionality, UI widgets,
 - [x] [#22](https://github.com/fabogit/resource-monitor_code-extension/issues/22) **Rich Markdown Tooltip Layout**:
   - ASCII visual gauge bars for RAM, Swap, and Storage capacity.
   - Tabular layout for per-core CPU breakdown.
-- [x] **Production Distribution**: Initial deployment to the Visual Studio Code Marketplace.
+- [x] **Beta Distribution**: VSIX packages.
 
 ---
 
@@ -171,7 +171,7 @@ Each section gets its own status bar and tooltip intervals, and the minimums are
   - Native temperature readings carry `sampleSeq`, `ageMs`, `passWallMs`, `passCpuMs`.
 - [x] **Per-Section Intervals**:
   - `mirabar.statusBarMs` (reads and status bar text) and `mirabar.tooltipMs` (Static tooltips, never faster than the status bar); `mirabar.allowFastRefresh` lowers the minimums to 200 ms.
-  - Pre-release keys were read as fallbacks and migrated by the panel, and the released `updatefrequencyms` kept working (ADR-0012); the rename to MiraBar removed all of them (ADR-0015).
+  - The development keys were read as fallbacks and migrated by the panel, and the beta `updatefrequencyms` kept working (ADR-0012); ADR-0015 removed all of them before the first public release.
 - [x] **Deadline Scheduler & Lifecycle Refactor**:
   - `ResourceMonitor` (`src/monitor.ts`, `vscode.Disposable`): one timer at the earliest section deadline, no global tick, no timer when every section is hidden.
   - Renderers per section (`src/sections.ts`, pure functions) and formatting helpers (`src/format.ts`); `src/extension.ts` only wires commands and settings.
@@ -197,14 +197,14 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 
 ---
 
-## 4c. Phase 1.3: Rename to MiraBar (v1.2.0) [COMPLETED]
+## 4c. Phase 1.3: Name and Namespace: MiraBar (v1.2.0) [COMPLETED]
 
-> Branch: `chore/rename-mirabar` (from `develop`, merged locally in `7b4c977`) • Plan: [`docs/RENAME_MIRABAR_PLAN.md`](RENAME_MIRABAR_PLAN.md) • Decision: [ADR-0015](adr/0015-rename-to-mirabar.md)
+> Branch: `chore/rename-mirabar` (from `develop`, merged locally in `7b4c977`) • Decision: [ADR-0015](adr/0015-name-and-settings-namespace.md)
 
 - [x] **Identity**: extension `fabogit.mirabar`, display name *MiraBar: System Monitor for the Status Bar*, version 1.2.0, VSIX `mirabar-<target>-<version>.vsix`.
-- [x] **Prefix**: settings and commands `mirabar.*`, command category *MiraBar*; output channel, status bar item names, settings panel and log prefix renamed.
-- [x] **Legacy settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (a new extension ID has no old values to read).
-- [x] **Docs**: README with "Migrating from Resource Monitor NG", CHANGELOG, forward-looking docs; ADR-0001 to 0014 keep the old names.
+- [x] **Prefix**: settings and commands `mirabar.*`, command category *MiraBar*; output channel, status bar item names, settings panel and log prefix use *MiraBar*.
+- [x] **Beta settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (nothing was published, so there is nothing to stay compatible with).
+- [x] **Docs**: README, CHANGELOG, architecture docs and ADRs use the MiraBar name and `mirabar.*` keys throughout.
 - [ ] **GitHub repository** renamed to `fabogit/mirabar` (old URLs redirect), then `git remote set-url` and the remaining links (`package.json` `repository`, milestone and issue links in this file).
 - [ ] **Milestones** renamed on GitHub: Linux v1.2.0 → v1.3.0, Windows v1.3.0 → v1.4.0, localization v1.4.0 → v1.5.0.
 

@@ -4,13 +4,11 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [1.2.0] - unreleased
 
-The extension is renamed **MiraBar** (formerly Resource Monitor NG) and includes the work of roadmap Phases 1.1 and 1.2, planned as 1.1.1 before the rename.
+First public release, as **MiraBar** (`fabogit.mirabar`): settings and commands `mirabar.*`, commands grouped under the *MiraBar* category ([ADR-0015](docs/adr/0015-name-and-settings-namespace.md)). It includes the work of roadmap Phases 1.1 and 1.2. Earlier versions were betas distributed as VSIX.
 
-### Changed (for users of Resource Monitor NG)
+### Changed
 
-- Extension ID `fabogit.resource-monitor-ng` → `fabogit.mirabar`; display name *MiraBar: System Monitor for the Status Bar*. Install it as a new extension and uninstall the old one ([ADR-0015](docs/adr/0015-rename-to-mirabar.md)).
-- Settings prefix `resmon.*` → `mirabar.*`; command IDs `resmon.*` → `mirabar.*`, grouped under the *MiraBar* category. Settings are not carried over (README, "Migrating from Resource Monitor NG").
-- Status bar intervals are set per section with `mirabar.statusBarMs` (read and text) and `mirabar.tooltipMs` (Static tooltips) ([ADR-0009](docs/adr/0009-per-section-intervals-deadline-scheduler.md)). The single interval `updatefrequencyms` and the pre-release `refreshMs`, `refreshSeconds` and `allowFastBatteryDiskRefresh` are removed.
+- Status bar intervals are set per section with `mirabar.statusBarMs` (read and text) and `mirabar.tooltipMs` (Static tooltips) ([ADR-0009](docs/adr/0009-per-section-intervals-deadline-scheduler.md)). The single interval `updatefrequencyms` and the development keys `refreshMs`, `refreshSeconds` and `allowFastBatteryDiskRefresh` are removed.
 - Minimum status bar intervals come from measurements on an Apple M4: temperature 8400 ms (default 10 s, was 5 s), every other section 200 ms; `mirabar.allowFastRefresh` unlocks them ([ADR-0010](docs/adr/0010-refresh-minimums-from-measurements.md)).
 
 ### Added
@@ -37,10 +35,10 @@ The extension is renamed **MiraBar** (formerly Resource Monitor NG) and includes
 - No global polling tick: one timer at the earliest section deadline; hidden sections are never read; no timer at all when every section is hidden.
 - Live tooltips are rebuilt only when their data changes; the macOS battery registry is read at most every 30 s.
 
-## [1.1.0] - 2026-09-20
+## [1.1.0] - 2026-09-20 (beta)
 
 - Native macOS Apple Silicon support through a Node-API addon (Mach, IOKit, IOHID): CPU per P/E cluster, system load, SoC temperatures, memory, battery health; dual-runner release pipeline (macOS + Linux).
 
-## [1.0.1] - 2026-09-09 / [1.0.0] - 2026-09-07
+## [1.0.1] - 2026-09-09 / [1.0.0] - 2026-09-07 (beta)
 
 - First release: Linux status bar widgets for CPU, frequency, temperature, memory, battery and disk, with monospace tooltip tables and quick toggles.

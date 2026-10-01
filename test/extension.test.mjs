@@ -118,7 +118,7 @@ await sleep(500);
   step('measured minimums');
 }
 
-// Only the mirabar.* interval settings exist: the pre-release keys are gone from package.json.
+// Only the mirabar.* interval settings exist: the beta keys are gone from package.json.
 {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const keys = Object.keys(pkg.contributes.configuration.properties);
