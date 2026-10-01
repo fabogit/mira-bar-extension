@@ -19,16 +19,16 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 | Phase | Platform | Status | Next step |
 | :--- | :--- | :--- | :--- |
 | 0 – Foundation & Linux genesis (v1.0.x) | Linux | Done, beta on GitHub Releases | — |
-| 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, not released on its own (ships in 1.2.0) | — |
-| 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
-| 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
-| 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, merged locally | Rename the GitHub milestones, release |
-| 2 – Linux modernization & parity (v1.3.0) | Linux | Open | Start with the Linux check below |
+| 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, shipped in 1.2.0 | — |
+| 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | — |
+| 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | Per-platform minimums |
+| 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, released in 1.2.0 | Marketplace publishing |
+| 2 – Linux modernization & parity (v1.3.0) | Linux | In progress | Temperature sensors (#33–#36, #4), battery time (#3), cold start (#1), benchmarks and per-platform minimums (#5) |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
 | Cross-platform backlog | All | Planned, unscheduled | Inactive window first (smallest change, also the base for sharing across windows) |
 
-Phases 1.1 to 1.3 are merged into the local `develop` (`c5ebaba`, `7b4c977`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **1.2.0**, the first MiraBar release, after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
+Phases 1.1 to 1.3 shipped on 2026-10-01 as **1.2.0**, the first MiraBar release ([v1.2.0](https://github.com/fabogit/mira-bar-extension/releases/tag/v1.2.0), VSIX for `darwin-arm64` and `linux-x64` on GitHub Releases; release notes in [CHANGELOG.md](../CHANGELOG.md)). The shared code was checked on macOS (Apple M4) and on a Linux laptop with real sensors, cpufreq and battery before the tag. The Marketplace is not published yet: publisher `fabogit`, a token, then `vsce publish --packagePath <vsix>` for each platform.
 
 The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-settings-namespace.md). The first MiraBar release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones were renamed accordingly). Beta interval settings removed in 1.2.0 are named without prefix.
 
@@ -190,7 +190,7 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 
 **Follow-ups (macOS):**
 
-- [x] **Release 1.2.0**: version and CHANGELOG are ready; date the CHANGELOG entry, push `develop` and tag once the Linux check passes.
+- [x] **Release 1.2.0**: tagged `v1.2.0` and published on GitHub Releases on 2026-10-01.
 - [ ] **Fewer temperature sensors per pass**: a pass costs 40.4 ms of system CPU for 26 sensors; measure accuracy and cost with a subset, then revisit the 8400 ms minimum (ADR-0003, ADR-0010).
 - [ ] **macOS 11 support**: decide when to raise the deployment target (ADR-0006).
 - [ ] **Repeat `bench:darwin`** on an idle Mac to confirm the temperature figure (single run so far).
@@ -216,10 +216,10 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 
 Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectural standard, establishing empirical performance baselines, and verifying telemetry directly on a native Linux workstation. Details and checklist: [`docs/LINUX_IMPLEMENTATION_PLAN.md`](LINUX_IMPLEMENTATION_PLAN.md).
 
-**First: check what Phases 1.1 and 1.2 changed (blocks pushing `develop`):**
+**Linux check of Phases 1.1 and 1.2 (done before the 1.2.0 release, except the minimums):**
 
-- [ ] On a Linux machine with real sensors: `pnpm run typecheck`, `test:linux`, `test:integration`, `test:extension`, `package:linux-x64`; install the VSIX and check the status bar, the settings panel, the gear tooltip, Static/Live tooltips.
-- [ ] Linux-specific code changed in Phase 1.1/1.2: `cpufreq` skips cores without `scaling_cur_freq` and rescans every 60 s; temperature is cached per interval and reports `sampleSeq` / `ageMs`. Check on hardware with cpufreq and hwmon, and on a laptop (battery).
+- [x] On a Linux machine with real sensors (AMD laptop: `k10temp`, `nvme`, cpufreq on 16 threads, battery): `pnpm run typecheck`, `test:linux`, `test:integration`, `test:extension`, `package:linux-x64`; install the VSIX and check the status bar, the settings panel, the gear tooltip, Static/Live tooltips.
+- [x] Linux-specific code changed in Phase 1.1/1.2: `cpufreq` skips cores without `scaling_cur_freq` and rescans every 60 s; temperature is cached per interval and reports `sampleSeq` / `ageMs`. Check on hardware with cpufreq and hwmon, and on a laptop (battery).
 - [ ] **Per-platform refresh minimums** (ADR-0010): the minimums are macOS measurements applied everywhere (temperature 8400 ms). Measure Linux with `bench:extension` plus a Linux source bench (sysfs/procfs read cost), and make `MEASURED_MIN_STATUS_BAR_MS` per platform.
 - [x] **CI**: `test:extension` runs in both release jobs; the release notes come from the CHANGELOG section of the tag; a `prerelease` input (or a tag suffix such as `-rc.1`) publishes a pre-release.
 
