@@ -135,6 +135,21 @@ To provide actionable telemetry without generating inaccurate estimates, Resourc
 - **Queue Semantics**: Unlike standard CPU utilization (clamped at 100%), POSIX Load Average measures the total count of threads running plus threads waiting in the queue. Values $> 100\%$ indicate that the CPU is fully saturated and processes are queued for execution.
 - Toggle between normalized percentage (`34.4% L`) and classic raw queue depth (`3.44 L`) via `resmon.loadFormat` or the command palette.
 
+## Project Status & Documentation
+
+- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship as v1.1.1).
+- **Linux**: works with the same features; the code shared with macOS changed and still needs a check on real hardware, then Linux parity work (Phase 2).
+- **Windows**: not started (Phase 3).
+
+| Document | Content |
+| :--- | :--- |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Phases, what is done and what is left |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works: sources, refresh model, scheduler, minimums, UI |
+| [docs/adr/](docs/adr/README.md) | Architecture decisions and their reasons |
+| [docs/DARWIN_APPLE_SILICON.md](docs/DARWIN_APPLE_SILICON.md) | macOS native addon: APIs, build, verification |
+| [docs/LINUX_IMPLEMENTATION_PLAN.md](docs/LINUX_IMPLEMENTATION_PLAN.md) | Linux plan and checklist |
+| [docs/audit-darwin-memory-2026-09.md](docs/audit-darwin-memory-2026-09.md) | Memory and performance audit of the Darwin addon, with resolutions |
+
 ## Build, Testing & Packaging
 
 ### Local Development & Testing
