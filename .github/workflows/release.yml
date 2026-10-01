@@ -14,6 +14,10 @@ on:
         description: 'Tag name for release (optional if tag already exists)'
         type: string
         default: ''
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,7 +30,7 @@ jobs:
   build-darwin:
     name: Build & Package Darwin (macos-14)
     runs-on: macos-14
-    timeout-minutes: 4
+    timeout-minutes: 6
 
     steps:
       - name: Checkout Code
@@ -59,6 +63,7 @@ jobs:
         run: |
           pnpm run test:darwin
           pnpm run test:integration
+          pnpm run test:extension
 
       - name: Package VSIX (darwin-arm64)
         run: pnpm run package:darwin-arm64
@@ -73,7 +78,7 @@ jobs:
   build-linux:
     name: Build & Package Linux (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
 
     steps:
       - name: Checkout Code
@@ -103,6 +108,7 @@ jobs:
         run: |
           pnpm run test:linux
           pnpm run test:integration
+          pnpm run test:extension
 
       - name: Package VSIX (linux-x64)
         run: pnpm run package:linux-x64
@@ -123,6 +129,35 @@ jobs:
       contents: write
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true')
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Resolve Tag and Release Notes
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+        run: |
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Notes: the CHANGELOG section of this version (the "## [x.y.z]" heading up to the next one).
+          awk -v v="$VERSION" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ]; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No CHANGELOG section for $VERSION: falling back to generated notes"
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Pre-release: the input, or a tag with a suffix such as v1.3.0-rc.1
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ] || [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download All VSIX Artifacts
         uses: actions/download-artifact@v8
         with:
@@ -139,5 +174,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: vsix/*.vsix
-          generate_release_notes: true
-          tag_name: ${{ github.event.inputs.tag_name != '' && github.event.inputs.tag_name || github.ref_name }}
+          body_path: ${{ steps.meta.outputs.has_notes == 'true' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ steps.meta.outputs.has_notes != 'true' }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          tag_name: ${{ steps.meta.outputs.tag }}
