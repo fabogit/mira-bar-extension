@@ -4,7 +4,9 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [1.2.0] - unreleased
 
-First public release, as **MiraBar** (`fabogit.mirabar`): settings and commands `mirabar.*`, commands grouped under the *MiraBar* category ([ADR-0015](docs/adr/0015-name-and-settings-namespace.md)). It includes the work of roadmap Phases 1.1 and 1.2. Earlier versions were betas distributed as VSIX.
+First release as **MiraBar** (`fabogit.mirabar`): settings and commands `mirabar.*`, commands grouped under the *MiraBar* category ([ADR-0015](docs/adr/0015-name-and-settings-namespace.md)). It includes the work of roadmap Phases 1.1 and 1.2.
+
+Earlier versions are betas: 1.0.0 and 1.0.1 are VSIX packages on GitHub Releases (nothing on a marketplace), 1.1.0 was not released. They use a different extension ID and settings: uninstall a beta before installing 1.2.0; its settings are not carried over.
 
 ### Changed
 
@@ -35,10 +37,10 @@ First public release, as **MiraBar** (`fabogit.mirabar`): settings and commands 
 - No global polling tick: one timer at the earliest section deadline; hidden sections are never read; no timer at all when every section is hidden.
 - Live tooltips are rebuilt only when their data changes; the macOS battery registry is read at most every 30 s.
 
-## [1.1.0] - 2026-09-20 (beta)
+## [1.1.0] - 2026-09-20 (beta, not released)
 
 - Native macOS Apple Silicon support through a Node-API addon (Mach, IOKit, IOHID): CPU per P/E cluster, system load, SoC temperatures, memory, battery health; dual-runner release pipeline (macOS + Linux).
 
-## [1.0.1] - 2026-09-09 / [1.0.0] - 2026-09-07 (beta)
+## [1.0.1] - 2026-09-09 / [1.0.0] - 2026-09-07 (beta, GitHub Releases)
 
 - First release: Linux status bar widgets for CPU, frequency, temperature, memory, battery and disk, with monospace tooltip tables and quick toggles.

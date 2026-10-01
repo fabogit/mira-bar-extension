@@ -18,8 +18,8 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 
 | Phase | Platform | Status | Next step |
 | :--- | :--- | :--- | :--- |
-| 0 – Foundation & Linux genesis (v1.0.x) | Linux | Done, released | — |
-| 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, released | — |
+| 0 – Foundation & Linux genesis (v1.0.x) | Linux | Done, beta on GitHub Releases | — |
+| 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, not released on its own (ships in 1.2.0) | — |
 | 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
 | 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
 | 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, merged locally | Rename the GitHub repository, release |
@@ -30,7 +30,7 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 
 Phases 1.1 to 1.3 are merged into the local `develop` (`c5ebaba`, `7b4c977`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **1.2.0**, the first MiraBar release, after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
 
-The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-settings-namespace.md). The first public release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones keep their old titles until renamed). Beta interval settings removed in 1.2.0 are named without prefix.
+The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-settings-namespace.md). The first MiraBar release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones keep their old titles until renamed). Beta interval settings removed in 1.2.0 are named without prefix.
 
 ---
 
@@ -61,7 +61,7 @@ The foundational phase established the core extension functionality, UI widgets,
 - [x] [#22](https://github.com/fabogit/resource-monitor_code-extension/issues/22) **Rich Markdown Tooltip Layout**:
   - ASCII visual gauge bars for RAM, Swap, and Storage capacity.
   - Tabular layout for per-core CPU breakdown.
-- [x] **Beta Distribution**: VSIX packages.
+- [x] **Beta Distribution**: VSIX packages on GitHub Releases (v1.0.0, v1.0.1), not on a marketplace.
 
 ---
 
@@ -171,7 +171,7 @@ Each section gets its own status bar and tooltip intervals, and the minimums are
   - Native temperature readings carry `sampleSeq`, `ageMs`, `passWallMs`, `passCpuMs`.
 - [x] **Per-Section Intervals**:
   - `mirabar.statusBarMs` (reads and status bar text) and `mirabar.tooltipMs` (Static tooltips, never faster than the status bar); `mirabar.allowFastRefresh` lowers the minimums to 200 ms.
-  - The development keys were read as fallbacks and migrated by the panel, and the beta `updatefrequencyms` kept working (ADR-0012); ADR-0015 removed all of them before the first public release.
+  - The development keys were read as fallbacks and migrated by the panel, and the beta `updatefrequencyms` kept working (ADR-0012); ADR-0015 removed all of them before the first MiraBar release.
 - [x] **Deadline Scheduler & Lifecycle Refactor**:
   - `ResourceMonitor` (`src/monitor.ts`, `vscode.Disposable`): one timer at the earliest section deadline, no global tick, no timer when every section is hidden.
   - Renderers per section (`src/sections.ts`, pure functions) and formatting helpers (`src/format.ts`); `src/extension.ts` only wires commands and settings.
@@ -203,7 +203,7 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 
 - [x] **Identity**: extension `fabogit.mirabar`, display name *MiraBar: System Monitor for the Status Bar*, version 1.2.0, VSIX `mirabar-<target>-<version>.vsix`.
 - [x] **Prefix**: settings and commands `mirabar.*`, command category *MiraBar*; output channel, status bar item names, settings panel and log prefix use *MiraBar*.
-- [x] **Beta settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (nothing was published, so there is nothing to stay compatible with).
+- [x] **Beta settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (the betas on GitHub Releases are early builds: no compatibility is kept with them).
 - [x] **Docs**: README, CHANGELOG, architecture docs and ADRs use the MiraBar name and `mirabar.*` keys throughout.
 - [ ] **GitHub repository** renamed to `fabogit/mirabar` (old URLs redirect), then `git remote set-url` and the remaining links (`package.json` `repository`, milestone and issue links in this file).
 - [ ] **Milestones** renamed on GitHub: Linux v1.2.0 → v1.3.0, Windows v1.3.0 → v1.4.0, localization v1.4.0 → v1.5.0.

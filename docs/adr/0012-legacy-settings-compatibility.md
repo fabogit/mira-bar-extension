@@ -1,11 +1,11 @@
 # ADR-0012: Compatibility with the beta interval settings
 
-- **Status**: Superseded by [ADR-0015](0015-name-and-settings-namespace.md) (no public release yet: every beta key is removed)
+- **Status**: Superseded by [ADR-0015](0015-name-and-settings-namespace.md) (the beta keys are removed before the first MiraBar release)
 - **Date**: 2026-10-01 (Phase 1.2)
 
 ## Context
 
-`updatefrequencyms` exists in the beta builds (v1.0, v1.1.0). The development branches added `refreshSeconds`, then `refreshMs` and `allowFastBatteryDiskRefresh`, present in the developer's settings. ADR-0009 and ADR-0010 replace all of them.
+`updatefrequencyms` exists in the beta builds (v1.0.x on GitHub Releases, v1.1.0 unreleased). The development branches added `refreshSeconds`, then `refreshMs` and `allowFastBatteryDiskRefresh`, present in the developer's settings. ADR-0009 and ADR-0010 replace all of them.
 
 ## Decision
 

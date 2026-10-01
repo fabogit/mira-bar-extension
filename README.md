@@ -22,6 +22,8 @@
 
 ## Installation
 
+> If you installed a beta (1.0.x) from GitHub Releases, uninstall it first: it uses a different extension ID, so both would run side by side, and its settings are not carried over.
+
 ### Method 1: Install from VSIX via GUI (Recommended)
 This method ensures the extension is installed into your currently active VS Code profile:
 1. Open VS Code or Antigravity-IDE.
@@ -136,7 +138,7 @@ To provide actionable telemetry without generating inaccurate estimates, MiraBar
 
 ## Project Status & Documentation
 
-- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship in 1.2.0, the first public release).
+- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship in 1.2.0, the first MiraBar release).
 - **Linux**: works with the same features; the code shared with macOS changed and still needs a check on real hardware, then Linux parity work (Phase 2).
 - **Windows**: not started (Phase 3).
 
