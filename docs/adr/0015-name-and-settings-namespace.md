@@ -15,7 +15,7 @@ Checked on 2026-10-01: `fabogit.mirabar` does not exist on the VS Code Marketpla
 - **Namespace**: settings `mirabar.*`, commands `mirabar.*` with the *MiraBar* category; output channel, status bar item names, settings panel and log prefix use *MiraBar*. `mirabar` rather than `mira` because setting keys are global across extensions.
 - **Beta settings removed**: the single interval `updatefrequencyms` and the development keys `refreshMs`, `refreshSeconds` and `allowFastBatteryDiskRefresh` are gone from `package.json`, together with their fallbacks in `src/config.ts`, the panel migration in `src/settings/schema.ts` and their tests. The panel keeps handling messages one at a time (a reset must not interleave with a later edit).
 - **Version 1.2.0** for the first MiraBar release: it continues the numbering of the betas and adds the features of Phases 1.1-1.2 (planned as 1.1.1), hence a minor. The milestones for Linux, Windows and localization move one minor up: 1.3.0, 1.4.0, 1.5.0.
-- **Repository** renamed to `fabogit/mirabar` on GitHub by hand (old URLs redirect); the remote and the links in the docs follow.
+- **Repository** renamed to `fabogit/mira-bar-extension` on GitHub (old URLs redirect); the remote and the links in the docs follow.
 - **Icon** unchanged until a new one exists.
 - Unchanged on purpose: the `ResourceMonitor` class (the name describes what it does), `darwin_telemetry.node`, telemetry and behaviour.
 
