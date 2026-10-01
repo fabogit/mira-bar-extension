@@ -1,5 +1,5 @@
 import * as fs from 'node:fs';
-import type { CpuUsageInfo } from '../types.js';
+import type { CpuUsageInfo } from '../../types.js';
 
 /**
  * Internal snapshot of cumulative ticks used for computing delta load.
@@ -19,6 +19,7 @@ interface CoreStat {
  * - `iowait` inclusion in idle time to prevent artificial 100% spikes during I/O.
  * - Clock skew or identical timestamps ($\Delta \text{total} \le 0$).
  * - Per-core logical breakdown for multi-threading profiling.
+ * - Sparse array hole protection against CPU core parking / hotplugging.
  */
 export class CpuProvider {
   private prevOverall: CoreStat | null = null;
@@ -37,6 +38,7 @@ export class CpuProvider {
 
       let overallPercent = this.lastResult.overallPercent;
       const perCorePercent: number[] = [];
+      let maxCoreIndex = -1;
 
       for (const line of lines) {
         if (!line.startsWith('cpu')) {
@@ -77,6 +79,9 @@ export class CpuProvider {
           // Individual core (cpu0, cpu1, ...)
           const coreIndex = parseInt(name.slice(3), 10);
           if (!isNaN(coreIndex)) {
+            if (coreIndex > maxCoreIndex) {
+              maxCoreIndex = coreIndex;
+            }
             const prevCore = this.prevCores.get(coreIndex);
             let coreUsage = 0;
 
@@ -93,6 +98,13 @@ export class CpuProvider {
             perCorePercent[coreIndex] = coreUsage;
             this.prevCores.set(coreIndex, { total, idle: idleAll });
           }
+        }
+      }
+
+      // Densify array to prevent sparse holes / undefined indexing when cores are parked
+      for (let i = 0; i <= maxCoreIndex; i++) {
+        if (perCorePercent[i] === undefined) {
+          perCorePercent[i] = 0;
         }
       }
 

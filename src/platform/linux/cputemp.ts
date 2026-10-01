@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { CpuTempInfo } from '../types.js';
+import type { CpuTempInfo } from '../../types.js';
 
 /**
  * Internal metadata descriptor for an identified hardware thermal sensor.

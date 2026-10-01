@@ -2,95 +2,138 @@
 
 ## Overview
 
-**Resource Monitor NG** is an ultra-lightweight Linux-native extension for VS Code and Antigravity-IDE designed to replace legacy system monitoring extensions that rely on heavy subprocess spawning (e.g. `systeminformation` spawning `ps`, `df`, `free`).
+> The reasons behind these designs, with the measurements and rejected alternatives, are in the ADRs: [`docs/adr/`](adr/README.md).
 
-## Zero Subprocess Architecture
+**MiraBar** is an ultra-lightweight, cross-platform (Linux & macOS Apple Silicon) extension for VS Code and Antigravity-IDE designed to replace legacy system monitoring extensions that rely on heavy subprocess spawning (e.g. `systeminformation` spawning `ps`, `df`, `free`, or `powermetrics`).
 
-Traditional Node.js system monitor extensions execute shell subprocesses every 1–2 seconds. On Linux, this causes constant process forks, context switches, thread pool starvation, and prevents CPU cores from entering deeper C-states (increasing power consumption).
+## Zero Subprocess Dual-Platform Architecture
 
-Resource Monitor NG reads directly from the Linux in-memory virtual pseudo-filesystems (`/proc` and `/sys`) using synchronous file descriptors:
+Traditional Node.js system monitor extensions execute shell subprocesses every 1–2 seconds. On Linux and macOS, this causes constant process forks, context switches, thread pool starvation, and prevents CPU cores from entering deeper C-states (increasing power consumption and battery drain).
+
+MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platforms:
+- **Linux (`linux-x64`)**: Direct synchronous file descriptor reads from the virtual in-memory filesystems (`/proc` and `/sys`).
+- **macOS Apple Silicon (`darwin-arm64`)**: Direct synchronous C/C++ kernel API calls via a standalone Node-API native addon (`darwin_telemetry.node`) compiled with Apple Clang, linking Mach, IOKit, and CoreFoundation.
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                      Extension Host                    │
-│                                                        │
-│   [CpuProvider]        [MemoryProvider]  [CpuTempProvider]
-│         │                     │                 │
-│         ▼                     ▼                 ▼
-│     /proc/stat          /proc/meminfo    /sys/class/hwmon/
-│  (in-memory RAM)      (in-memory RAM)    (in-memory RAM)
-└────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                             Extension Host                             │
+│                                                                        │
+│   [CpuProvider]        [MemoryProvider]       [TempProvider]    ...    │
+│         │                     │                      │                 │
+│    ┌────┴─────────────────────┼──────────────────────┴────────────┐    │
+│    │ Linux                    │ macOS Apple Silicon (darwin-arm64)│    │
+│    ▼                          ▼                                   │    │
+│  /proc & /sys            Mach kernel APIs (mach_host)             │    │
+│  (in-memory VFS)         IOKit & IOHIDEventSystemClient           │    │
+│                          AppleSmartBattery IOKit registry         │    │
+└────┴──────────────────────────┴───────────────────────────────────┴────┘
 ```
 
-### 1. CPU Load Metrics (`/proc/stat`)
-- **Direct read**: Reads the first line of `/proc/stat` (`cpu  user nice system idle iowait irq softirq steal guest guest_nice`).
-- **Delta calculation**:
-  $$\text{Total} = \text{user} + \text{nice} + \text{system} + \text{idle} + \text{iowait} + \text{irq} + \text{softirq} + \text{steal}$$
-  $$\text{IdleTotal} = \text{idle} + \text{iowait}$$
-  $$\text{Usage \%} = \frac{\Delta \text{Total} - \Delta \text{IdleTotal}}{\Delta \text{Total}} \times 100$$
-- **Edge cases handled**:
-  - `iowait` is counted as idle to avoid false 100% CPU spikes during heavy disk I/O.
-  - $\Delta \text{Total} \le 0$ protects against division-by-zero or clock skew.
-  - Per-core lines (`cpu0`, `cpu1`, ...) are parsed to power detailed hover tooltip breakdowns.
+### 1. CPU Load & Topology
+- **Linux**: Reads `/proc/stat` delta counters across logical cores. Handles `iowait` as idle to avoid false I/O spikes.
+- **Darwin (Apple Silicon)**: Calls `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` via Mach host APIs to retrieve user, system, idle, and nice ticks per core.
+  - **Cold-Start Pre-Sampling (Tick 0)**: Pre-samples CPU ticks during provider instantiation so that the first hover immediately displays valid per-core metrics rather than waiting for an arbitrary polling cycle.
+  - **Asymmetric Topology**: Discovers Performance (P) and Efficiency (E) core clusters via `sysctlbyname("hw.perflevel0.logicalcpu")` and `sysctlbyname("hw.perflevel1.logicalcpu")`.
 
-### 2. Dynamic Frequency Scaling (`/sys/devices/system/cpu/`)
-- Dynamic core discovery parses `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`.
-- **Core hotplug & parking resilience**: Offline or sleeping cores (which yield `ENOENT` on read) are skipped dynamically without crashing the polling cycle.
-- Calculates overall average and peak clock frequency across currently online cores.
+### 2. Clock Frequencies & System Load
+- **Linux**: Dynamically discovers `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`, gracefully skipping parked/offline cores (`ENOENT`).
+- **Darwin (Apple Silicon - System Load Average)**: Hardware frequency scaling on Apple Silicon is handled autonomously by Apple power firmware and not accessible to unprivileged userspace. MiraBar maps this slot to **Normalized System Load Average**:
+  $$\text{Normalized Load \%} = \frac{\text{Load}_{1\text{m}}}{\text{Total Hardware Cores}} \times 100$$
+  Toggleable between normalized percentage (`34.4% L`) and POSIX queue depth (`3.44 L`).
 
-### 3. Hardware Thermal Discovery (`/sys/class/hwmon/`)
-Thermal sensors in Linux vary significantly across motherboards and kernel revisions. Hardcoding hwmon paths (e.g. `hwmon1`) leads to broken sensors on laptops or secondary platforms.
+### 3. Hardware Thermal Discovery
+- **Linux (`/sys/class/hwmon/`)**: One-time startup heuristic scanning AMD `k10temp`/`zenpower`, Intel `coretemp`, and ACPI thermal zones.
+- **Darwin Apple Silicon (`IOHIDEventSystemClient`)**: Unprivileged kernel HID event tap matching `PrimaryUsagePage = 0xff00` and `PrimaryUsage = 0x5`. Samples 24 on-die SoC sensors (reporting both average and peak die temperatures), NAND SSD controller temperature, and battery cell temperature without root permissions.
+  - **Background sampler**: one pass costs ~16-18 ms on an M4 (~0.6 ms of IPC per sensor), so a native worker thread (`ThermalSampler`) performs the reads. `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and wakes the worker when the reading is older than `maxAgeMs`; the extension host thread never waits for the sensors after the first reading. Each reading carries `sampleSeq` (changes with every pass), `ageMs`, and the cost of its pass (`passWallMs`, `passCpuMs`).
 
-Resource Monitor NG implements a one-time startup heuristic:
-1. **AMD Zen/Ryzen priority**: Scans `/sys/class/hwmon/hwmon*/name` looking for `k10temp` or `zenpower`.
-2. **Intel Core priority**: Scans for `coretemp`.
-3. **Fallback**: Scans for generic ACPI thermal zones (`/sys/class/thermal/thermal_zone0/temp`).
-4. **Input target**: Maps to `temp1_input` (`Tctl` / Package ID) or `temp3_input` (`Tccd1`), reading labels dynamically.
+### 4. Memory & Virtual Memory Subsystem
+- **Linux (`/proc/meminfo`)**: Single-pass line scan extracting `MemTotal`, `MemAvailable`, `SwapTotal`, `SwapFree`.
+- **Darwin (Mach 64-bit VM)**: Invokes `host_statistics64(HOST_VM_INFO64)` and `sysctl vm.swapusage`. Computes actively consumed RAM (`active + wired + compressed`) and available RAM (`inactive + free`), accurately capturing macOS memory compression dynamics.
+  - **Memory pressure**: `100 - kern.memorystatus_level` as a percentage, and `kern.memorystatus_vm_pressure_level` (1 Normal, 2 Warning, 4 Critical) as the label, the same signals Activity Monitor uses. `vm.memory_pressure` is not a percentage and is no longer read.
 
-### 4. Memory & Swap (`/proc/meminfo`)
-- Single-pass line scan extracts `MemTotal`, `MemAvailable`, `SwapTotal`, `SwapFree`.
-- Used memory is calculated as $\text{MemTotal} - \text{MemAvailable}$ (respecting Linux kernel 3.14+ buffer/cache availability estimation).
+### 5. Battery Telemetry & State Discovery
+- **Linux**: Scans `/sys/class/power_supply/BAT*` for charge percentage, AC state, `charge_full_design`/`energy_full_design`, and `cycle_count`.
+- **Darwin (`IOPowerSources` & `AppleSmartBattery`)**:
+  - `IOPowerSources` on every battery sample: percentage, charging state, time remaining (the internal battery is preferred over UPS devices).
+  - `AppleSmartBattery` registry snapshot at most every 30 s (capacities change slowly). Recent macOS releases publish the mAh values only inside the `BatteryData` sub-dictionary (`DesignCapacity`, `NominalChargeCapacity`, `FullChargeCapacity`, `RemainingCapacity`), while the top-level `MaxCapacity` / `CurrentCapacity` are percentages; older releases expose `AppleRawMaxCapacity` / `AppleRawCurrentCapacity`, still used when present. `CycleCount` is read from either level.
+  - **Nominal vs Design**: $\min(100, \frac{\text{NominalChargeCapacity}}{\text{DesignCapacity}} \times 100)$ (falls back to the full-charge capacity). macOS "Maximum Capacity" uses an internal calculation that apps cannot read, so the tooltip does not call this figure "Battery Health".
+- **Desktop Auto-Disable**: On desktop workstations without battery hardware, the provider permanently disables itself at startup with zero subsequent runtime overhead.
+- **Status Bar Iconography**: Dynamic iconography displaying `$(zap) %` when charging, `🔋 %` when discharging, and `$(plug) %` when connected to AC power at full capacity.
 
-### 5. Battery Power Supply (`/sys/class/power_supply/`)
-- Scans `/sys/class/power_supply/` for any `BAT*` device (e.g. `BAT0`, `BAT1`).
-- **Desktop Auto-Disable**: If no battery device is found at startup, the provider disables itself permanently with **zero runtime overhead**.
-- Handles multi-battery configurations and dynamic AC state changes (`Discharging`, `Charging`, `Full`).
-
-### 6. Storage (`node:fs/promises.statfs`)
-- Unlike `/proc` (which is virtual RAM), physical disk queries can block on slower rotational disks or network shares (NFS/SMB).
-- Resource Monitor NG uses asynchronous `statfs()` targeting either the active workspace root or user-configured drive paths.
+### 6. Storage & Multi-Disk Architecture
+- Uses non-blocking asynchronous `statfs()` targeting active workspaces or user-configured mount points.
+- **Multi-Disk Display Modes (`mirabar.disk.multiDisplay`)**:
+  - `'All'`: Displays compact percentages for all monitored filesystems on the status bar (e.g. `/ 24% | /data 55%`).
+  - `'MostFull'`: Displays only the single filesystem with highest capacity utilization.
+  - Quick-toggle via command `mirabar.toggleDiskMultiDisplay`.
+- **Smart Path Truncation (`truncatePath`)**: Intelligently truncates path strings by preserving directory boundaries and leaf folder names (e.g. `.../kind-newton` or `.../antigravity/kind-newton`) instead of blind character slicing, ensuring clear visual identification.
 
 ---
 
-## Multi-Rate Polling & Tick Decimation
+## Refresh Model
 
-High-frequency telemetry (e.g. 200 ms) is valuable for observing short CPU load spikes and clock frequency scaling, but harmful if applied uniformly to slow-moving or I/O-intensive subsystems.
+Every section has two intervals, set per section in the settings panel or in `settings.json`:
 
-Resource Monitor NG uses a tick decimation strategy to split fast in-memory telemetry from slow subsystem queries:
+| Setting | What it controls | Applies to | Range |
+| :--- | :--- | :--- | :--- |
+| `mirabar.statusBarMs` | How often the section **reads its data** and updates its status bar text | Both tooltip modes; Live tooltips follow it | 200 ms to 1 h, never below the section's measured minimum |
+| `mirabar.tooltipMs` | How often the section's **tooltip is rebuilt** from the latest reading | Static mode with `mirabar.tooltip.autoRefresh` on | 200 ms to 1 h, never below the section's status bar interval |
+| `mirabar.allowFastRefresh` | Lowers every measured minimum to 200 ms | `mirabar.statusBarMs` only | on / off (default off) |
+
+- **Reads happen only at the status bar interval.** A tooltip never triggers a read: it shows the latest reading, so a tooltip interval shorter than the status bar interval changes nothing and applies as the status bar interval (the panel says so under the value).
+- **Live** rebuilds a tooltip with every read of its section (temperature only when the sensors produced a new reading). **Static** rebuilds it on click and, with auto-refresh, at the read closest to its tooltip interval. With auto-refresh off, Static tooltips change only on click.
+- **Every tooltip shows the time of the reading it displays** (tenths of a second when the section's status bar interval is below 1000 ms). For temperature this is the time of the sensor pass, which can precede the read.
+- **A click** on any widget (or *MiraBar: Refresh Stats*) reads every visible section and rebuilds every tooltip.
+
+### Scheduler
+
+There is no global tick. `ResourceMonitor` (`src/monitor.ts`) keeps, per section, the time of its last read and arms **one timer at the earliest deadline** among the visible sections. At each wake-up it reads the sections that are due; sections due within 25 ms of the wake-up are read in it, so close deadlines share one wake-up. Hidden sections are never read, and with every section hidden no timer runs at all.
 
 ```
-                  ┌──────────────────────────────────────────────┐
-                  │          Timer Tick (e.g. 200 ms)            │
-                  └──────────────────────┬───────────────────────┘
-                                         │
-                 ┌───────────────────────┴───────────────────────┐
-                 │                                               │
-                 ▼                                               ▼
-         [Fast Telemetry]                                 [Decimation Gate]
-       Every Tick (200 ms)                         tickCount % decimationRatio === 0?
-       - /proc/stat (CPU)                                        │
-       - /proc/meminfo (RAM)                        Yes ─────────┴───────── No
-       - cpufreq (Clocks)                            │                       │
-       - hwmon (Temp)                                ▼                       ▼
-                                              [Slow Telemetry]         [Reuse Cache]
-                                              - BAT* (sysfs)           Skip I/O & sysfs
-                                              - statfs (Disk)
+ time ──────────────────────────────────────────────────────────────────►
+ cpu   (2 s)   ●───────────●───────────●───────────●───────────●
+ mem   (2 s)   ●───────────●───────────●───────────●───────────●
+ temp  (5 s)   ●──────────────────────────────○●────────────────
+ disk (10 s)   ●··········(statfs off the event loop turn)·······
+ timer         ▲           ▲           ▲      ▲▲   ▲           ▲
+               one wake-up per distinct deadline (○ = temperature pass requested ahead)
 ```
 
-$$\text{decimationRatio} = \max\left(1, \left\lceil \frac{1000}{\text{updateFrequencyMs}} \right\rceil\right)$$
+- **Temperature (macOS)**: a sensor pass takes ~16-18 ms on the native worker thread, so the monitor asks for it 100 ms before the read (`requestTempRefresh`); the read then shows a reading taken just before it, without waiting and with one pass per interval.
+- **Disk**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other sections running; no new request for the same paths starts until it returns, a change of `mirabar.disk.drives` starts one at once and drops the stale result, and at most two requests are in flight (each hung `statfs` holds one of the 4 libuv pool threads shared by the extension host).
+- **Configuration changes** are debounced (100 ms), so dragging a slider in the settings panel applies once.
 
-- At `updateFrequencyMs = 200` ms, $\text{decimationRatio} = 5$. Disk and Battery sample once every $5 \times 200 = 1000$ ms. Intermediate ticks reuse the cached values with zero kernel context switches or VFS locks.
-- Manual refresh (`resmon.refresh` command or widget click) immediately bypasses decimation, forcing a full sample of all subsystems and resetting the timer.
+### Refresh Floors
+
+The measured minimums (`MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts`) follow one rule:
+
+> The minimum status bar interval of a section is the interval at which **its reads alone would use the whole project budget**: 0.5% of one core (docs/ROADMAP.md). The default intervals keep the whole extension within that budget.
+
+$$\text{minimum}_s = \max\left(200\ \text{ms},\ \frac{\text{source CPU per read}_s + \text{extension CPU per read}_s}{0.005}\right)$$
+
+The budget is not split six ways because the costs are very uneven: temperature costs about 90 times more per read than any other section, so an equal split would push its minimum to ~50 s while leaving the others' shares unused. With the whole budget as the cap, no single section can exceed it, and the defaults (temperature 10 s, the others 2-10 s) add up to less than the budget.
+
+- *Source CPU per read* counts the whole machine: the calling thread plus the macOS services that answer the request (powerd for the battery, the HID event server for temperature). `test/bench-darwin.mjs` measures it from host CPU ticks (busy ticks while reading in a loop, minus the idle baseline); for temperature it is one background pass over all sensors.
+- *Extension CPU per read* is the extension host's work for one read: waking up, sampling through the provider, rendering the text and, in the worst case (Live mode), the tooltip. `test/bench-extension.mjs` measures it with one section visible at a time.
+- The result is rounded up to the next 100 ms. The renderer-side cost of a status bar update in VS Code is not included (it cannot be measured outside VS Code).
+
+Measured on an Apple M4 (macOS, Node 24), 30 September 2026:
+
+| Section | Source | Source CPU per read | Extension CPU per read | Exact | Minimum | Default | Source refresh |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | :--- |
+| CPU usage | `host_processor_info` | 8.0 µs | 440 µs | 90 ms | 200 ms | 2 s | continuous |
+| System load | `os.loadavg` | 0.5 µs | 449 µs | 90 ms | 200 ms | 2 s | kernel, every 5 s |
+| Temperature | 26 HID sensors, one pass | 40.4 ms | 1.1 ms | 8314 ms | **8400 ms** | 10 s | changes on every pass |
+| Memory | `host_statistics64` + sysctls | 8.6 µs | 466 µs | 95 ms | 200 ms | 2 s | continuous |
+| Battery | `IOPowerSources` (60 µs waiting on powerd) | 20.1 µs | 442 µs | 92 ms | 200 ms | 10 s | driver every 60 s |
+| Disk | `statfs` | 10.8 µs | 342 µs | 71 ms | 200 ms | 10 s | continuous |
+
+- **Temperature is the only expensive source.** One pass keeps our worker thread busy for only ~1 ms (19 ms of wall time, mostly waiting for IPC), but costs 40.4 ms of CPU across the system: the HID event server works for each of the 26 sensors. The extension host adds 1.1 ms per read (2.1 ms measured, minus the worker's 1 ms already in the system figure). The previous default of 5 s cost ~0.8% of one core, more than the whole budget; at the 10 s default it costs ~0.42%.
+- **Extension CPU per read** is measured with one section alone, so it includes a whole wake-up of the scheduler; with all six sections sharing wake-ups it drops to ~0.14 ms per read (measured: 14 ms/s for 30 reads/s at 200 ms, temperature excluded). The minimums use the larger, single-section figure.
+- **Battery**: the driver publishes new capacity, cycle and charge data every 60 s (`UpdateTime`), so a faster interval only catches power adapter changes sooner. The 10 s default shows a plug or unplug within 10 s.
+- **Cost at the defaults**: 0.49% of one core with all six sections shown (0.42% temperature, 0.07% the other five together), within the 0.5% budget; disk is hidden by default. The renderer-side cost of status bar updates in VS Code comes on top and cannot be measured outside VS Code.
+
+The same bench measures how often the sources refresh (temperature sensors, battery driver `UpdateTime`): reading faster than that only returns the same values, so the defaults are set at or above those periods. `mirabar.allowFastRefresh` lowers every minimum to 200 ms; values set below a minimum are kept in the settings and apply whenever it is on.
 
 ---
 
@@ -98,7 +141,7 @@ $$\text{decimationRatio} = \max\left(1, \left\lceil \frac{1000}{\text{updateFreq
 
 In VS Code (Electron/Chromium), mutating properties on a `vscode.StatusBarItem` sends IPC messages that invalidate the renderer DOM node. Unconditional reassignments or redundant `item.show()` invocations destroy active `HoverWidget` popups, causing noticeable flickering or sudden closing while hovering.
 
-Resource Monitor NG enforces two UI stability invariants:
+MiraBar enforces two UI stability invariants:
 
 1. **Content Diffing**:
    - `item.text` is written only if `item.text !== nextText`.
@@ -108,18 +151,38 @@ Resource Monitor NG enforces two UI stability invariants:
 3. **Fixed-Width Figure Space (`\u2007`)**:
    - Numeric percentages and values are padded with Unicode Figure Space (U+2007), which has the exact width of a digit in tabular numbers. This completely prevents horizontal status bar jitter as values fluctuate between single, double, and triple digits.
 4. **Dual Tooltip Modes (`Static` vs `Live`)**:
-   - **`Static` (Default)**: Status bar labels stream live telemetry at high frequency, while rich tooltips remain completely frozen during hover to eliminate Chromium DOM re-rendering flashes. Tooltip details update on manual click or `resmon.refresh`.
-   - **`Live`**: Tooltips update continuously on every timer tick in real-time, following raw telemetry changes.
-   - Switchable dynamically via `resmon.toggleTooltipMode` or through command URI links inside the tooltip Markdown footer.
+   - VS Code exposes no hover event, so tooltips are rebuilt ahead of time and a hover shows the last version.
+   - **`Static` (Default)**: tooltips are rebuilt on click and, with `mirabar.tooltip.autoRefresh` (default on), every `mirabar.tooltipMs` of their section, so they change rarely while the status bar text keeps updating.
+   - **`Live`**: tooltips are rebuilt with every read of their section (`mirabar.statusBarMs`).
+   - Every tooltip ends with the time of its reading (tenths of a second below 1000 ms) and links to *Settings* and *Refresh* (see "Refresh Model").
+   - Switchable via `mirabar.toggleTooltipMode` / `mirabar.toggleTooltipAutoRefresh` or from the gear widget's tooltip.
+5. **Unified Monospace ASCII Table Engine (`renderDynamicAsciiTable`)**:
+   - Standard GitHub-Flavored Markdown tables rendered in VS Code hover popups rely on proportional system fonts and browser table layout algorithms, frequently causing misaligned columns, awkward line wraps, or excessive horizontal expansion.
+   - MiraBar replaces all HTML/Markdown tables with a 100% deterministic ASCII box-drawing engine (`┌─┬─┐`, `│ │ │`, `├─┼─┤`, `└─┴─┘`) rendered inside fenced `text` blocks.
+   - Dynamically calculates maximum column widths, enforces numeric right-alignment and textual left-alignment, and ensures pixel-perfect column alignment across all VS Code themes.
+   - Standardized across all 6 subsystems: CPU per-core breakdown, System Load / Frequency, Thermal die matrix, Memory & Swap breakdown, Storage filesystems, and Battery health & capacity.
+6. **Settings Widget & Panel**:
+   - The gear widget's tooltip holds two tables: the sections in status bar order (shown, status bar and tooltip intervals in effect, `*` where a value was raised to its measured minimum, "with bar" where the tooltip follows the status bar) and the display options with one-click toggles (a Markdown table, since command links cannot live in a code block). Clicking the gear opens a webview panel (`src/settings/`): per section a status bar interval (preset slider plus millisecond field) and a tooltip interval, with a note under a value when what applies differs from what is set; visibility, drag-and-drop order (`mirabar.order`, mapped to status bar priorities), units and disk options.
+   - The panel is only a front-end: messages are validated against a whitelist (`EDITABLE_SETTINGS`) and written to the user settings, which remain the single source of truth. Values the user did not touch are never rewritten.
+   - Strict Content Security Policy with a per-load nonce; rows are updated in place so a configuration change never interrupts typing or dragging.
+7. **Tooltip Footer**:
+   - In VS Code hover tooltips (Chromium CommonMark implementation), single line breaks within paragraphs are collapsed into one line, so the footer separates the reading time and the *Settings* / *Refresh* links with a blank line.
+8. **Code Layout**:
+   - `src/extension.ts` wires commands and settings to VS Code; `src/monitor.ts` owns the widgets and the scheduler; `src/sections.ts` renders each section's text and tooltip from one reading (pure functions); `src/format.ts` holds the formatting helpers; `src/config.ts` reads and validates the settings.
+9. **Modern Activation Lifecycle (`onStartupFinished`)**:
+   - Replaced legacy global wildcard (`"*"`) activation with `"onStartupFinished"`.
+   - Prevents the extension from contending with critical VS Code startup tasks (language server initialization, workspace scanning), achieving zero impact on editor launch time.
 
 ---
 
 ## Benchmarks & Runtime Footprint
 
-| Metric | Legacy (`systeminformation`) | Resource Monitor NG |
-| :--- | :--- | :--- |
-| **Subprocesses spawned / tick** | 3 to 6 (`df`, `ps`, `free`) | **0** |
-| **Execution time / tick** | 60 – 120 ms | **< 0.1 ms** |
-| **Extension Host CPU usage** | ~1.5% – 3.0% | **< 0.05%** |
-| **Runtime dependencies** | Multi-MB `node_modules` | **Zero** |
-| **Production bundle size** | ~1.2 MB | **9.4 KB** |
+| Metric | Legacy (`systeminformation`) | MiraBar (Linux) | MiraBar (Darwin Apple Silicon) |
+| :--- | :--- | :--- | :--- |
+| **Subprocesses spawned / tick** | 3 to 6 (`df`, `ps`, `free`) | **0** | **0** |
+| **Telemetry mechanism** | Shell commands | `/proc` & `/sys` VFS | Mach / IOKit / IOHID Node-API |
+| **Execution time / tick** | 60 – 120 ms | **< 0.1 ms** | **< 0.15 ms** (temperature from the background sampler: ~2 µs) |
+| **Extension Host CPU usage** | ~1.5% – 3.0% | **< 0.05%** | **< 0.05%** |
+| **Runtime dependencies** | Multi-MB `node_modules` | **Zero** | **Zero** |
+| **Production bundle size** | ~1.2 MB | **~66 KB** (JS bundle, incl. settings panel) | **~66 KB** JS + native `.node` |
+

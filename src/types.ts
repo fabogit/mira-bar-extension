@@ -26,6 +26,11 @@ export interface CpuUsageInfo {
    * Per-core utilization percentages indexed by logical core ID (e.g. core 0 at index 0).
    */
   perCorePercent: number[];
+
+  /**
+   * Optional classification for each core (e.g. 'P' for Performance or 'E' for Efficiency).
+   */
+  coreTypes?: ('P' | 'E')[];
 }
 
 /**
@@ -49,16 +54,44 @@ export interface CpuFreqInfo {
 }
 
 /**
+ * Represents system load average statistics (1m, 5m, 15m) and CPU architecture metadata.
+ */
+export interface CpuLoadInfo {
+  /** 1-minute exponential system load average. */
+  load1: number;
+  /** 5-minute exponential system load average. */
+  load5: number;
+  /** 15-minute exponential system load average. */
+  load15: number;
+  /** Hardware model or brand description (e.g. 'Apple M4'). */
+  modelName: string;
+  /** Total number of logical cores. */
+  totalCores: number;
+  /** Number of Performance cores if asymmetric architecture, otherwise 0. */
+  pCores: number;
+  /** Number of Efficiency cores if asymmetric architecture, otherwise 0. */
+  eCores: number;
+}
+
+/**
+ * Unified representation for either CPU dynamic frequency or system load average.
+ */
+export type FreqOrLoadInfo =
+  | { kind: 'freq'; data: CpuFreqInfo }
+  | { kind: 'load'; data: CpuLoadInfo };
+
+
+/**
  * Represents CPU temperature measurements and hardware sensor identification.
  */
 export interface CpuTempInfo {
   /**
-   * Temperature reading in degrees Celsius (°C).
+   * Temperature reading in degrees Celsius (°C) (die average on multi-sensor SoC).
    */
   tempCelsius: number;
 
   /**
-   * Kernel driver or subsystem name (e.g. 'k10temp', 'coretemp', 'acpi').
+   * Kernel driver or subsystem name (e.g. 'k10temp', 'coretemp', 'acpi', 'Apple Silicon Die').
    */
   sensorName: string;
 
@@ -66,6 +99,27 @@ export interface CpuTempInfo {
    * Label descriptor associated with the reading (e.g. 'Tctl', 'Tccd1', 'Package id 0').
    */
   sensorLabel: string;
+
+  /** Peak die temperature recorded across all die thermal sensors in °C. */
+  peakCelsius?: number;
+
+  /** Identifier of the hottest die sensor (e.g. 'PMU tdie6'). */
+  peakSensor?: string;
+
+  /** Total number of silicon die thermal zones aggregated. */
+  dieCount?: number;
+
+  /** Temperature of the NAND flash storage controller in °C (if available). */
+  nandCelsius?: number;
+
+  /** Temperature of the battery cell in °C (if available). */
+  batteryCelsius?: number;
+
+  /** Sequence number of the sensor reading: it changes exactly when a new reading is taken. */
+  sampleSeq?: number;
+
+  /** Age of the reading in milliseconds when it was returned (readings may be cached). */
+  ageMs?: number;
 }
 
 /**
@@ -111,6 +165,36 @@ export interface MemoryInfo {
    * Swap utilization percentage relative to swapTotalBytes, ranging from 0.0 to 100.0.
    */
   swapUsedPercent: number;
+
+  /**
+   * Memory occupied by active application processes (optional, platform-specific).
+   */
+  activeBytes?: number;
+
+  /**
+   * Wired memory that cannot be paged out to disk (e.g. kernel, drivers; optional).
+   */
+  wiredBytes?: number;
+
+  /**
+   * Memory compressed by the kernel virtual memory compressor (optional).
+   */
+  compressedBytes?: number;
+
+  /**
+   * Inactive/cached memory reclaimable by the system (optional).
+   */
+  inactiveBytes?: number;
+
+  /**
+   * Memory pressure in percent (0..100; Darwin: 100 - kern.memorystatus_level; optional).
+   */
+  pressurePercent?: number;
+
+  /**
+   * Kernel memory pressure state (optional; Darwin: kern.memorystatus_vm_pressure_level).
+   */
+  pressureLevel?: 'Normal' | 'Warning' | 'Critical';
 }
 
 /**
@@ -161,4 +245,49 @@ export interface BatteryInfo {
    * Power supply state reported by kernel (e.g. 'Charging', 'Discharging', 'Full').
    */
   status: string;
+
+  /**
+   * Estimated minutes until empty (when discharging) or full (when charging). -1 if calculating.
+   */
+  timeRemainingMinutes?: number;
+
+  /**
+   * Whether the battery is currently drawing charging current.
+   */
+  isCharging?: boolean;
+
+  /**
+   * Current residual capacity in mAh or mWh.
+   */
+  currentCapacity?: number;
+
+  /**
+   * Maximum full charge capacity in mAh or mWh.
+   */
+  maxCapacity?: number;
+
+  /**
+   * Nominal full charge capacity in mAh or mWh (optional; Darwin NominalChargeCapacity).
+   */
+  nominalCapacity?: number;
+
+  /**
+   * Factory nominal design capacity in mAh or mWh.
+   */
+  designCapacity?: number;
+
+  /**
+   * Battery health percentage: min(100, ((nominalCapacity ?? maxCapacity) / designCapacity) * 100).
+   */
+  healthPercent?: number;
+
+  /**
+   * Number of completed full charge/discharge cycles.
+   */
+  cycleCount?: number;
+
+  /**
+   * Capacity measurement unit ('mAh' or 'mWh').
+   */
+  capacityUnit?: 'mAh' | 'mWh';
 }

@@ -4,26 +4,45 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish assets to GitHub Release'
+        type: boolean
+        default: false
+      tag_name:
+        description: 'Tag name for release (optional if tag already exists)'
+        type: string
+        default: ''
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: Build & Release VSIX
-    runs-on: ubuntu-latest
+  build-darwin:
+    name: Build & Package Darwin (macos-14)
+    runs-on: macos-14
+    timeout-minutes: 6
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: 'pnpm'
@@ -34,14 +53,128 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-      - name: Build Production Bundle
+      - name: Build Extension Bundle
         run: pnpm run build
 
-      - name: Package VSIX
-        run: pnpm run package
+      - name: Compile Native C++ Addon (darwin-arm64)
+        run: pnpm run compile:native
 
-      - name: Create GitHub Release & Upload Asset
-        uses: softprops/action-gh-release@v2
+      - name: Run Darwin Smoke & Integration Tests
+        run: |
+          pnpm run test:darwin
+          pnpm run test:integration
+          pnpm run test:extension
+
+      - name: Package VSIX (darwin-arm64)
+        run: pnpm run package:darwin-arm64
+
+      - name: Upload Darwin VSIX Artifact
+        uses: actions/upload-artifact@v7
         with:
-          files: '*.vsix'
-          generate_release_notes: true
+          name: vsix-darwin-arm64
+          path: '*.vsix'
+          if-no-files-found: error
+
+  build-linux:
+    name: Build & Package Linux (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build Extension Bundle
+        run: pnpm run build
+
+      - name: Run Linux Smoke & Integration Tests
+        run: |
+          pnpm run test:linux
+          pnpm run test:integration
+          pnpm run test:extension
+
+      - name: Package VSIX (linux-x64)
+        run: pnpm run package:linux-x64
+
+      - name: Upload Linux VSIX Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vsix-linux-x64
+          path: '*.vsix'
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-darwin, build-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true')
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Resolve Tag and Release Notes
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+        run: |
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Notes: the CHANGELOG section of this version (the "## [x.y.z]" heading up to the next one).
+          awk -v v="$VERSION" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ -s release-notes.md ]; then
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No CHANGELOG section for $VERSION: falling back to generated notes"
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Pre-release: the input, or a tag with a suffix such as v1.3.0-rc.1
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ] || [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download All VSIX Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: vsix-*
+          path: vsix/
+          merge-multiple: true
+
+      - name: List Artifacts to Publish
+        run: ls -la vsix/
+
+      - name: Create GitHub Release & Upload Assets
+        uses: softprops/action-gh-release@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: vsix/*.vsix
+          body_path: ${{ steps.meta.outputs.has_notes == 'true' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ steps.meta.outputs.has_notes != 'true' }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          tag_name: ${{ steps.meta.outputs.tag }}

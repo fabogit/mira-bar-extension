@@ -1,5 +1,5 @@
 import * as fs from 'node:fs';
-import type { MemoryInfo } from '../types.js';
+import type { MemoryInfo } from '../../types.js';
 
 /**
  * High-performance, single-pass Linux RAM and Swap usage provider.

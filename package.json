@@ -1,71 +1,132 @@
 {
-  "name": "resource-monitor-ng",
-  "displayName": "Resource Monitor NG",
-  "description": "Ultra-lightweight, zero-overhead Linux resource monitor for VS Code status bar.",
-  "version": "1.0.1",
-  "publisher": "fabo",
+  "name": "mirabar",
+  "displayName": "MiraBar: System Monitor for the Status Bar",
+  "description": "CPU, memory pressure, temperature, battery and disk in the status bar. Native, zero subprocesses (macOS Apple Silicon, Linux).",
+  "version": "1.2.0",
+  "publisher": "fabogit",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.105.0",
+    "node": ">=20.0.0"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fabogit/resource-monitor_code-extension.git"
+    "url": "https://github.com/fabogit/mira-bar-extension.git"
   },
   "categories": [
+    "Visualization",
     "Other"
+  ],
+  "keywords": [
+    "cpu",
+    "memory",
+    "temperature",
+    "battery",
+    "disk",
+    "status bar",
+    "system monitor",
+    "apple silicon"
   ],
   "icon": "images/icon.png",
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "resmon.refresh",
-        "title": "Resource Monitor: Refresh Stats"
+        "command": "mirabar.refresh",
+        "category": "MiraBar",
+        "title": "Refresh Stats"
       },
       {
-        "command": "resmon.toggleTooltipMode",
-        "title": "Resource Monitor: Toggle Tooltip Mode (Static / Live)"
+        "command": "mirabar.openSettings",
+        "category": "MiraBar",
+        "title": "Open Settings Panel"
+      },
+      {
+        "command": "mirabar.toggleTooltipMode",
+        "category": "MiraBar",
+        "title": "Toggle Tooltip Mode (Static / Live)"
+      },
+      {
+        "command": "mirabar.toggleTooltipAutoRefresh",
+        "category": "MiraBar",
+        "title": "Toggle Static Tooltip Auto-Refresh"
+      },
+      {
+        "command": "mirabar.toggleCpuLayout",
+        "category": "MiraBar",
+        "title": "Toggle CPU Tooltip Layout (Table / List)"
+      },
+      {
+        "command": "mirabar.toggleLoadFormat",
+        "category": "MiraBar",
+        "title": "Toggle System Load Format (Percent / Value)"
+      },
+      {
+        "command": "mirabar.toggleDiskMultiDisplay",
+        "category": "MiraBar",
+        "title": "Toggle Multi-Disk Display Mode (All / MostFull)"
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "Resource Monitor Configuration",
+      "title": "MiraBar",
       "properties": {
-        "resmon.show.cpuusage": {
+        "mirabar.show.cpuusage": {
           "type": "boolean",
           "default": true,
           "description": "Toggles the display of CPU usage percentage."
         },
-        "resmon.show.cpufreq": {
+        "mirabar.show.cpufreq": {
           "type": "boolean",
           "default": true,
-          "description": "Toggles the display of CPU frequency."
+          "description": "Toggles the display of CPU frequency (Linux) or system load average (macOS)."
         },
-        "resmon.show.cputemp": {
+        "mirabar.show.cputemp": {
           "type": "boolean",
           "default": true,
           "description": "Toggles the display of CPU temperature."
         },
-        "resmon.show.mem": {
+        "mirabar.show.mem": {
           "type": "boolean",
           "default": true,
           "description": "Toggles the display of memory consumption."
         },
-        "resmon.show.battery": {
+        "mirabar.show.battery": {
           "type": "boolean",
           "default": true,
           "description": "Toggles the display of battery percentage remaining."
         },
-        "resmon.show.disk": {
+        "mirabar.show.disk": {
           "type": "boolean",
           "default": false,
           "description": "Toggles the display of disk space information."
         },
-        "resmon.disk.format": {
+        "mirabar.show.settings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Shows the settings (gear) widget after the metrics: its tooltip holds the quick toggles, a click opens the settings panel."
+        },
+        "mirabar.order": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["cpu", "freq", "temp", "mem", "battery", "disk"]
+          },
+          "uniqueItems": true,
+          "default": [
+            "cpu",
+            "freq",
+            "temp",
+            "mem",
+            "battery",
+            "disk"
+          ],
+          "description": "Left-to-right order of the status bar widgets: cpu (CPU usage), freq (CPU frequency on Linux, system load on macOS), temp, mem, battery, disk. Missing entries keep their default position."
+        },
+        "mirabar.disk.format": {
           "type": "string",
           "enum": [
             "PercentRemaining",
@@ -76,7 +137,7 @@
           "default": "PercentRemaining",
           "description": "Format for displaying disk space information."
         },
-        "resmon.disk.drives": {
+        "mirabar.disk.drives": {
           "type": "array",
           "items": {
             "type": "string"
@@ -84,13 +145,123 @@
           "default": [],
           "description": "Specific mount paths to monitor. If empty, monitors the workspace root or '/'."
         },
-        "resmon.updatefrequencyms": {
-          "type": "number",
-          "default": 2000,
-          "minimum": 200,
-          "description": "Update interval in milliseconds."
+        "mirabar.disk.multiDisplay": {
+          "type": "string",
+          "enum": [
+            "All",
+            "MostFull"
+          ],
+          "default": "All",
+          "description": "Multi-disk status bar display mode: 'All' displays compact metrics for all monitored disks; 'MostFull' displays only the single volume with highest utilization."
         },
-        "resmon.freq.unit": {
+        "mirabar.statusBarMs": {
+          "type": "object",
+          "default": {
+            "cpu": 2000,
+            "freq": 2000,
+            "temp": 5000,
+            "mem": 2000,
+            "battery": 10000,
+            "disk": 10000
+          },
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "CPU usage: status bar interval: how often it is read and its text updated (ms)."
+            },
+            "freq": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "System load (macOS) or CPU frequency (Linux): status bar interval: how often it is read and its text updated (ms)."
+            },
+            "temp": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Temperature: status bar interval: how often it is read and its text updated (ms). Measured minimum 8400 ms."
+            },
+            "mem": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Memory: status bar interval: how often it is read and its text updated (ms)."
+            },
+            "battery": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Battery: status bar interval: how often it is read and its text updated (ms)."
+            },
+            "disk": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Disk space: status bar interval: how often it is read and its text updated (ms)."
+            }
+          },
+          "markdownDescription": "**Status bar interval per section, in milliseconds**: how often each section reads its data and updates its text. Every read has a cost, so these intervals set the extension's CPU use.\n\n- Range 200 ms to 1 h. Measured minimum: temperature 8400 ms; below it, that section alone would use more than the extension's whole CPU budget (see `#mirabar.allowFastRefresh#`); CPU usage, system load / CPU frequency, memory, battery and disk can go down to 200 ms.\n- Sections: `cpu` CPU usage, `freq` system load (macOS) or CPU frequency (Linux), `temp` temperature, `mem` memory, `battery`, `disk`.\n- A section left out uses its default.\n- Live tooltips follow these intervals; Static tooltips use `#mirabar.tooltipMs#`."
+        },
+        "mirabar.tooltipMs": {
+          "type": "object",
+          "default": {
+            "cpu": 5000,
+            "freq": 5000,
+            "temp": 5000,
+            "mem": 5000,
+            "battery": 10000,
+            "disk": 10000
+          },
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "CPU usage: Static tooltip interval (ms)."
+            },
+            "freq": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "System load (macOS) or CPU frequency (Linux): Static tooltip interval (ms)."
+            },
+            "temp": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Temperature: Static tooltip interval (ms)."
+            },
+            "mem": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Memory: Static tooltip interval (ms)."
+            },
+            "battery": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Battery: Static tooltip interval (ms)."
+            },
+            "disk": {
+              "type": "number",
+              "minimum": 200,
+              "maximum": 3600000,
+              "description": "Disk space: Static tooltip interval (ms)."
+            }
+          },
+          "markdownDescription": "**Tooltip interval per section, in milliseconds (Static mode)**: how often each tooltip is rebuilt from the latest reading while `#mirabar.tooltip.mode#` is `Static` and `#mirabar.tooltip.autoRefresh#` is on.\n\n- A tooltip never refreshes faster than its section's status bar interval (`#mirabar.statusBarMs#`): there is no newer reading to show, so a shorter value applies as the status bar interval.\n- Not used in Live mode (tooltips follow the status bar) or with auto-refresh off (tooltips refresh on click).\n- Range 200 ms to 1 h. Sections as in `#mirabar.statusBarMs#`."
+        },
+        "mirabar.allowFastRefresh": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Performance impact.** Allows status bar intervals below the measured minimum (temperature 8400 ms), down to 200 ms. The minimums are the intervals at which one section's reads alone would use the extension's whole CPU budget (0.5% of one core), measured on an Apple M4 (a temperature reading costs about 42 ms of CPU across the system); below them that section costs more CPU time and energy than the whole extension should. Values set below a minimum are kept and apply whenever this is on."
+        },
+        "mirabar.freq.unit": {
           "type": "string",
           "enum": [
             "GHz",
@@ -101,7 +272,7 @@
           "default": "GHz",
           "description": "Unit for CPU frequency display."
         },
-        "resmon.mem.unit": {
+        "mirabar.mem.unit": {
           "type": "string",
           "enum": [
             "GB",
@@ -112,12 +283,14 @@
           "default": "GB",
           "description": "Unit for memory display."
         },
-        "resmon.priority": {
+        "mirabar.priority": {
           "type": "number",
           "default": 100,
+          "minimum": -10000,
+          "maximum": 10000,
           "description": "Base priority for status bar positioning. Higher values place it further to the left; lower or negative values place it further to the right."
         },
-        "resmon.alignment": {
+        "mirabar.alignment": {
           "type": "string",
           "enum": [
             "Left",
@@ -126,29 +299,62 @@
           "default": "Left",
           "description": "Status bar alignment side."
         },
-        "resmon.tooltip.mode": {
+        "mirabar.tooltip.mode": {
           "type": "string",
           "enum": [
             "Static",
             "Live"
           ],
           "default": "Static",
-          "description": "Tooltip refresh mode: 'Static' updates tooltips only on manual click/refresh (preventing hover flicker); 'Live' continuously updates tooltips in real time on every polling tick."
+          "markdownDescription": "`Static` rebuilds each tooltip on click and, with `#mirabar.tooltip.autoRefresh#`, every `#mirabar.tooltipMs#` of its section (fewer changes while you hover). `Live` rebuilds it with every status bar update of its section (`#mirabar.statusBarMs#`); temperature only when a new sensor reading arrives. Each tooltip shows the time of the reading it displays (with tenths of a second below 1000 ms)."
+        },
+        "mirabar.tooltip.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Static mode only: rebuild tooltips automatically every `#mirabar.tooltipMs#` of their section. When off, Static tooltips refresh only on click."
+        },
+        "mirabar.tooltip.cpuLayout": {
+          "type": "string",
+          "enum": [
+            "Table",
+            "List"
+          ],
+          "default": "Table",
+          "description": "Layout style for CPU per-core breakdown in tooltips: 'Table' for compact side-by-side grid; 'List' for vertical cluster sections."
+        },
+        "mirabar.loadFormat": {
+          "type": "string",
+          "enum": [
+            "Percent",
+            "Value"
+          ],
+          "default": "Percent",
+          "description": "Format for displaying System Load Average on Darwin: 'Percent' (normalized capacity across available cores) or 'Value' (raw POSIX queue depth)."
         }
       }
     }
   },
   "scripts": {
+    "vscode:prepublish": "node esbuild.js --production",
     "build": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
-    "typecheck": "tsc --noEmit",
-    "package": "vsce package --no-dependencies --allow-star-activation"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "compile:native": "bash native/darwin/compile.sh",
+    "test:darwin": "node test/smoke-darwin.mjs",
+    "test:linux": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/smoke-linux.ts'], outfile: 'dist/test-smoke-linux.cjs', bundle: true, platform: 'node', format: 'cjs' });\" && node dist/test-smoke-linux.cjs && rm -f dist/test-smoke-linux.cjs",
+    "test:extension": "node --expose-gc test/extension.test.mjs",
+    "bench:darwin": "node test/bench-darwin.mjs",
+    "bench:extension": "node test/bench-extension.mjs",
+    "test:integration": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/integration.ts'], outfile: 'dist/test-integration.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['*.node'] });\" && node dist/test-integration.cjs && rm -f dist/test-integration.cjs",
+    "package": "vsce package --no-dependencies",
+    "package:darwin-arm64": "bash native/darwin/compile.sh && vsce package --target darwin-arm64 --no-dependencies",
+    "package:linux-x64": "vsce package --target linux-x64 --no-dependencies"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.2.0",
-    "esbuild": "^0.28.0",
-    "typescript": "^7.0.0"
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.105.0",
+    "@vscode/vsce": "^3.9.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   }
 }

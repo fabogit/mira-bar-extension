@@ -8,7 +8,7 @@ const buildOptions = {
   entryPoints: ['src/extension.ts'],
   bundle: true,
   outfile: 'dist/extension.js',
-  external: ['vscode'],
+  external: ['vscode', '*.node'],
   format: 'cjs',
   platform: 'node',
   target: 'node20',
@@ -23,7 +23,7 @@ async function run() {
     await ctx.watch();
     console.log('[esbuild] Watching for changes...');
   } else {
-    const result = await esbuild.build(buildOptions);
+    await esbuild.build(buildOptions);
     console.log('[esbuild] Build complete.');
   }
 }

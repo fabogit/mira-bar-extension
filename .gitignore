@@ -8,3 +8,8 @@ dist/
 # Environment & Logs
 *.log
 .DS_Store
+
+# Agents
+.agents
+skills-lock.json
+.claude/skills

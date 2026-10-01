@@ -7,3 +7,13 @@ esbuild.js
 *.vsix
 pnpm-lock.yaml
 node_modules/**
+native/**
+.agents/**
+docs/**
+.github/**
+.claude/**
+skills-lock.json
+pnpm-workspace.yaml
+**/.DS_Store
+dist/bench-*.cjs
+dist/test-*.cjs

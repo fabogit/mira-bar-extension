@@ -1,33 +1,29 @@
 import * as fs from 'node:fs/promises';
-import * as vscode from 'vscode';
 import type { DiskDriveInfo } from '../types.js';
 
 /**
  * Asynchronous disk storage utilization provider.
  *
  * Uses Node.js `fs.promises.statfs` to query filesystem statistics without invoking
- * external shell commands (`df`). Supports checking the current active workspace directory,
- * the system root (`/`), or explicitly configured mount paths.
+ * external shell commands (`df`). Pure POSIX implementation with zero dependency on VS Code APIs.
  */
 export class DiskProvider {
   /**
-   * Queries filesystem metrics for the specified mount points or defaults to the workspace root.
+   * Queries filesystem metrics for the specified mount points or defaults to the fallback path or '/'.
    *
    * @param configuredDrives - Array of custom paths configured by the user, if any.
+   * @param defaultPath - Optional fallback directory path (e.g. active workspace root or system root).
    * @returns Array of disk statistics for each reachable mount point.
    */
-  public async sample(configuredDrives: string[]): Promise<DiskDriveInfo[]> {
+  public async sample(configuredDrives: string[], defaultPath?: string): Promise<DiskDriveInfo[]> {
     const targetPaths: string[] = [];
 
     if (configuredDrives && configuredDrives.length > 0) {
       targetPaths.push(...configuredDrives);
+    } else if (defaultPath) {
+      targetPaths.push(defaultPath);
     } else {
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (workspaceFolder) {
-        targetPaths.push(workspaceFolder);
-      } else {
-        targetPaths.push('/');
-      }
+      targetPaths.push('/');
     }
 
     const results: DiskDriveInfo[] = [];
