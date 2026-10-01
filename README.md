@@ -4,7 +4,7 @@
 
 ![MiraBar](images/icon.png)
 
-> **Formerly Resource Monitor NG.** MiraBar 2.0.0 is the same extension under a new identity (`fabogit.mirabar`, settings `mirabar.*`). Settings are not carried over: see [Migrating from Resource Monitor NG](#migrating-from-resource-monitor-ng).
+> **Formerly Resource Monitor NG.** MiraBar 1.2.0 is the same extension under a new identity (`fabogit.mirabar`, settings `mirabar.*`). Settings are not carried over: see [Migrating from Resource Monitor NG](#migrating-from-resource-monitor-ng).
 
 ## Features
 
@@ -31,25 +31,25 @@ This method ensures the extension is installed into your currently active VS Cod
 3. Click the **`...`** (Views and More Actions) menu in the upper-right corner of the Extensions panel.
 4. Select **Install from VSIX...**.
 5. Select the platform-specific package:
-   - macOS Apple Silicon: `mirabar-darwin-arm64-2.0.0.vsix`
-   - Linux x64: `mirabar-linux-x64-2.0.0.vsix`
+   - macOS Apple Silicon: `mirabar-darwin-arm64-1.2.0.vsix`
+   - Linux x64: `mirabar-linux-x64-1.2.0.vsix`
 6. Reload the window (`Developer: Reload Window`) if prompted.
 
 ### Method 2: Command Line Installation
 
 Install for macOS Apple Silicon:
 ```bash
-code --install-extension mirabar-darwin-arm64-2.0.0.vsix
+code --install-extension mirabar-darwin-arm64-1.2.0.vsix
 ```
 
 Install for Linux x64:
 ```bash
-code --install-extension mirabar-linux-x64-2.0.0.vsix
+code --install-extension mirabar-linux-x64-1.2.0.vsix
 ```
 
 For Antigravity-IDE:
 ```bash
-antigravity --install-extension mirabar-darwin-arm64-2.0.0.vsix
+antigravity --install-extension mirabar-darwin-arm64-1.2.0.vsix
 ```
 
 ## Settings Panel
@@ -138,7 +138,7 @@ To provide actionable telemetry without generating inaccurate estimates, MiraBar
 
 ## Migrating from Resource Monitor NG
 
-MiraBar 2.0.0 replaces Resource Monitor NG (`fabogit.resource-monitor-ng`), with a new extension ID, settings prefix and command IDs:
+MiraBar 1.2.0 replaces Resource Monitor NG (`fabogit.resource-monitor-ng`), with a new extension ID, settings prefix and command IDs:
 
 1. Uninstall *Resource Monitor NG*, otherwise both extensions run side by side.
 2. Install MiraBar from its VSIX (see [Installation](#installation)).
@@ -146,7 +146,7 @@ MiraBar 2.0.0 replaces Resource Monitor NG (`fabogit.resource-monitor-ng`), with
 
 ## Project Status & Documentation
 
-- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship in 2.0.0 together with the rename to MiraBar).
+- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship in 1.2.0 together with the rename to MiraBar).
 - **Linux**: works with the same features; the code shared with macOS changed and still needs a check on real hardware, then Linux parity work (Phase 2).
 - **Windows**: not started (Phase 3).
 

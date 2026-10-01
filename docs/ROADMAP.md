@@ -20,16 +20,17 @@ MiraBar (formerly Resource Monitor NG) is designed as an ultra-lightweight, zero
 | :--- | :--- | :--- | :--- |
 | 0 – Foundation & Linux genesis (v1.0.x) | Linux | Done, released | — |
 | 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, released | — |
-| 1.1 – Darwin memory safety & native refactor (v2.0.0) | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
-| 1.2 – Per-section refresh & measured minimums (v2.0.0) | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
-| 1.3 – Rename to MiraBar (v2.0.0) | All | Done, local branch | Merge, rename the GitHub repository, release |
-| 2 – Linux modernization & parity (v2.1.0) | Linux | Open | Start with the Linux check below |
-| 3 – Windows (v2.2.0) | Windows | Not started | Blueprint (#7) |
-| 4 – Localization (v2.3.0) | All | Backlog | — |
+| 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
+| 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
+| 1.3 – Rename to MiraBar (v1.2.0) | All | Done, merged locally | Rename the GitHub repository, release |
+| 2 – Linux modernization & parity (v1.3.0) | Linux | Open | Start with the Linux check below |
+| 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
+| 4 – Localization (v1.5.0) | All | Backlog | — |
+| Cross-platform backlog | All | Planned, unscheduled | Inactive window first (smallest change, also the base for sharing across windows) |
 
-Phases 1.1 and 1.2 are merged into the local `develop` (`c5ebaba`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **2.0.0** together with the rename to MiraBar (Phase 1.3), after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
+Phases 1.1 to 1.3 are merged into the local `develop` (`c5ebaba`, `7b4c977`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **1.2.0**, the first MiraBar release, after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
 
-The rename ([ADR-0015](adr/0015-rename-to-mirabar.md)) changed every setting and command prefix from `mirabar.` to `mirabar.` and moved the milestones up: v1.2.0-v1.4.0 are now 2.1.0-2.3.0 (the GitHub milestones keep their old titles until renamed). Phase 0 and 1 below use the current `mirabar.` keys; legacy keys removed in 2.0.0 are named without prefix.
+The rename ([ADR-0015](adr/0015-rename-to-mirabar.md)) changed every setting and command prefix from `resmon.` to `mirabar.`. The rename release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones keep their old titles until renamed). Phase 0 and 1 below use the current `mirabar.` keys; legacy keys removed in 1.2.0 are named without prefix.
 
 ---
 
@@ -104,7 +105,7 @@ Phase 1 restructured the codebase into a strict modular architecture, eliminated
 
 ---
 
-## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v2.0.0) [COMPLETED]
+## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v1.2.0) [COMPLETED]
 
 > Branch: `fix/darwin-memory` (from `develop`, local commits) • **Status: Done, verified in VS Code on Apple Silicon (2026-10-01)** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
 
@@ -136,8 +137,8 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - Profiled with `native/darwin/tools/hid_bench.cc`: cost evenly spread (~0.6 ms per sensor IPC), no single slow sensor.
   - Native background sampler (`ThermalSampler`): `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and asks the worker for a new pass when it is older than requested.
 - [x] **Refresh Model** (superseded by the per-section model of Phase 1.2):
-  - `updatefrequencyms` (200-15000 ms, removed in 2.0.0) is the clock: status bar values every tick, Live tooltips every tick.
-  - `refreshMs` per section (200 ms to 1 h, removed in 2.0.0): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaced the pre-release `refreshSeconds`.
+  - `updatefrequencyms` (200-15000 ms, removed in 1.2.0) is the clock: status bar values every tick, Live tooltips every tick.
+  - `refreshMs` per section (200 ms to 1 h, removed in 1.2.0): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaced the pre-release `refreshSeconds`.
   - Half-tick tolerance so an interval equal to the tick fires every tick; update time with tenths of a second below 1000 ms; a click refreshes everything.
   - Configuration changes debounced (100 ms) so slider drags do not recreate the widgets on every step.
 - [x] **Final Check**:
@@ -158,7 +159,7 @@ Decisions: ADR-0002 (RAII, addon state), ADR-0003 (thermal background thread), A
 
 ---
 
-## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v2.0.0) [COMPLETED]
+## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v1.2.0) [COMPLETED]
 
 > Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Done, measured and verified in VS Code on Apple Silicon (2026-10-01)**
 
@@ -189,27 +190,27 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 
 **Follow-ups (macOS):**
 
-- [ ] **Release 2.0.0**: version and CHANGELOG are ready; date the CHANGELOG entry, push `develop` and tag once the Linux check passes.
+- [ ] **Release 1.2.0**: version and CHANGELOG are ready; date the CHANGELOG entry, push `develop` and tag once the Linux check passes.
 - [ ] **Fewer temperature sensors per pass**: a pass costs 40.4 ms of system CPU for 26 sensors; measure accuracy and cost with a subset, then revisit the 8400 ms minimum (ADR-0003, ADR-0010).
 - [ ] **macOS 11 support**: decide when to raise the deployment target (ADR-0006).
 - [ ] **Repeat `bench:darwin`** on an idle Mac to confirm the temperature figure (single run so far).
 
 ---
 
-## 4c. Phase 1.3: Rename to MiraBar (v2.0.0) [COMPLETED]
+## 4c. Phase 1.3: Rename to MiraBar (v1.2.0) [COMPLETED]
 
-> Branch: `chore/rename-mirabar` (from `develop`, local commits) • Plan: [`docs/RENAME_MIRABAR_PLAN.md`](RENAME_MIRABAR_PLAN.md) • Decision: [ADR-0015](adr/0015-rename-to-mirabar.md)
+> Branch: `chore/rename-mirabar` (from `develop`, merged locally in `7b4c977`) • Plan: [`docs/RENAME_MIRABAR_PLAN.md`](RENAME_MIRABAR_PLAN.md) • Decision: [ADR-0015](adr/0015-rename-to-mirabar.md)
 
-- [x] **Identity**: extension `fabogit.mirabar`, display name *MiraBar: System Monitor for the Status Bar*, version 2.0.0, VSIX `mirabar-<target>-<version>.vsix`.
+- [x] **Identity**: extension `fabogit.mirabar`, display name *MiraBar: System Monitor for the Status Bar*, version 1.2.0, VSIX `mirabar-<target>-<version>.vsix`.
 - [x] **Prefix**: settings and commands `mirabar.*`, command category *MiraBar*; output channel, status bar item names, settings panel and log prefix renamed.
 - [x] **Legacy settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (a new extension ID has no old values to read).
 - [x] **Docs**: README with "Migrating from Resource Monitor NG", CHANGELOG, forward-looking docs; ADR-0001 to 0014 keep the old names.
 - [ ] **GitHub repository** renamed to `fabogit/mirabar` (old URLs redirect), then `git remote set-url` and the remaining links (`package.json` `repository`, milestone and issue links in this file).
-- [ ] **Milestones** v1.2.0-v1.4.0 renamed to v2.1.0-v2.3.0 on GitHub.
+- [ ] **Milestones** renamed on GitHub: Linux v1.2.0 → v1.3.0, Windows v1.3.0 → v1.4.0, localization v1.4.0 → v1.5.0.
 
 ---
 
-## 5. Phase 2: Linux Telemetry Modernization & Parity (v2.1.0) [IN PROGRESS]
+## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.3.0) [IN PROGRESS]
 
 > Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/3) • **Status: Open** (Active Target)
 
@@ -241,7 +242,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 ---
 
-## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v2.2.0) [PLANNED]
+## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.4.0) [PLANNED]
 
 > Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/4) • **Status: Open** (Future Roadmap)
 
@@ -267,7 +268,7 @@ What Phases 1.1–1.2 already provide: the platform-independent monitor, rendere
 
 ---
 
-## 7. Phase 4: Internationalization & Localization (v2.3.0) [NICE TO HAVE]
+## 7. Phase 4: Internationalization & Localization (v1.5.0) [NICE TO HAVE]
 
 > Milestone: [**`v1.4.0 - Internationalization & Localization`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/5) • **Status: Open** (Backlog)
 
@@ -281,3 +282,22 @@ Phase 4 externalizes and translates user-facing strings once the underlying tele
   - Italian (`bundle.core.it.json`), German (`bundle.core.de.json`), French (`bundle.core.fr.json`), Spanish (`bundle.core.es.json`), Japanese (`bundle.core.ja.json`), Simplified Chinese (`bundle.core.zh-cn.json`).
 - [ ] [#16](https://github.com/fabogit/resource-monitor_code-extension/issues/16) **Layout Resilience**:
   - Audit Markdown tooltip tables and ASCII progress bars to prevent visual wrapping or layout misalignment caused by variable-length translated strings.
+
+---
+
+## 8. Cross-Platform Backlog (unscheduled) [PLANNED]
+
+Improvements independent of the platform phases; each one gets a milestone when scheduled.
+
+- [ ] **Accessibility**:
+  - Every status bar item already has a `name` (*MiraBar: CPU usage*, *MiraBar Settings*: the label of the status bar context menu).
+  - Add `accessibilityInformation` to every item: a spoken label with the current value instead of the visible text with icons (e.g. "CPU usage 23 percent", "Memory pressure Warning"), updated together with the text; role `button` for items that run a command on click.
+  - Check with VoiceOver (macOS), Orca (Linux) and NVDA (Windows).
+- [ ] **Inactive window**:
+  - Slow down or pause sampling while the window has no focus (`vscode.window.state.focused`, `onDidChangeWindowState`). The status bar of an unfocused window can still be on screen, so it is a setting: keep the intervals, multiply them, or pause.
+  - On focus, refresh at once every section whose reading is older than its interval.
+  - In the deadline scheduler it is a factor on the section deadlines; no change to the sources.
+- [ ] **Multiple windows**:
+  - Every VS Code window runs its own extension host and reads every source on its own: with N windows the cost is N times (on the M4 a temperature pass costs 40.4 ms of system CPU per window).
+  - Optional (setting, off by default): share the readings of machine-wide sources (CPU, load, memory, temperature, battery) between windows. One window samples and publishes timestamped snapshots (e.g. a file in `globalStorageUri` or a local socket), the others render them; the sampler is chosen with a lock and a heartbeat, and another window takes over when it closes or stops. Disk stays per window (its paths can come from workspace settings).
+  - Builds on the inactive-window item: the focused window is the natural sampler. Measure the gain with `bench:extension` and `bench:darwin` before making it the default.

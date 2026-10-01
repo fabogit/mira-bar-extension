@@ -37,7 +37,7 @@ Why `mirabar.*` and not `mira.*`: setting keys are global across extensions, and
 | :--- | :--- | :--- |
 | D1 | Legacy settings (`updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, ADR-0012) | **Drop them.** A new extension ID starts with no settings, so there is nothing to fall back to. Removes the fallback chain in `src/config.ts`, the migration in `src/settings/schema.ts` and its tests. ADR-0012 becomes *Superseded by ADR-0015*. |
 | D2 | Import `resmon.*` values into `mirabar.*` on first activation | **No.** Only the developer has them; migrate `settings.json` by hand (§5, step 9). Possible later with `getConfiguration('resmon').inspect()`, which still reads keys no extension declares. |
-| D3 | Version | **2.0.0**: every setting and command ID changes, which is a breaking change under semver, and it includes the unreleased Phases 1.1-1.2 (planned as v1.1.1). Milestones v1.2.0-v1.4.0 move to 2.1.0-2.3.0 when touched. |
+| D3 | Version | **1.2.0** (first proposed as 2.0.0, changed after the implementation; reasons in ADR-0015): a new extension ID has its own version history, so the 1.x line continues; it includes the unreleased Phases 1.1-1.2 (planned as v1.1.1). Milestones v1.2.0-v1.4.0 move to 1.3.0-1.5.0. |
 | D4 | GitHub repository name | **Rename to `fabogit/mirabar`** as the last step. GitHub redirects old URLs and clones; update the local remote with `git remote set-url origin`. About 40 links in the docs point to the old name and keep working through the redirect; update them in the same commit anyway. |
 | D5 | Icon | Out of scope; `images/icon.png` stays until a new one exists. |
 | D6 | Historical documents | Do not rewrite ADR-0001 to 0014 or `docs/audit-darwin-memory-2026-09.md`: they record what was true then. Only forward-looking docs are updated. |
@@ -87,11 +87,11 @@ One commit per step keeps the history readable and each step testable.
 ### Step 5: user-facing docs
 
 - `README.md`: title, intro, install commands with the new VSIX names and `fabogit.mirabar`, command and settings tables, "Migrating from Resource Monitor NG" note (uninstall the old extension, settings are not carried over).
-- `CHANGELOG.md`: create it (there is none yet) with 2.0.0: rename, new prefix, removed legacy keys, plus Phases 1.1-1.2.
+- `CHANGELOG.md`: create it (there is none yet) with 1.2.0: rename, new prefix, removed legacy keys, plus Phases 1.1-1.2.
 
 ### Step 6: architecture docs
 
-- `docs/ARCHITECTURE.md`, `docs/DARWIN_APPLE_SILICON.md`, `docs/LINUX_IMPLEMENTATION_PLAN.md`, `docs/ROADMAP.md`: product name and setting keys. Drop the legacy-settings paragraph in ARCHITECTURE ("The first interval edit with pre-release settings..."). ROADMAP: vision line, status table, a "Rename to MiraBar (v2.0.0)" entry, release follow-up updated.
+- `docs/ARCHITECTURE.md`, `docs/DARWIN_APPLE_SILICON.md`, `docs/LINUX_IMPLEMENTATION_PLAN.md`, `docs/ROADMAP.md`: product name and setting keys. Drop the legacy-settings paragraph in ARCHITECTURE ("The first interval edit with pre-release settings..."). ROADMAP: vision line, status table, a "Rename to MiraBar (v1.2.0)" entry, release follow-up updated.
 - `docs/adr/0015-rename-to-mirabar.md`: new ADR (context, the collisions in §1, D1-D6). Mark ADR-0012 *Superseded by ADR-0015* in its status line and in `docs/adr/README.md`; update the README intro line.
 
 ### Step 7: verify (§6)
@@ -104,7 +104,7 @@ On GitHub, then `git remote set-url origin https://github.com/fabogit/mirabar.gi
 
 1. Uninstall `fabogit.resource-monitor-ng` from Antigravity and VS Code, otherwise both extensions run side by side.
 2. In the user `settings.json`, rename the keys: `sed -i '' 's/"resmon\./"mirabar./' "$HOME/Library/Application Support/Antigravity/User/settings.json"` (check the path; same for VS Code under `Code/User`), and delete the legacy keys if present.
-3. Install `mirabar-darwin-arm64-2.0.0.vsix`.
+3. Install `mirabar-darwin-arm64-1.2.0.vsix`.
 
 ## 6. Verification
 
@@ -114,9 +114,9 @@ On GitHub, then `git remote set-url origin https://github.com/fabogit/mirabar.gi
      | grep -vE '^docs/(adr/00(0[1-9]|1[0-5])-|audit-darwin-memory|RENAME_MIRABAR_PLAN)' \
      | grep -v 'resource-monitor_code-extension'
    ```
-   The pattern also catches plain "Resource Monitor" (the old status bar item names had no "NG") and skips the `ResourceMonitor` class, which keeps its name. Expected output: only the intentional mentions of the former name, i.e. the "Formerly Resource Monitor NG" note and the "Migrating from Resource Monitor NG" section of README, the 2.0.0 entry of CHANGELOG, the vision line and Phase 1.3 of ROADMAP, the intro line of `docs/adr/README.md`. `resource-monitor_code-extension` URLs stay until D4.
+   The pattern also catches plain "Resource Monitor" (the old status bar item names had no "NG") and skips the `ResourceMonitor` class, which keeps its name. Expected output: only the intentional mentions of the former name, i.e. the "Formerly Resource Monitor NG" note and the "Migrating from Resource Monitor NG" section of README, the 1.2.0 entry of CHANGELOG, the vision line and Phase 1.3 of ROADMAP, the intro line of `docs/adr/README.md`. `resource-monitor_code-extension` URLs stay until D4.
 2. `pnpm run typecheck && pnpm run build && pnpm run test:extension && pnpm run test:integration`; on the Mac also `pnpm run test:darwin`.
-3. `pnpm run package:darwin-arm64` produces `mirabar-darwin-arm64-2.0.0.vsix`; `npx vsce ls` shows no unexpected files.
+3. `pnpm run package:darwin-arm64` produces `mirabar-darwin-arm64-1.2.0.vsix`; `npx vsce ls` shows no unexpected files.
 4. In Antigravity on the M4:
    - Extensions view shows *MiraBar: System Monitor for the Status Bar*, ID `fabogit.mirabar`.
    - Command palette: commands grouped under *MiraBar*; every toggle works.
