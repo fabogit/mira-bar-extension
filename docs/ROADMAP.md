@@ -26,6 +26,7 @@ MiraBar (formerly Resource Monitor NG) is designed as an ultra-lightweight, zero
 | 2 – Linux modernization & parity (v1.3.0) | Linux | Open | Start with the Linux check below |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
+| Cross-platform backlog | All | Planned, unscheduled | Inactive window first (smallest change, also the base for sharing across windows) |
 
 Phases 1.1 to 1.3 are merged into the local `develop` (`c5ebaba`, `7b4c977`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **1.2.0**, the first MiraBar release, after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
 
@@ -281,3 +282,22 @@ Phase 4 externalizes and translates user-facing strings once the underlying tele
   - Italian (`bundle.core.it.json`), German (`bundle.core.de.json`), French (`bundle.core.fr.json`), Spanish (`bundle.core.es.json`), Japanese (`bundle.core.ja.json`), Simplified Chinese (`bundle.core.zh-cn.json`).
 - [ ] [#16](https://github.com/fabogit/resource-monitor_code-extension/issues/16) **Layout Resilience**:
   - Audit Markdown tooltip tables and ASCII progress bars to prevent visual wrapping or layout misalignment caused by variable-length translated strings.
+
+---
+
+## 8. Cross-Platform Backlog (unscheduled) [PLANNED]
+
+Improvements independent of the platform phases; each one gets a milestone when scheduled.
+
+- [ ] **Accessibility**:
+  - Every status bar item already has a `name` (*MiraBar: CPU usage*, *MiraBar Settings*: the label of the status bar context menu).
+  - Add `accessibilityInformation` to every item: a spoken label with the current value instead of the visible text with icons (e.g. "CPU usage 23 percent", "Memory pressure Warning"), updated together with the text; role `button` for items that run a command on click.
+  - Check with VoiceOver (macOS), Orca (Linux) and NVDA (Windows).
+- [ ] **Inactive window**:
+  - Slow down or pause sampling while the window has no focus (`vscode.window.state.focused`, `onDidChangeWindowState`). The status bar of an unfocused window can still be on screen, so it is a setting: keep the intervals, multiply them, or pause.
+  - On focus, refresh at once every section whose reading is older than its interval.
+  - In the deadline scheduler it is a factor on the section deadlines; no change to the sources.
+- [ ] **Multiple windows**:
+  - Every VS Code window runs its own extension host and reads every source on its own: with N windows the cost is N times (on the M4 a temperature pass costs 40.4 ms of system CPU per window).
+  - Optional (setting, off by default): share the readings of machine-wide sources (CPU, load, memory, temperature, battery) between windows. One window samples and publishes timestamped snapshots (e.g. a file in `globalStorageUri` or a local socket), the others render them; the sampler is chosen with a lock and a heartbeat, and another window takes over when it closes or stops. Disk stays per window (its paths can come from workspace settings).
+  - Builds on the inactive-window item: the focused window is the natural sampler. Measure the gain with `bench:extension` and `bench:darwin` before making it the default.
