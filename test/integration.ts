@@ -7,7 +7,7 @@ async function sleep(ms: number): Promise<void> {
 
 async function run(): Promise<void> {
   const provider = createPlatformProvider();
-  console.log(`=== RESOURCE MONITOR NG - INTEGRATION TEST (${provider.platformName.toUpperCase()}) ===\n`);
+  console.log(`=== MIRABAR - INTEGRATION TEST (${provider.platformName.toUpperCase()}) ===\n`);
 
   console.log('Platform:', provider.platformName);
   console.log('Topology:', provider.getTopologyDescription ? provider.getTopologyDescription() : 'Standard SMP');

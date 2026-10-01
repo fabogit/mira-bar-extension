@@ -2,7 +2,7 @@ import { LinuxTelemetryProvider } from '../src/platform/linux/linux_provider.js'
 import { DiskProvider } from '../src/disk/disk_provider.js';
 
 async function run(): Promise<void> {
-  console.log('=== RESOURCE MONITOR NG - LINUX TELEMETRY SMOKE TEST ===\n');
+  console.log('=== MIRABAR - LINUX TELEMETRY SMOKE TEST ===\n');
 
   if (process.platform !== 'linux') {
     console.log(`[INFO] Current platform is ${process.platform}, not linux.`);
