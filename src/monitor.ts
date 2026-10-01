@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readStoredIntervals, TOOLTIP_SECTIONS, type ResMonConfig, type TooltipSection } from './config.js';
+import { readStoredIntervals, TOOLTIP_SECTIONS, type MiraBarConfig, type TooltipSection } from './config.js';
 import { formatClock, formatDuration, renderDynamicAsciiTable } from './format.js';
 import {
   renderBattery,
@@ -74,7 +74,7 @@ export class ResourceMonitor implements vscode.Disposable {
     private readonly provider: TelemetryPlatformProvider,
     private readonly diskProvider: DiskProvider,
     private readonly log: vscode.LogOutputChannel,
-    private config: ResMonConfig
+    private config: MiraBarConfig
   ) {
     this.items = this.createItems();
     this.run(true);
@@ -86,7 +86,7 @@ export class ResourceMonitor implements vscode.Disposable {
   }
 
   /** Applies a new configuration: placement, gear tooltip, then a full refresh. */
-  public applyConfig(next: ResMonConfig): void {
+  public applyConfig(next: MiraBarConfig): void {
     if (this.disposed) {
       return;
     }
@@ -134,15 +134,15 @@ export class ResourceMonitor implements vscode.Disposable {
     const created = {} as Record<TooltipSection, vscode.StatusBarItem>;
     config.order.forEach((section, index) => {
       const item = vscode.window.createStatusBarItem(align, top - index);
-      item.command = 'resmon.refresh';
-      item.name = `Resource Monitor: ${SECTION_LABELS[section](this.isDarwin)}`;
+      item.command = 'mirabar.refresh';
+      item.name = `MiraBar: ${SECTION_LABELS[section](this.isDarwin)}`;
       created[section] = item;
     });
     if (config.showSettings) {
       this.settingsItem = vscode.window.createStatusBarItem(align, top - config.order.length);
       this.settingsItem.text = '$(settings-gear)';
-      this.settingsItem.command = 'resmon.openSettings';
-      this.settingsItem.name = 'Resource Monitor Settings';
+      this.settingsItem.command = 'mirabar.openSettings';
+      this.settingsItem.name = 'MiraBar Settings';
       this.settingsItem.tooltip = trustedMarkdown(buildSettingsTooltip(config));
       this.settingsItem.show();
     }
@@ -407,7 +407,7 @@ function trustedMarkdown(value: string): vscode.MarkdownString {
  * intervals in effect, in status bar order) and the display options with one-click toggles, plus a
  * link to the full panel.
  */
-export function buildSettingsTooltip(config: ResMonConfig): string {
+export function buildSettingsTooltip(config: MiraBarConfig): string {
   const isDarwin = process.platform === 'darwin';
   const mode = config.tooltipMode;
   const shown: Record<TooltipSection, boolean> = {
@@ -442,7 +442,7 @@ export function buildSettingsTooltip(config: ResMonConfig): string {
   ]);
   const notes: string[] = [];
   if (raised) {
-    notes.push('\\* raised to its measured minimum ([details](command:resmon.openSettings))');
+    notes.push('\\* raised to its measured minimum ([details](command:mirabar.openSettings))');
   }
 
   // Options: a Markdown table, because the toggles are command links (not possible in a code block).
@@ -451,23 +451,23 @@ export function buildSettingsTooltip(config: ResMonConfig): string {
   const options = [
     '| Option | Current | |',
     '| :--- | :--- | :--- |',
-    option('Tooltip mode', mode, `switch to ${mode === 'Static' ? 'Live' : 'Static'}`, 'resmon.toggleTooltipMode'),
+    option('Tooltip mode', mode, `switch to ${mode === 'Static' ? 'Live' : 'Static'}`, 'mirabar.toggleTooltipMode'),
   ];
   if (mode === 'Static') {
     options.push(option('Auto-refresh', config.tooltipAutoRefresh ? 'on' : 'off',
-      `turn ${config.tooltipAutoRefresh ? 'off' : 'on'}`, 'resmon.toggleTooltipAutoRefresh'));
+      `turn ${config.tooltipAutoRefresh ? 'off' : 'on'}`, 'mirabar.toggleTooltipAutoRefresh'));
   }
   options.push(option('CPU cores', config.cpuTooltipLayout,
-    `switch to ${config.cpuTooltipLayout === 'Table' ? 'List' : 'Table'}`, 'resmon.toggleCpuLayout'));
+    `switch to ${config.cpuTooltipLayout === 'Table' ? 'List' : 'Table'}`, 'mirabar.toggleCpuLayout'));
   if (isDarwin) {
     options.push(option('System load', config.loadFormat,
-      `switch to ${config.loadFormat === 'Percent' ? 'Value' : 'Percent'}`, 'resmon.toggleLoadFormat'));
+      `switch to ${config.loadFormat === 'Percent' ? 'Value' : 'Percent'}`, 'mirabar.toggleLoadFormat'));
   }
   options.push(option('Several disks', config.diskMultiDisplay === 'All' ? 'All' : 'Most full',
-    `switch to ${config.diskMultiDisplay === 'All' ? 'Most full' : 'All'}`, 'resmon.toggleDiskMultiDisplay'));
+    `switch to ${config.diskMultiDisplay === 'All' ? 'Most full' : 'All'}`, 'mirabar.toggleDiskMultiDisplay'));
 
   return [
-    '### Resource Monitor Settings',
+    '### MiraBar Settings',
     '',
     ...renderDynamicAsciiTable(
       [
@@ -483,6 +483,6 @@ export function buildSettingsTooltip(config: ResMonConfig): string {
     ...options,
     '',
     '---',
-    '[$(settings-gear) Open settings panel](command:resmon.openSettings)',
+    '[$(settings-gear) Open settings panel](command:mirabar.openSettings)',
   ].join('\n');
 }

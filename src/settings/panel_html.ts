@@ -44,7 +44,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Resource Monitor Settings</title>
+<title>MiraBar Settings</title>
 <style nonce="${nonce}">
   :root {
     --border: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
@@ -160,7 +160,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
 <body>
 <main>
   <header>
-    <h1>Resource Monitor</h1>
+    <h1>MiraBar</h1>
     <span id="status" class="status" role="status" aria-live="polite"></span>
   </header>
 

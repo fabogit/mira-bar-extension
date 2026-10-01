@@ -131,11 +131,11 @@ export function loadDarwinNativeAddon(): DarwinNativeAddon | null {
         cachedAddon = require(candidate) as DarwinNativeAddon;
         return cachedAddon;
       } catch (err) {
-        console.warn(`[Resource Monitor NG] Failed to load native addon at ${candidate}:`, err);
+        console.warn(`[MiraBar] Failed to load native addon at ${candidate}:`, err);
       }
     }
   }
 
-  console.warn('[Resource Monitor NG] darwin_telemetry.node not found; using Node.js fallback providers.');
+  console.warn('[MiraBar] darwin_telemetry.node not found; using Node.js fallback providers.');
   return null;
 }

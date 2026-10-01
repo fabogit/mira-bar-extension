@@ -38,8 +38,8 @@ export class SettingsPanel implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private disposed = false;
   /**
-   * Messages are handled one at a time: a write can take several awaited settings updates (legacy
-   * migration), and a second edit must see its result, not the state before it.
+   * Messages are handled one at a time: a reset awaits several settings updates, and a later edit
+   * must apply after it, not interleave with it.
    */
   private queue: Promise<void> = Promise.resolve();
 
@@ -54,8 +54,8 @@ export class SettingsPanel implements vscode.Disposable {
       return;
     }
     const panel = vscode.window.createWebviewPanel(
-      'resmon.settings',
-      'Resource Monitor Settings',
+      'mirabar.settings',
+      'MiraBar Settings',
       vscode.ViewColumn.Active,
       { enableScripts: true, localResourceRoots: [], retainContextWhenHidden: false }
     );
@@ -111,7 +111,7 @@ export class SettingsPanel implements vscode.Disposable {
           void this.panel.webview.postMessage({ type: 'saved' });
           break;
         case 'openJson':
-          await vscode.commands.executeCommand('workbench.action.openSettings', 'resmon.');
+          await vscode.commands.executeCommand('workbench.action.openSettings', 'mirabar.');
           break;
       }
     } catch (err) {

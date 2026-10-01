@@ -6,11 +6,11 @@ export type TooltipSection = 'cpu' | 'freq' | 'temp' | 'mem' | 'battery' | 'disk
 
 export const TOOLTIP_SECTIONS: readonly TooltipSection[] = ['cpu', 'freq', 'temp', 'mem', 'battery', 'disk'];
 
-/** Default left-to-right order of the status bar widgets (resmon.order). */
+/** Default left-to-right order of the status bar widgets (mirabar.order). */
 export const DEFAULT_WIDGET_ORDER: readonly TooltipSection[] = TOOLTIP_SECTIONS;
 
 /**
- * Validates resmon.order: keeps known, unique section ids in the given order and appends any
+ * Validates mirabar.order: keeps known, unique section ids in the given order and appends any
  * missing section in its default position, so a partial or invalid list never hides a widget.
  */
 export function readWidgetOrder(raw: unknown): TooltipSection[] {
@@ -76,10 +76,6 @@ export const DEFAULT_TOOLTIP_MS: Readonly<Record<TooltipSection, number>> = {
   disk: 10_000,
 };
 
-/** Bounds of the pre-release single status bar interval (resmon.updatefrequencyms, now a fallback). */
-export const MIN_UPDATE_FREQUENCY_MS = 200;
-export const MAX_UPDATE_FREQUENCY_MS = 15_000;
-
 /** Status bar base priority bounds. */
 export const MIN_PRIORITY = -10_000;
 export const MAX_PRIORITY = 10_000;
@@ -88,7 +84,7 @@ export const MAX_PRIORITY = 10_000;
  * Minimum status bar interval of a section.
  *
  * @param section - Status bar section.
- * @param allowFast - resmon.allowFastRefresh: lowers every minimum to MIN_INTERVAL_MS.
+ * @param allowFast - mirabar.allowFastRefresh: lowers every minimum to MIN_INTERVAL_MS.
  */
 export function minStatusBarMs(section: TooltipSection, allowFast: boolean): number {
   return allowFast ? MIN_INTERVAL_MS : Math.max(MIN_INTERVAL_MS, MEASURED_MIN_STATUS_BAR_MS[section]);
@@ -123,58 +119,24 @@ function userValue(config: vscode.WorkspaceConfiguration, key: string): unknown 
   return inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
 }
 
-/** Pre-release per-section values (resmon.refreshMs, or resmon.refreshSeconds in seconds), if set. */
-function legacySectionMs(config: vscode.WorkspaceConfiguration): Partial<Record<TooltipSection, number>> {
-  const out: Partial<Record<TooltipSection, number>> = {};
-  const ms = userValue(config, 'refreshMs');
-  const seconds = userValue(config, 'refreshSeconds');
-  for (const section of TOOLTIP_SECTIONS) {
-    const m = ms !== null && typeof ms === 'object' ? (ms as Record<string, unknown>)[section] : undefined;
-    const sec = seconds !== null && typeof seconds === 'object' ? (seconds as Record<string, unknown>)[section] : undefined;
-    if (typeof m === 'number' && Number.isFinite(m)) {
-      out[section] = m;
-    } else if (typeof sec === 'number' && Number.isFinite(sec)) {
-      out[section] = sec * 1000;
-    }
-  }
-  return out;
-}
-
 /**
- * Stored per-section intervals with their fallbacks, before any minimum is applied:
- * - status bar: resmon.statusBarMs; else, for CPU, load and memory, the older single interval
- *   resmon.updatefrequencyms; for temperature, battery and disk, the pre-release resmon.refreshMs
- *   (their sampling interval then), else the default or updatefrequencyms if slower; else the default.
- * - tooltip: resmon.tooltipMs; else resmon.refreshMs / resmon.refreshSeconds; else the default.
+ * Stored per-section intervals (mirabar.statusBarMs, mirabar.tooltipMs) with defaults for the sections
+ * the user did not set, before any minimum is applied.
  */
 export function readStoredIntervals(
-  config: vscode.WorkspaceConfiguration = vscode.workspace.getConfiguration('resmon')
+  config: vscode.WorkspaceConfiguration = vscode.workspace.getConfiguration('mirabar')
 ): { statusBarMs: Record<TooltipSection, number>; tooltipMs: Record<TooltipSection, number> } {
-  const legacy = legacySectionMs(config);
-  const tick = userValue(config, 'updatefrequencyms');
-  const barFallback = { ...DEFAULT_STATUS_BAR_MS };
-  for (const section of ['cpu', 'freq', 'mem'] as const) {
-    if (typeof tick === 'number' && Number.isFinite(tick)) {
-      barFallback[section] = Math.min(MAX_UPDATE_FREQUENCY_MS, Math.max(MIN_UPDATE_FREQUENCY_MS, tick));
-    }
-  }
-  for (const section of ['temp', 'battery', 'disk'] as const) {
-    // Released versions read these on the single tick too: a slower tick keeps them at least that slow.
-    const slowTick = typeof tick === 'number' && Number.isFinite(tick) ? Math.max(barFallback[section], tick) : barFallback[section];
-    barFallback[section] = legacy[section] ?? slowTick;
-  }
-  const tipFallback = { ...DEFAULT_TOOLTIP_MS, ...legacy };
-  // userValue, not get(): get() returns the package.json default object, which would hide the fallbacks.
+  // The user's own object, not get(): a partial object then keeps the defaults of the other sections.
   return {
-    statusBarMs: readIntervals(userValue(config, 'statusBarMs'), barFallback),
-    tooltipMs: readIntervals(userValue(config, 'tooltipMs'), tipFallback),
+    statusBarMs: readIntervals(userValue(config, 'statusBarMs'), DEFAULT_STATUS_BAR_MS),
+    tooltipMs: readIntervals(userValue(config, 'tooltipMs'), DEFAULT_TOOLTIP_MS),
   };
 }
 
 /**
- * Strongly typed configuration options for Resource Monitor NG.
+ * Strongly typed configuration options for MiraBar.
  */
-export interface ResMonConfig {
+export interface MiraBarConfig {
   /** Whether to show CPU usage percentage in the status bar. */
   showCpuUsage: boolean;
   /** Whether to show CPU clock frequency in the status bar. */
@@ -228,14 +190,13 @@ export interface ResMonConfig {
 }
 
 /**
- * Retrieves the current Resource Monitor settings from VS Code workspace configuration.
+ * Retrieves the current MiraBar settings from VS Code workspace configuration.
  *
  * @returns An immutable snapshot of the user configuration with safe defaults applied.
  */
-export function getConfig(): ResMonConfig {
-  const config = vscode.workspace.getConfiguration('resmon');
-  const allowFastSetting = userValue(config, 'allowFastRefresh') ?? userValue(config, 'allowFastBatteryDiskRefresh');
-  const allowFastRefresh = allowFastSetting === true;
+export function getConfig(): MiraBarConfig {
+  const config = vscode.workspace.getConfiguration('mirabar');
+  const allowFastRefresh = config.get<boolean>('allowFastRefresh', false) === true;
   const stored = readStoredIntervals(config);
   const statusBarMs = readIntervals(stored.statusBarMs, DEFAULT_STATUS_BAR_MS, (s) => minStatusBarMs(s, allowFastRefresh));
   const tooltipMs = readIntervals(stored.tooltipMs, DEFAULT_TOOLTIP_MS, (s) => statusBarMs[s]);

@@ -21,7 +21,7 @@ let configChangeTimer: NodeJS.Timeout | null = null;
  * @param context - Extension runtime context provided by VS Code.
  */
 export function activate(context: vscode.ExtensionContext): void {
-  const log = vscode.window.createOutputChannel('Resource Monitor NG', { log: true });
+  const log = vscode.window.createOutputChannel('MiraBar', { log: true });
   context.subscriptions.push(log);
   log.info('Activated');
 
@@ -40,32 +40,32 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       vscode.commands.registerCommand(command, async () => {
         const next = flip(read());
-        await vscode.workspace.getConfiguration('resmon').update(key, next, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(`Resource Monitor: ${message(next)}`);
+        await vscode.workspace.getConfiguration('mirabar').update(key, next, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`MiraBar: ${message(next)}`);
       })
     );
   };
 
   context.subscriptions.push(
     // Also the click action of every metric widget.
-    vscode.commands.registerCommand('resmon.refresh', () => current.refresh()),
+    vscode.commands.registerCommand('mirabar.refresh', () => current.refresh()),
     // Settings panel (intervals, sections, order, units); also the click action of the gear widget.
-    vscode.commands.registerCommand('resmon.openSettings', () => SettingsPanel.show(process.platform))
+    vscode.commands.registerCommand('mirabar.openSettings', () => SettingsPanel.show(process.platform))
   );
-  registerToggle('resmon.toggleTooltipMode', 'tooltip.mode', () => getConfig().tooltipMode,
+  registerToggle('mirabar.toggleTooltipMode', 'tooltip.mode', () => getConfig().tooltipMode,
     (v) => (v === 'Static' ? 'Live' : 'Static'), (v) => `Tooltip mode set to ${v}`);
-  registerToggle('resmon.toggleTooltipAutoRefresh', 'tooltip.autoRefresh', () => getConfig().tooltipAutoRefresh,
+  registerToggle('mirabar.toggleTooltipAutoRefresh', 'tooltip.autoRefresh', () => getConfig().tooltipAutoRefresh,
     (v) => !v, (v) => `Static tooltip auto-refresh ${v ? 'on' : 'off'}`);
-  registerToggle('resmon.toggleCpuLayout', 'tooltip.cpuLayout', () => getConfig().cpuTooltipLayout,
+  registerToggle('mirabar.toggleCpuLayout', 'tooltip.cpuLayout', () => getConfig().cpuTooltipLayout,
     (v) => (v === 'Table' ? 'List' : 'Table'), (v) => `CPU layout set to ${v}`);
-  registerToggle('resmon.toggleLoadFormat', 'loadFormat', () => getConfig().loadFormat,
+  registerToggle('mirabar.toggleLoadFormat', 'loadFormat', () => getConfig().loadFormat,
     (v) => (v === 'Percent' ? 'Value' : 'Percent'), (v) => `Load format set to ${v}`);
-  registerToggle('resmon.toggleDiskMultiDisplay', 'disk.multiDisplay', () => getConfig().diskMultiDisplay,
+  registerToggle('mirabar.toggleDiskMultiDisplay', 'disk.multiDisplay', () => getConfig().diskMultiDisplay,
     (v) => (v === 'All' ? 'MostFull' : 'All'), (v) => `Multi-disk display set to ${v}`);
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (!e.affectsConfiguration('resmon')) {
+      if (!e.affectsConfiguration('mirabar')) {
         return;
       }
       if (configChangeTimer) {
