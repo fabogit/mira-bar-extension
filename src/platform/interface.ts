@@ -26,7 +26,13 @@ export interface TelemetryPlatformProvider {
   /**
    * Samples CPU / SoC die temperature in degrees Celsius.
    */
-  sampleTemp(): CpuTempInfo | null;
+  sampleTemp(maxAgeMs?: number): CpuTempInfo | null;
+
+  /**
+   * Optional: starts a background temperature reading without waiting for it, so that the next
+   * sampleTemp() returns a fresh value (macOS, where a sensor pass takes ~16-18 ms).
+   */
+  requestTempRefresh?(): void;
 
   /**
    * Samples system physical memory (RAM) and swap metrics.

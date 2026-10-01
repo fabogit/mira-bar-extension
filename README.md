@@ -8,15 +8,16 @@ Ultra-fast, zero-subprocess, lightweight resource monitor for VS Code and Antigr
 
 - **CPU Usage (`$(pulse)`)**: Instant overall and per-core utilization parsed directly from `/proc/stat` (Linux) or Mach host APIs (macOS Apple Silicon). Pre-samples on startup (Tick 0) to eliminate empty hover tables.
 - **CPU Frequency / System Load (`$(dashboard)`)**: Dynamic clock speeds read directly from `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq` on Linux, and normalized capacity System Load Average on macOS Apple Silicon.
-- **CPU & SoC Temperature (`$(flame)`)**: Native discovery for AMD Ryzen (`k10temp`, `zenpower`) and Intel (`coretemp`) on Linux; 24-sensor SoC die average/peak, NAND SSD, and battery cell temperature on macOS Apple Silicon via unprivileged `IOHIDEventSystemClient`.
-- **Memory & Swap (`$(ellipsis)`)**: Live physical RAM and swap statistics parsed from `/proc/meminfo` on Linux; 64-bit Mach VM stats (active, wired, compressed) and `vm.swapusage` on macOS.
-- **Battery Health & Telemetry (`$(zap)` / `🔋` / `$(plug)`)**: Real-time charging state, nominal factory design capacity (mAh), calibrated maximum capacity (mAh), current residual capacity (mAh), cycle count, and calculated health percentage via `/sys/class/power_supply` (Linux) and `AppleSmartBattery` (macOS). Auto-disabled on desktop systems.
+- **CPU & SoC Temperature (`$(flame)`)**: Native discovery for AMD Ryzen (`k10temp`, `zenpower`) and Intel (`coretemp`) on Linux; 24-sensor SoC die average/peak, NAND SSD, and battery cell temperature on macOS Apple Silicon via unprivileged `IOHIDEventSystemClient`, read on a native background thread so the extension host never waits for the sensors.
+- **Memory & Swap (`$(ellipsis)`)**: Live physical RAM and swap statistics parsed from `/proc/meminfo` on Linux; 64-bit Mach VM stats (active, wired, compressed), `vm.swapusage` and the kernel memory pressure level on macOS.
+- **Battery Health & Telemetry (`$(zap)` / `🔋` / `$(plug)`)**: Real-time charging state, design, nominal and full-charge capacity (mAh), remaining charge (mAh), cycle count and health ratio via `/sys/class/power_supply` (Linux) and `IOPowerSources` + `AppleSmartBattery` (macOS, shown as *Nominal vs Design*). Auto-disabled on desktop systems.
 - **Storage & Multi-Disk (`$(database)`)**: Non-blocking `statfs` monitoring with smart path truncation (preserving directory boundaries like `.../antigravity/kind-newton`). Supports multi-disk aggregation modes (`All` vs `MostFull`).
 - **100% Unified Monospace ASCII Tables**: Deterministic box-drawing tables (`┌─┬─┐`, `│ │ │`, `├─┼─┤`, `└─┴─┘`) rendered in monospace across all 6 telemetry tooltips for pixel-perfect column alignment in all VS Code themes.
 - **Modular Widgets & Dedicated Tooltips**: Each resource component is an independent status bar widget with its own focused tooltip.
 - **Fixed-Width Tabular Rendering**: Unicode Figure Space (`\u2007`) padding prevents UI jitter and shifts as values change digits.
-- **Multi-Rate Polling (Tick Decimation)**: High-speed polling (down to 200 ms) for CPU and RAM, with automatic decimation to $\ge 1000$ ms for Battery and Disk to prevent VFS/sysfs overhead.
+- **Per-Section Refresh**: Each section has its own status bar interval (how often it reads its data) and tooltip interval, from 200 ms to 1 h. Minimums come from measured costs (see [Refresh intervals](#refresh-intervals)). Hidden sections are never read, and there is no global polling tick.
 - **Tooltip Hover Stability**: Content diffing prevents active tooltips from flickering or collapsing during background refresh cycles.
+- **Settings Panel**: A gear widget with quick toggles and a panel with sliders, millisecond fields and drag-and-drop widget order.
 - **Zero Process Spawning**: No `df`, `ps`, `free`, or `powermetrics` subprocesses. Zero `node_modules` runtime dependencies.
 
 ## Installation
@@ -49,19 +50,30 @@ For Antigravity-IDE:
 antigravity --install-extension resource-monitor-ng-darwin-arm64-1.1.0.vsix
 ```
 
+## Settings Panel
+
+The gear widget at the end of the status bar group collects the options:
+
+- **Hover** it for two tables: the sections in status bar order (shown or not, status bar and tooltip intervals in effect, `*` where a value was raised to its measured minimum) and the display options with one-click toggles (tooltip mode, Static auto-refresh, CPU core layout, load format, multi-disk display).
+- **Click** it (or run *Resource Monitor: Open Settings Panel*) to open the settings panel: for each section a status bar interval (preset slider plus millisecond field) and a tooltip interval, section visibility, drag-and-drop widget order, units and disk options. A note under a value shows what actually applies when it differs from what you set (for example a value below the measured minimum).
+
+The panel is only a front-end for the regular settings below: every change is validated and written to your user `settings.json`, and edits made there are reflected in the panel. The data tooltips keep only the metrics, the time of their last update and links to *Settings* and *Refresh*.
+
 ## Commands
 
 | Command | Title | Description |
 | :--- | :--- | :--- |
-| `resmon.refresh` | Resource Monitor: Refresh Stats | Immediately samples all providers (bypassing decimation) and restarts the polling timer. Also triggered by clicking on any status bar widget. |
-| `resmon.toggleTooltipMode` | Resource Monitor: Toggle Tooltip Mode (Static / Live) | Toggles tooltip update mode between `Static` (flicker-free, updated on click) and `Live` (continuous real-time updates). Also accessible via link in tooltips. |
+| `resmon.refresh` | Resource Monitor: Refresh Stats | Immediately samples all providers and restarts the polling timer. Also triggered by clicking on any metric widget. |
+| `resmon.openSettings` | Resource Monitor: Open Settings Panel | Opens the settings panel (also the gear widget's click action). |
+| `resmon.toggleTooltipMode` | Resource Monitor: Toggle Tooltip Mode (Static / Live) | Toggles tooltip update mode between `Static` (updated on click and, with auto-refresh, every `resmon.tooltipMs` of the section) and `Live` (updated with every read of the section, `resmon.statusBarMs`). Also available in the gear widget's tooltip. |
+| `resmon.toggleTooltipAutoRefresh` | Resource Monitor: Toggle Static Tooltip Auto-Refresh | Static mode: turns the per-section automatic tooltip refresh on or off (off = click only). Also available in the gear widget's tooltip. |
 | `resmon.toggleCpuLayout` | Resource Monitor: Toggle CPU Tooltip Layout (Table / List) | Toggles CPU per-core breakdown layout between `Table` (monospaced side-by-side grid) and `List` (vertical clusters). |
 | `resmon.toggleLoadFormat` | Resource Monitor: Toggle System Load Format (Percent / Value) | Toggles System Load display on Darwin between normalized capacity percentage (`34.4% L`) and raw POSIX queue depth (`3.44 L`). |
 | `resmon.toggleDiskMultiDisplay` | Resource Monitor: Toggle Multi-Disk Display Mode (All / MostFull) | Toggles multi-disk status bar display between showing all monitored mount points (`All`) and showing only the fullest volume (`MostFull`). |
 
 ## Configuration Settings
 
-Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
+Configure these settings from the settings panel or directly in your VS Code / Antigravity-IDE `settings.json`:
 
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -71,7 +83,11 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.show.mem` | `boolean` | `true` | Toggle memory consumption |
 | `resmon.show.battery` | `boolean` | `true` | Toggle battery percentage (auto-hidden on desktops) |
 | `resmon.show.disk` | `boolean` | `false` | Toggle disk space information |
-| `resmon.updatefrequencyms`| `number` | `2000` | Update frequency in milliseconds (min: 200) |
+| `resmon.show.settings` | `boolean` | `true` | Show the settings (gear) widget after the metrics |
+| `resmon.order` | `string[]` | `["cpu","freq","temp","mem","battery","disk"]` | Left-to-right widget order; missing entries keep their default position |
+| `resmon.statusBarMs` | `object` | `{cpu:2000, freq:2000, temp:5000, mem:2000, battery:10000, disk:10000}` | Status bar interval per section (ms, 200 ms to 1 h): how often the section reads its data and updates its text. Never below the section's measured minimum unless `resmon.allowFastRefresh` is on (see [Refresh intervals](#refresh-intervals)) |
+| `resmon.tooltipMs` | `object` | `{cpu:5000, freq:5000, temp:5000, mem:5000, battery:10000, disk:10000}` | Tooltip interval per section (ms, 200 ms to 1 h), Static mode with auto-refresh: how often the tooltip is rebuilt from the latest reading. Never faster than the section's status bar interval |
+| `resmon.allowFastRefresh` | `boolean` | `false` | **Performance impact:** allows status bar intervals below the measured minimums, down to 200 ms |
 | `resmon.freq.unit` | `string` | `"GHz"` | Unit for CPU frequency (`GHz`, `MHz`, `KHz`, `Hz`) |
 | `resmon.mem.unit` | `string` | `"GB"` | Unit for memory display (`GB`, `MB`, `KB`, `B`) |
 | `resmon.disk.format` | `string` | `"PercentRemaining"` | Disk display format |
@@ -79,9 +95,35 @@ Configure these settings in your VS Code / Antigravity-IDE `settings.json`:
 | `resmon.disk.multiDisplay` | `string` | `"All"` | Multi-disk status bar display mode: `"All"` (all disks) or `"MostFull"` (single fullest volume) |
 | `resmon.priority` | `number` | `100` | Base priority for status bar positioning (lower/negative shifts right) |
 | `resmon.alignment` | `string` | `"Left"` | Status bar alignment (`"Left"` or `"Right"`) |
-| `resmon.tooltip.mode` | `string` | `"Static"` | Tooltip mode: `"Static"` (flicker-free, updated on click) or `"Live"` (continuous real-time) |
+| `resmon.tooltip.mode` | `string` | `"Static"` | `"Static"`: tooltips rebuilt on click and, with auto-refresh, every `resmon.tooltipMs`. `"Live"`: rebuilt with every read (`resmon.statusBarMs`; temperature only when the sensors produced a new reading). Each tooltip shows the time of its reading, with tenths of a second below 1000 ms |
+| `resmon.tooltip.autoRefresh` | `boolean` | `true` | Static mode: rebuild tooltips automatically every `resmon.tooltipMs` (otherwise only on click) |
+| `resmon.updatefrequencyms` | `number` | `2000` | *Deprecated*, replaced by `resmon.statusBarMs`. Still applies to CPU usage, system load / frequency and memory (and keeps temperature, battery and disk at least as slow) while `resmon.statusBarMs` does not set them |
 | `resmon.tooltip.cpuLayout` | `string` | `"Table"` | CPU core layout in tooltips: `"Table"` (compact monospace grid) or `"List"` (vertical cluster list) |
 | `resmon.loadFormat` | `string` | `"Percent"` | System Load display format on Darwin: `"Percent"` (`34.4% L`) or `"Value"` (`3.44 L`) |
+
+## Refresh Intervals
+
+Each section has two intervals. They control different things:
+
+| | Status bar interval (`resmon.statusBarMs`) | Tooltip interval (`resmon.tooltipMs`) |
+| :--- | :--- | :--- |
+| **Controls** | How often the section reads its data and updates its status bar text | How often its tooltip is rebuilt from the latest reading |
+| **Applies** | Always (both tooltip modes) | Static mode with auto-refresh on. Live tooltips follow the status bar; with auto-refresh off they refresh on click |
+| **Cost** | Every read costs CPU (see below) | Rebuilding text only, no extra read |
+| **Limits** | 200 ms to 1 h, never below the section's measured minimum | 200 ms to 1 h, never faster than its status bar interval |
+
+A click on any widget reads every visible section and rebuilds every tooltip.
+
+**Measured minimums.** The minimum status bar interval of a section is the interval at which its reads use its share of the extension's CPU budget: 0.5% of one core for all six sections together, so 0.083% each. The cost of a read includes the macOS services that answer it and the extension's own work to show it; both are measured on an Apple M4 with `pnpm run bench:darwin` and `pnpm run bench:extension`:
+
+| Section | Cost per read (M4) | Minimum | Default |
+| :--- | ---: | ---: | ---: |
+| CPU usage, system load, memory, battery, disk | under 30 µs to read, plus 0.34-0.47 ms to show | 200 ms | 2 s (battery and disk 10 s) |
+| Temperature | ~42 ms of CPU across the system (26 sensors through the HID server) | 8400 ms | 10 s |
+
+Temperature is the only expensive source: at the old 5 s default it alone cost ~0.8% of one core. At the defaults the whole extension uses ~0.49% of one core with all six sections shown. The battery driver publishes new data every 60 s, so a shorter battery interval only shows power adapter changes sooner.
+
+`resmon.allowFastRefresh` lowers every minimum to 200 ms, at the cost of exceeding that budget. The derivation is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#refresh-floors).
 
 ## System Load Average (on macOS / Apple Silicon)
 
@@ -112,9 +154,22 @@ pnpm run test:darwin
 
 # Cross-platform end-to-end integration test:
 pnpm run test:integration
+
+# Extension behaviour outside VS Code (schedule, tooltips, minimums, settings panel, lifecycle):
+pnpm run test:extension
+
+# Native leak & cost probe (on macOS): µs per call, RSS growth, Mach host port refs
+node --expose-gc test/leak-darwin.mjs
+
+# Measurements behind the refresh minimums (on macOS):
+pnpm run bench:darwin      # cost per read of each source, sensor and battery refresh periods
+pnpm run bench:extension   # extension CPU per read, per section and per configuration
+
+# AddressSanitizer build of the native addon (on macOS):
+DEBUG=1 pnpm run compile:native
 ```
 
-Build production bundle and typecheck:
+Typecheck (`src/` and `test/`) and build the production bundle:
 ```bash
 pnpm run typecheck
 pnpm run build

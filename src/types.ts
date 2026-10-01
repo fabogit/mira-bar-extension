@@ -114,6 +114,12 @@ export interface CpuTempInfo {
 
   /** Temperature of the battery cell in °C (if available). */
   batteryCelsius?: number;
+
+  /** Sequence number of the sensor reading: it changes exactly when a new reading is taken. */
+  sampleSeq?: number;
+
+  /** Age of the reading in milliseconds when it was returned (readings may be cached). */
+  ageMs?: number;
 }
 
 /**
@@ -181,9 +187,14 @@ export interface MemoryInfo {
   inactiveBytes?: number;
 
   /**
-   * System memory pressure index (0..100; e.g. Darwin vm.memory_pressure; optional).
+   * Memory pressure in percent (0..100; Darwin: 100 - kern.memorystatus_level; optional).
    */
   pressurePercent?: number;
+
+  /**
+   * Kernel memory pressure state (optional; Darwin: kern.memorystatus_vm_pressure_level).
+   */
+  pressureLevel?: 'Normal' | 'Warning' | 'Critical';
 }
 
 /**
@@ -256,12 +267,17 @@ export interface BatteryInfo {
   maxCapacity?: number;
 
   /**
+   * Nominal full charge capacity in mAh or mWh (optional; Darwin NominalChargeCapacity).
+   */
+  nominalCapacity?: number;
+
+  /**
    * Factory nominal design capacity in mAh or mWh.
    */
   designCapacity?: number;
 
   /**
-   * Battery health percentage: min(100, (maxCapacity / designCapacity) * 100).
+   * Battery health percentage: min(100, ((nominalCapacity ?? maxCapacity) / designCapacity) * 100).
    */
   healthPercent?: number;
 

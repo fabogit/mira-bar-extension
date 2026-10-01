@@ -85,7 +85,89 @@ Phase 1 restructured the codebase into a strict modular architecture, eliminated
 
 ---
 
-## 4. Phase 2: Linux Telemetry Modernization & Parity (v1.2.0) [IN PROGRESS]
+## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v1.1.1) [COMPLETED]
+
+> Branch: `fix/darwin-memory` (from `develop`, local commits) • **Status: Done, verified in VS Code on Apple Silicon (2026-10-01)** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
+
+Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin native addon and in the extension lifecycle, corrects the memory pressure and battery metrics, and reworks the refresh model and settings UI. Native changes are verified on Apple Silicon with `test/leak-darwin.mjs`, `lsmp` and `leaks`, and on Linux with mocked Apple APIs under ASan/UBSan/TSan.
+
+- [x] **Build & Test Baseline**:
+  - `compile.sh` flags: `-mmacosx-version-min=11.0`, `NAPI_VERSION=8`, `-Wextra`, availability warnings, hidden visibility; `DEBUG=1` ASan variant. Same warnings in `binding.gyp`.
+  - Native leak & cost probe `test/leak-darwin.mjs` (µs/call, RSS growth, Mach host port refs).
+  - `pnpm run typecheck` covers `src/` and `test/` (`test/tsconfig.json`); the stale `test/smoke.mjs` (imported the removed `src/providers/`) is gone.
+- [x] **Leak Fixes**:
+  - Host port acquired once and released (`mach_host_self()` send-right leak, 3 urefs per tick).
+  - Polling timer can no longer be re-armed after `deactivate()`.
+  - Recreated status bar items no longer accumulate in `context.subscriptions`.
+- [x] **RAII Native Core**:
+  - `CFRef<T>`, `IOObject`, `MachSendRight`, `VmRegion` wrappers; per-env `AddonState` with `napi_set_instance_data` finalizer.
+  - Type-checked CoreFoundation getters; `napi_status` checked on every call.
+- [x] **Per-Tick Overhead Reduction**:
+  - Hidden widgets are not sampled.
+  - Cached `IOHIDEventSystemClient` and classified thermal sensors.
+  - Battery: `IOPowerSources` on each battery sample, `AppleSmartBattery` registry snapshot at most every 30 s (on the M4 the mAh values live in the `BatteryData` sub-dictionary, so single-key reads are not enough).
+  - Zero-allocation CPU ticks (`Uint32Array` double buffer, wrap-safe 32-bit deltas).
+- [x] **Correctness**:
+  - Memory pressure from `kern.memorystatus_level` / `kern.memorystatus_vm_pressure_level` (replaces `vm.memory_pressure`, which is not a percentage).
+  - Battery capacities in mAh from `BatteryData`; "Nominal vs Design" instead of "Battery Health" (macOS "Maximum Capacity" uses an internal calculation not exposed to apps: 100% vs 99.4% on the test M4).
+  - macOS 11 compatibility (`MACH_PORT_NULL` instead of `kIOMainPortDefault`).
+  - Native loader no longer resolves `.node` files from `process.cwd()`.
+- [x] **Thermal Sampling Off the Extension Host Thread**:
+  - Measured on Apple M4: `getDieTemperature()` cost ~18 ms per call (24 tdie + NAND + battery sensors), above the 1 ms SLA.
+  - Profiled with `native/darwin/tools/hid_bench.cc`: cost evenly spread (~0.6 ms per sensor IPC), no single slow sensor.
+  - Native background sampler (`ThermalSampler`): `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and asks the worker for a new pass when it is older than requested.
+- [x] **Refresh Model** (superseded by the per-section model of Phase 1.2):
+  - `resmon.updatefrequencyms` (200-15000 ms) is the clock: status bar values every tick, Live tooltips every tick.
+  - `resmon.refreshMs` per section (200 ms to 1 h): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `resmon.allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaces the pre-release `resmon.refreshSeconds`, still read as a fallback.
+  - Half-tick tolerance so an interval equal to the tick fires every tick; update time with tenths of a second below 1000 ms; a click refreshes everything.
+  - Configuration changes debounced (100 ms) so slider drags do not recreate the widgets on every step.
+- [x] **Final Check**:
+  - Hidden CPU, load and memory widgets are no longer sampled (only temperature and battery were gated before).
+  - Live tooltips of battery, disk and temperature rebuilt only when a new reading arrives (was 5 times a second at 200 ms).
+  - `statfs` off the tick: a dead network mount cannot freeze the status bar; at most one pending request per set of paths, and removing the mount from `resmon.disk.drives` recovers at once.
+  - Configuration read once per change instead of twice per tick; activation generation guard for late callbacks.
+  - Linux: cores without `cpufreq` skipped (no failing reads per tick), cores rescanned once a minute for hotplug.
+- [x] **Settings Widget & Panel**:
+  - Gear status bar widget: tooltip with the current values and quick toggles; click opens a webview settings panel (preset sliders plus millisecond fields, visibility, drag-and-drop order, units, disk options). Strict CSP with nonce; rows updated in place so external changes never interrupt typing or dragging.
+  - The panel writes validated values to the user settings (single source of truth); stored values are never rewritten by unrelated edits. Data tooltips keep only metrics, update time and Settings / Refresh links.
+- [x] **Configurable Widget Order**:
+  - `resmon.order` mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
+- [x] **Verification in VS Code on Apple Silicon** (2026-10-01):
+  - Install the `darwin-arm64` VSIX and check the settings panel, Static/Live tooltips at 200 ms and the battery/disk lock.
+- [x] **Extension Lifecycle Refactor**: done in Phase 1.2 below.
+
+---
+
+## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v1.1.1) [COMPLETED]
+
+> Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Done, measured and verified in VS Code on Apple Silicon (2026-10-01)**
+
+Each section gets its own status bar and tooltip intervals, and the minimums are derived from measured costs instead of fixed values.
+
+- [x] **Measurement Tools**:
+  - `test/bench-darwin.mjs`: cost per read of every source on the calling thread and system-wide (host CPU ticks, macOS services included), temperature pass cost and sensor refresh period, battery driver refresh period (`UpdateTime`).
+  - `test/bench-extension.mjs`: extension-host CPU per configuration and per section (one section alone, Live).
+  - Native temperature readings carry `sampleSeq`, `ageMs`, `passWallMs`, `passCpuMs`.
+- [x] **Per-Section Intervals**:
+  - `resmon.statusBarMs` (reads and status bar text) and `resmon.tooltipMs` (Static tooltips, never faster than the status bar); `resmon.allowFastRefresh` lowers the minimums to 200 ms.
+  - Pre-release keys read as fallbacks and migrated on the first interval edit in the panel; the released `resmon.updatefrequencyms` keeps working (CPU, load, memory; temperature, battery and disk at least as slow).
+- [x] **Deadline Scheduler & Lifecycle Refactor**:
+  - `ResourceMonitor` (`src/monitor.ts`, `vscode.Disposable`): one timer at the earliest section deadline, no global tick, no timer when every section is hidden.
+  - Renderers per section (`src/sections.ts`, pure functions) and formatting helpers (`src/format.ts`); `src/extension.ts` only wires commands and settings.
+  - Temperature pass requested 100 ms before its read on macOS, so the value shown is fresh without waiting.
+  - Disk requests capped at two in flight (a hung `statfs` holds a libuv pool thread); panel messages handled one at a time.
+- [x] **Settings Panel**: two intervals per section with notes on what applies, measured minimums and the budget rule explained in place.
+- [x] **Tests**: `test/extension.test.mjs` (schedule, tooltips, minimums, legacy settings and migration, panel, disk isolation, lifecycle, heap) runnable with `pnpm run test:extension`.
+- [x] **Measured Minimums** (Apple M4, 2026-09-30; rule and table in docs/ARCHITECTURE.md, "Refresh Floors"):
+  - Rule: a section's reads alone may use at most the whole budget (0.5% of one core); the defaults keep the extension within it (~0.49% with all six sections shown).
+  - Temperature: 40.4 ms of system CPU per pass (HID server) + 1.1 ms in the extension host: minimum 8400 ms, default 10 s (was 5 s, ~0.8% of one core).
+  - CPU, load, memory, battery, disk: 0.34-0.47 ms per read, minimum 200 ms. The 2000 ms battery/disk lock of Phase 1.1 is removed; `resmon.allowFastRefresh` now only unlocks temperature.
+  - Battery driver publishes new data every 60 s; the 10 s default only serves power adapter changes.
+- [x] **Verification in VS Code on Apple Silicon** (2026-10-01): per-section intervals, settings panel, gear tooltip tables, minimums.
+
+---
+
+## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.2.0) [IN PROGRESS]
 
 > Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/3) • **Status: Open** (Active Target)
 
@@ -107,7 +189,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 ---
 
-## 5. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.3.0) [PLANNED]
+## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.3.0) [PLANNED]
 
 > Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/4) • **Status: Open** (Future Roadmap)
 
@@ -131,7 +213,7 @@ Phase 3 introduces native Windows support through direct Win32 API bindings, adh
 
 ---
 
-## 6. Phase 4: Internationalization & Localization (v1.4.0) [NICE TO HAVE]
+## 7. Phase 4: Internationalization & Localization (v1.4.0) [NICE TO HAVE]
 
 > Milestone: [**`v1.4.0 - Internationalization & Localization`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/5) • **Status: Open** (Backlog)
 

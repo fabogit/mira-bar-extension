@@ -21,6 +21,9 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
   private cpu = new CpuProvider();
   private freq = new CpuFreqProvider();
   private temp = new CpuTempProvider();
+  private lastTemp: CpuTempInfo | null = null;
+  private lastTempAt = 0;
+  private tempSeq = 0;
   private mem = new MemoryProvider();
   private batt = new BatteryProvider();
 
@@ -48,11 +51,21 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
 
   /**
    * Samples CPU package temperature in degrees Celsius from /sys/class/hwmon/ or thermal zones.
+   * Readings younger than `maxAgeMs` are served from cache (the monitor passes half the temperature
+   * status bar interval, resmon.statusBarMs.temp), with their age in `ageMs`.
    *
+   * @param maxAgeMs - Maximum age of a cached reading (default 0: always read).
    * @returns CpuTempInfo reading and driver name, or `null` if no hwmon sensors exist.
    */
-  public sampleTemp(): CpuTempInfo | null {
-    return this.temp.sample();
+  public sampleTemp(maxAgeMs = 0): CpuTempInfo | null {
+    const now = Date.now();
+    if (this.lastTempAt !== 0 && now - this.lastTempAt < maxAgeMs) {
+      return this.lastTemp ? { ...this.lastTemp, ageMs: now - this.lastTempAt } : null;
+    }
+    const reading = this.temp.sample();
+    this.lastTemp = reading ? { ...reading, sampleSeq: ++this.tempSeq } : null;
+    this.lastTempAt = now;
+    return this.lastTemp;
   }
 
   /**

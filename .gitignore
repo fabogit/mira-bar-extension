@@ -12,3 +12,4 @@ dist/
 # Agents
 .agents
 skills-lock.json
+.claude/skills

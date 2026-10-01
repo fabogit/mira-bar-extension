@@ -6,11 +6,15 @@ import * as path from 'node:path';
  */
 export interface DarwinNativeAddon {
   /**
-   * Retrieves cumulative Mach processor tick counters for each logical core.
+   * Copies cumulative 32-bit Mach tick counters of every logical core into `out`, laid out as
+   * `out[core * 4 + state]` with state = user (0), system (1), idle (2), nice (3).
+   * Allocates nothing on the JS heap.
    *
-   * @returns Array of processor ticks per core, or `null` if kernel query fails.
+   * @param out - Destination buffer. If shorter than `cores * 4`, nothing is written.
+   * @returns Logical core count (also when `out` is too small), or `0` if the kernel query fails.
+   * @throws TypeError if `out` is not a Uint32Array.
    */
-  getCpuTicks(): { user: number; system: number; idle: number; nice: number }[] | null;
+  getCpuTicks(out: Uint32Array): number;
 
   /**
    * Discovers CPU hardware chip model and core topology (P-cores vs E-cores).
@@ -21,6 +25,9 @@ export interface DarwinNativeAddon {
 
   /**
    * Queries 64-bit Mach VM memory statistics and system swap usage.
+   *
+   * `pressurePercent` is `100 - kern.memorystatus_level` (-1 if unavailable);
+   * `pressureLevel` is `kern.memorystatus_vm_pressure_level`: 1 normal, 2 warning, 4 critical (0 if unavailable).
    *
    * @returns Comprehensive RAM page metrics and swap allocations in bytes, or `null` if query fails.
    */
@@ -37,10 +44,14 @@ export interface DarwinNativeAddon {
     swapUsedBytes: number;
     swapFreeBytes: number;
     pressurePercent: number;
+    pressureLevel: number;
   } | null;
 
   /**
    * Queries IOKit power source and AppleSmartBattery registry for capacity, health, and cycles.
+   *
+   * `currentCapacity` / `maxCapacity` are the remaining and full-charge capacity (their ratio matches `percent`);
+   * `nominalCapacity` is the nominal full-charge capacity used for `healthPercent` when available.
    *
    * @returns Battery state, real-time and nominal capacity in mAh, cycle count, and health percentage.
    */
@@ -52,6 +63,7 @@ export interface DarwinNativeAddon {
     isCharging: boolean;
     currentCapacity?: number;
     maxCapacity?: number;
+    nominalCapacity?: number;
     designCapacity?: number;
     healthPercent?: number;
     cycleCount?: number;
@@ -59,11 +71,16 @@ export interface DarwinNativeAddon {
   };
 
   /**
-   * Queries unprivileged IOHIDEventSystemClient for SoC die, NAND SSD, and battery temperatures.
+   * Returns the latest SoC die, NAND SSD and battery temperatures from IOHIDEventSystemClient.
    *
+   * Sensors are read on a native background thread (~16 ms per pass on an M4), so this call does
+   * not block after the first one: a new pass starts when the latest reading is older than `maxAgeMs`,
+   * and its result is returned by a later call (a value can be up to `maxAgeMs` + one call interval old).
+   *
+   * @param maxAgeMs - Maximum age of the returned reading before a background refresh is requested (default 5000).
    * @returns Synthesized thermal metrics in degrees Celsius, or `null` if sensors are inaccessible.
    */
-  getDieTemperature(): {
+  getDieTemperature(maxAgeMs?: number): {
     tempCelsius: number;
     peakCelsius: number;
     peakSensor: string;
@@ -72,6 +89,14 @@ export interface DarwinNativeAddon {
     sensorLabel: string;
     nandCelsius?: number;
     batteryCelsius?: number;
+    /** Number of the background pass that produced this reading (1, 2, ...): changes with every new reading. */
+    sampleSeq: number;
+    /** Age of the reading in ms when returned. */
+    ageMs: number;
+    /** Wall time of that pass in ms (HID IPC included). */
+    passWallMs: number;
+    /** CPU time of the worker thread for that pass in ms (the HID server's share is not included). */
+    passCpuMs: number;
   } | null;
 }
 
@@ -80,7 +105,8 @@ let loadAttempted = false;
 
 /**
  * Attempts to dynamically load the compiled darwin_telemetry.node N-API addon.
- * Searches typical installation and distribution directories relative to __dirname.
+ * Searches typical installation and distribution directories relative to __dirname only
+ * (never process.cwd(), which would load a `.node` from whatever workspace is open).
  *
  * @returns An instance of DarwinNativeAddon if binary is resolved and loaded, otherwise `null`.
  */
@@ -95,7 +121,6 @@ export function loadDarwinNativeAddon(): DarwinNativeAddon | null {
     path.join(__dirname, '../native/darwin_telemetry.node'),
     path.join(__dirname, '../../dist/native/darwin_telemetry.node'),
     path.join(__dirname, '../../../dist/native/darwin_telemetry.node'),
-    path.resolve(process.cwd(), 'dist/native/darwin_telemetry.node'),
   ];
 
   for (const candidate of candidatePaths) {
