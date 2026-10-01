@@ -181,16 +181,42 @@ export function renderFreqOrLoad(info: FreqOrLoadInfo, ctx: RenderContext, withT
   if (!withTooltip) {
     return { text, tooltip: null };
   }
+  const fmt = (hz: number): string => `${(hz / divisor).toFixed(2)} ${config.freqUnit}`;
   const lines = [
     '### CPU Clock Frequency',
     '',
-    '**Average Clock**:',
-    `${(freq.avgHz / divisor).toFixed(2)} ${config.freqUnit}`,
-    `Peak Clock: ${(freq.maxHz / divisor).toFixed(2)} ${config.freqUnit}`,
+    ...renderDynamicAsciiTable(
+      [
+        { header: 'Clock', align: 'left' },
+        { header: 'Frequency', align: 'right' },
+      ],
+      [
+        ['Average', fmt(freq.avgHz)],
+        ['Peak', fmt(freq.maxHz)],
+      ]
+    ),
   ];
   if (freq.perCoreHz.length > 0) {
-    lines.push('---', '*Core Clock Speeds:*');
-    lines.push(...freq.perCoreHz.map((hz, idx) => `- **Core ${idx}**: ${(hz / divisor).toFixed(2)} ${config.freqUnit}`));
+    const cores = freq.perCoreHz;
+    const split = cores.length >= 4;
+    const mid = split ? Math.ceil(cores.length / 2) : cores.length;
+    const cols: ColumnDef[] = [
+      { header: 'Core', align: 'left' },
+      { header: 'Clock', align: 'right' },
+    ];
+    const rows: string[][] = [];
+    for (let i = 0; i < mid; i++) {
+      const row = [`C${i}`, fmt(cores[i]!)];
+      if (split) {
+        const j = i + mid;
+        row.push(j < cores.length ? `C${j}` : '', j < cores.length ? fmt(cores[j]!) : '');
+      }
+      rows.push(row);
+    }
+    if (split) {
+      cols.push({ header: 'Core', align: 'left' }, { header: 'Clock', align: 'right' });
+    }
+    lines.push('', '*Per-Core Clock:*', ...renderDynamicAsciiTable(cols, rows));
   }
   lines.push(...tooltipFooter(ctx.updatedAt));
   return { text, tooltip: lines.join('\n') };
