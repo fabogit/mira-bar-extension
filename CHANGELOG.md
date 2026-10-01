@@ -2,11 +2,11 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/). Decisions behind the changes: [docs/adr/](docs/adr/README.md).
 
-## [2.0.0] - unreleased
+## [1.2.0] - unreleased
 
 The extension is renamed **MiraBar** (formerly Resource Monitor NG) and includes the work of roadmap Phases 1.1 and 1.2, planned as 1.1.1 before the rename.
 
-### Changed (breaking)
+### Changed (for users of Resource Monitor NG)
 
 - Extension ID `fabogit.resource-monitor-ng` → `fabogit.mirabar`; display name *MiraBar: System Monitor for the Status Bar*. Install it as a new extension and uninstall the old one ([ADR-0015](docs/adr/0015-rename-to-mirabar.md)).
 - Settings prefix `resmon.*` → `mirabar.*`; command IDs `resmon.*` → `mirabar.*`, grouped under the *MiraBar* category. Settings are not carried over (README, "Migrating from Resource Monitor NG").

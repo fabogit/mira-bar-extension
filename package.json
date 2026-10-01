@@ -2,7 +2,7 @@
   "name": "mirabar",
   "displayName": "MiraBar: System Monitor for the Status Bar",
   "description": "CPU, memory pressure, temperature, battery and disk in the status bar. Native, zero subprocesses (macOS Apple Silicon, Linux).",
-  "version": "2.0.0",
+  "version": "1.2.0",
   "publisher": "fabogit",
   "engines": {
     "vscode": "^1.105.0",
