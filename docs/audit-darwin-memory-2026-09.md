@@ -1,13 +1,13 @@
 # MiraBar: memory leak and refactor audit, darwin (2026-09-29, rev. 2)
 
 Scope: native/darwin/src/addon.cc, native/darwin/compile.sh + binding.gyp, src/platform/darwin/*, src/extension.ts (darwin-relevant paths).
-Baseline: the analysed sources (native/, src/) are byte-identical to `origin/develop` 0e09a22 of fabogit/resource-monitor_code-extension, so every file:line reference applies to develop. The analysis ran on an untracked copy of the sources.
+Baseline: the analysed sources (native/, src/) are byte-identical to `origin/develop` 0e09a22 of fabogit/mira-bar-extension, so every file:line reference applies to develop. The analysis ran on an untracked copy of the sources.
 Rev. 2 re-verified every rev. 1 finding against the code and added the items marked **NEW**. The sections below are the original report (file:line references point to develop 0e09a22). The work plan was kept in a separate Claude Doc.
 Skills applied: cpp-coding-standards (R.1 RAII, P.8, C.21), memory-safety-patterns, nodejs-core (napi, native-memory).
 
 ## Resolution status (2026-10-01)
 
-All 11 items are fixed on the branch `fix/darwin-memory` of resource-monitor_code-extension (from `develop` 0e09a22), merged into the local `develop` on 2026-10-01 (`c5ebaba`, not pushed) together with Phase 1.2. The decisions are recorded as ADR-0002 to ADR-0006, ADR-0011 and ADR-0014 in `docs/adr/`. Confirmed on the Apple M4 with `test/leak-darwin.mjs`: Mach host port references stable, no RSS growth, memory pressure 62% "Warning" matching the kernel, `getDieTemperature` 2.1 µs per call (was 18,046 µs). Also verified on Linux with mocked Apple APIs under ASan/UBSan (0 live CF objects, 0 host urefs at exit) and TSan.
+All 11 items are fixed on the branch `fix/darwin-memory` of mira-bar-extension (from `develop` 0e09a22), merged into the local `develop` on 2026-10-01 (`c5ebaba`, not pushed) together with Phase 1.2. The decisions are recorded as ADR-0002 to ADR-0006, ADR-0011 and ADR-0014 in `docs/adr/`. Confirmed on the Apple M4 with `test/leak-darwin.mjs`: Mach host port references stable, no RSS growth, memory pressure 62% "Warning" matching the kernel, `getDieTemperature` 2.1 µs per call (was 18,046 µs). Also verified on Linux with mocked Apple APIs under ASan/UBSan (0 live CF objects, 0 host urefs at exit) and TSan.
 
 | # | Resolution |
 |---|------------|

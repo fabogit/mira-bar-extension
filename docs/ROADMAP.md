@@ -22,7 +22,7 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 | 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, not released on its own (ships in 1.2.0) | — |
 | 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
 | 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
-| 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, merged locally | Rename the GitHub repository, release |
+| 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, merged locally | Rename the GitHub milestones, release |
 | 2 – Linux modernization & parity (v1.3.0) | Linux | Open | Start with the Linux check below |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
@@ -36,20 +36,20 @@ The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-s
 
 ## 2. Phase 0: Foundation & Linux Genesis (v1.0.0 – v1.0.1) [COMPLETED]
 
-> Milestone: [**`v1.0.1 - Foundation & Linux Genesis`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/1) • **Status: Closed** (Tags: [`v1.0.0`](https://github.com/fabogit/resource-monitor_code-extension/releases/tag/v1.0.0), [`v1.0.1`](https://github.com/fabogit/resource-monitor_code-extension/releases/tag/v1.0.1))
+> Milestone: [**`v1.0.1 - Foundation & Linux Genesis`**](https://github.com/fabogit/mira-bar-extension/milestone/1) • **Status: Closed** (Tags: [`v1.0.0`](https://github.com/fabogit/mira-bar-extension/releases/tag/v1.0.0), [`v1.0.1`](https://github.com/fabogit/mira-bar-extension/releases/tag/v1.0.1))
 
 The foundational phase established the core extension functionality, UI widgets, configuration toggles, and initial Linux telemetry engine.
 
-- [x] [#17](https://github.com/fabogit/resource-monitor_code-extension/issues/17) **Initial Linux Telemetry Architecture**:
+- [x] [#17](https://github.com/fabogit/mira-bar-extension/issues/17) **Initial Linux Telemetry Architecture**:
   - Implemented initial virtual filesystem readers for `/proc/stat` and `/proc/meminfo`.
-- [x] [#18](https://github.com/fabogit/resource-monitor_code-extension/issues/18) **Hardware Thermal Detection**:
+- [x] [#18](https://github.com/fabogit/mira-bar-extension/issues/18) **Hardware Thermal Detection**:
   - Prototyped hardware thermal detection across `/sys/class/hwmon` and `/sys/class/thermal`.
-- [x] [#19](https://github.com/fabogit/resource-monitor_code-extension/issues/19) **Battery Telemetry**:
+- [x] [#19](https://github.com/fabogit/mira-bar-extension/issues/19) **Battery Telemetry**:
   - Built battery status detection via `/sys/class/power_supply`.
-- [x] [#20](https://github.com/fabogit/resource-monitor_code-extension/issues/20) **Multi-Item Status Bar UI Engine**:
+- [x] [#20](https://github.com/fabogit/mira-bar-extension/issues/20) **Multi-Item Status Bar UI Engine**:
   - Modular status bar items for CPU Usage, CPU Frequency, CPU Temperature, RAM Usage, Battery Level, and Primary Disk Utilization.
   - Priority ordering and alignment within the VS Code Status Bar (`vscode.StatusBarAlignment.Right`).
-- [x] [#21](https://github.com/fabogit/resource-monitor_code-extension/issues/21) **Interactive Command & Configuration System**:
+- [x] [#21](https://github.com/fabogit/mira-bar-extension/issues/21) **Interactive Command & Configuration System**:
   - Granular toggles (`mirabar.show.*`) for each metric.
   - Configurable update intervals and alert thresholds.
   - Interactive commands registered in `package.json`:
@@ -58,7 +58,7 @@ The foundational phase established the core extension functionality, UI widgets,
     - `mirabar.toggleCpuLayout`: Toggle CPU per-core layout (Table vs List).
     - `mirabar.toggleLoadFormat`: Toggle system load format (Percent vs Value).
     - `mirabar.toggleDiskMultiDisplay`: Toggle multi-disk display (All vs Most-Full).
-- [x] [#22](https://github.com/fabogit/resource-monitor_code-extension/issues/22) **Rich Markdown Tooltip Layout**:
+- [x] [#22](https://github.com/fabogit/mira-bar-extension/issues/22) **Rich Markdown Tooltip Layout**:
   - ASCII visual gauge bars for RAM, Swap, and Storage capacity.
   - Tabular layout for per-core CPU breakdown.
 - [x] **Beta Distribution**: VSIX packages on GitHub Releases (v1.0.0, v1.0.1), not on a marketplace.
@@ -67,38 +67,38 @@ The foundational phase established the core extension functionality, UI widgets,
 
 ## 3. Phase 1: Apple Silicon Native Overhaul & Core Refactoring (v1.1.0) [COMPLETED]
 
-> Milestone: [**`v1.1.0 - Apple Silicon Native Overhaul & Core Refactoring`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/2) • **Status: Closed** (Commit: [`f4bd90c`](https://github.com/fabogit/resource-monitor_code-extension/commit/f4bd90c))
+> Milestone: [**`v1.1.0 - Apple Silicon Native Overhaul & Core Refactoring`**](https://github.com/fabogit/mira-bar-extension/milestone/2) • **Status: Closed** (Commit: [`f4bd90c`](https://github.com/fabogit/mira-bar-extension/commit/f4bd90c))
 
 Phase 1 restructured the codebase into a strict modular architecture, eliminated technical debt, decoupled storage tracking, and introduced an ultra-fast C++ native addon for Darwin on Apple Silicon.
 
-- [x] [#23](https://github.com/fabogit/resource-monitor_code-extension/issues/23) **Architectural Modernization & Cleanup**:
+- [x] [#23](https://github.com/fabogit/mira-bar-extension/issues/23) **Architectural Modernization & Cleanup**:
   - Formulated the unified `PlatformProvider` interface (`src/types.ts`).
   - Implemented dynamic runtime factory resolution (`src/platform/factory.ts`).
   - Purged 5 legacy orphaned providers (`src/providers/` v1.0.1 dead code).
-- [x] [#24](https://github.com/fabogit/resource-monitor_code-extension/issues/24) **Decoupled POSIX Disk Provider (`src/disk/disk_provider.ts`)**:
+- [x] [#24](https://github.com/fabogit/mira-bar-extension/issues/24) **Decoupled POSIX Disk Provider (`src/disk/disk_provider.ts`)**:
   - Replaced legacy filesystem readers with Node.js `fs.promises.statfs`.
   - Completely decoupled disk telemetry from VS Code runtime APIs for cross-platform POSIX execution.
-- [x] [#25](https://github.com/fabogit/resource-monitor_code-extension/issues/25) **Native C++ Mach/IOKit Addon (`darwin_telemetry.node`)**:
+- [x] [#25](https://github.com/fabogit/mira-bar-extension/issues/25) **Native C++ Mach/IOKit Addon (`darwin_telemetry.node`)**:
   - Direct Mach kernel `host_processor_info` calls for instantaneous CPU core ticks.
   - In-process Apple Silicon SMC/PMU thermal telemetry (monitoring 24 die sensors with peak detection).
   - Apple Smart Battery telemetry via IOKit (cycle count, actual capacity, design capacity, discharge rate, health %).
   - Mach virtual memory statistics (`host_statistics64`) capturing memory pressure, wired RAM, and compressed memory.
-- [x] [#26](https://github.com/fabogit/resource-monitor_code-extension/issues/26) **Hardware Topology Detection**:
+- [x] [#26](https://github.com/fabogit/mira-bar-extension/issues/26) **Hardware Topology Detection**:
   - Distinguishing Performance (P-Cores) and Efficiency (E-Cores) via `sysctlbyname`.
-- [x] [#27](https://github.com/fabogit/resource-monitor_code-extension/issues/27) **Normalized System Load Average**:
+- [x] [#27](https://github.com/fabogit/mira-bar-extension/issues/27) **Normalized System Load Average**:
   - Calculated across available physical execution cores, toggleable between percentage and raw queue depth.
-- [x] [#28](https://github.com/fabogit/resource-monitor_code-extension/issues/28) **In-Process SoC Thermal Telemetry**:
+- [x] [#28](https://github.com/fabogit/mira-bar-extension/issues/28) **In-Process SoC Thermal Telemetry**:
   - Unprivileged `IOHIDEventSystemClient` event tap sampling 24 die sensors with peak detection.
-- [x] [#29](https://github.com/fabogit/resource-monitor_code-extension/issues/29) **Apple Smart Battery Telemetry**:
+- [x] [#29](https://github.com/fabogit/mira-bar-extension/issues/29) **Apple Smart Battery Telemetry**:
   - IOKit registry query extracting cycle count, actual capacity, design capacity, discharge rate, and health %.
-- [x] [#30](https://github.com/fabogit/resource-monitor_code-extension/issues/30) **Mach Virtual Memory Statistics**:
+- [x] [#30](https://github.com/fabogit/mira-bar-extension/issues/30) **Mach Virtual Memory Statistics**:
   - Capturing memory pressure, wired RAM, and compressed memory dynamics.
-- [x] [#31](https://github.com/fabogit/resource-monitor_code-extension/issues/31) **Toolchain & Automated Test Suite**:
+- [x] [#31](https://github.com/fabogit/mira-bar-extension/issues/31) **Toolchain & Automated Test Suite**:
   - Zero-dependency Clang compilation script (`native/darwin/compile.sh`).
   - Native Apple Silicon smoke test (`test/smoke-darwin.mjs`).
   - Cross-platform end-to-end integration test (`test/integration.ts`).
   - Linux baseline smoke test (`test/smoke-linux.ts`).
-- [x] [#32](https://github.com/fabogit/resource-monitor_code-extension/issues/32) **Ecosystem & Build Modernization**:
+- [x] [#32](https://github.com/fabogit/mira-bar-extension/issues/32) **Ecosystem & Build Modernization**:
   - Modernized engine requirements: `engines.vscode: ^1.105.0`, `engines.node: >=20.0.0`.
   - Aligned development dependencies: `@types/node: ^22.0.0`, `@types/vscode: ~1.105.0`, `@vscode/vsce: ^3.9.0`.
   - Automated targeted packaging for `darwin-arm64`.
@@ -205,14 +205,14 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 - [x] **Prefix**: settings and commands `mirabar.*`, command category *MiraBar*; output channel, status bar item names, settings panel and log prefix use *MiraBar*.
 - [x] **Beta settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (the betas on GitHub Releases are early builds: no compatibility is kept with them).
 - [x] **Docs**: README, CHANGELOG, architecture docs and ADRs use the MiraBar name and `mirabar.*` keys throughout.
-- [ ] **GitHub repository** renamed to `fabogit/mirabar` (old URLs redirect), then `git remote set-url` and the remaining links (`package.json` `repository`, milestone and issue links in this file).
+- [x] **GitHub repository** renamed to `fabogit/mira-bar-extension` (old URLs redirect); remote, `package.json` `repository` and the links in the docs updated.
 - [ ] **Milestones** renamed on GitHub: Linux v1.2.0 → v1.3.0, Windows v1.3.0 → v1.4.0, localization v1.4.0 → v1.5.0.
 
 ---
 
 ## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.3.0) [IN PROGRESS]
 
-> Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/3) • **Status: Open** (Active Target)
+> Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/mira-bar-extension/milestone/3) • **Status: Open** (Active Target)
 
 Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectural standard, establishing empirical performance baselines, and verifying telemetry directly on a native Linux workstation. Details and checklist: [`docs/LINUX_IMPLEMENTATION_PLAN.md`](LINUX_IMPLEMENTATION_PLAN.md).
 
@@ -225,62 +225,62 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 **Linux parity items:**
 
-- [ ] [#1](https://github.com/fabogit/resource-monitor_code-extension/issues/1) **CPU Cold-Start Synchronization (Tick 0)**:
+- [ ] [#1](https://github.com/fabogit/mira-bar-extension/issues/1) **CPU Cold-Start Synchronization (Tick 0)**:
   - Pre-sample `/proc/stat` in constructor of `CpuProvider` to prime tick counters immediately.
-- [ ] [#2](https://github.com/fabogit/resource-monitor_code-extension/issues/2) **CPU Frequency Monospace Table Layout**:
+- [ ] [#2](https://github.com/fabogit/mira-bar-extension/issues/2) **CPU Frequency Monospace Table Layout**:
   - Convert Markdown bulleted core frequency list into compact monospace ASCII cluster table for `freqOrLoad.kind === 'freq'` (now in `renderFreqOrLoad`, `src/sections.ts`).
-- [ ] [#3](https://github.com/fabogit/resource-monitor_code-extension/issues/3) **Battery Autonomy & Time Remaining**:
+- [ ] [#3](https://github.com/fabogit/mira-bar-extension/issues/3) **Battery Autonomy & Time Remaining**:
   - Parse sysfs `power_now` / `current_now` and `time_to_empty_now` / `time_to_full_now` to calculate `timeRemainingMinutes`.
-- [ ] [#4](https://github.com/fabogit/resource-monitor_code-extension/issues/4) **Dynamic Hardware Thermal Trip Points**:
+- [ ] [#4](https://github.com/fabogit/mira-bar-extension/issues/4) **Dynamic Hardware Thermal Trip Points**:
   - Detect `temp*_crit` / `temp*_max` from `/sys/class/hwmon/` to dynamically populate `critCelsius` instead of hardcoded 100 °C (limit column in `renderTemp`, `src/sections.ts`).
-- [ ] [#5](https://github.com/fabogit/resource-monitor_code-extension/issues/5) **Empirical Benchmarking & Scientific Evaluation**:
+- [ ] [#5](https://github.com/fabogit/mira-bar-extension/issues/5) **Empirical Benchmarking & Scientific Evaluation**:
   - Measure execution latency of TypeScript VFS reader at 200 ms polling intervals (`performance.now()`) against the < 250 µs SLA budget.
   - Profile V8 garbage collection overhead and heap allocation stability.
   - Tools available since Phase 1.2: `pnpm run bench:extension` (extension CPU per configuration and per section) and the heap check in `pnpm run test:extension`; the result feeds the per-platform minimums above.
-- [x] [#6](https://github.com/fabogit/resource-monitor_code-extension/issues/6) **Cross-Platform Dual-Runner CI/CD**:
+- [x] [#6](https://github.com/fabogit/mira-bar-extension/issues/6) **Cross-Platform Dual-Runner CI/CD**:
   - Configured `.github/workflows/release.yml` with decoupled dual-runner matrix (`macos-14` + `ubuntu-latest`), hardened least-privilege permissions, concurrency controls, and `workflow_dispatch` manual build testing.
 
 ---
 
 ## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.4.0) [PLANNED]
 
-> Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/4) • **Status: Open** (Future Roadmap)
+> Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/mira-bar-extension/milestone/4) • **Status: Open** (Future Roadmap)
 
 Phase 3 introduces native Windows support through direct Win32 API bindings, adhering to the modular UI strategy and pragmatic hardware constraints.
 
 What Phases 1.1–1.2 already provide: the platform-independent monitor, renderers, settings panel and scheduler (ADR-0009) only need a `TelemetryPlatformProvider` (`src/platform/interface.ts`; `requestTempRefresh` is optional, for sources that read asynchronously). Native code should follow ADR-0002 (RAII, per-environment state) and ADR-0003 if a source is slow; minimums are measured on Windows with the ADR-0010 rule (a WMI thermal query is likely the expensive source).
 
-- [ ] [#7](https://github.com/fabogit/resource-monitor_code-extension/issues/7) **Architectural Blueprint & Toolchain**:
+- [ ] [#7](https://github.com/fabogit/mira-bar-extension/issues/7) **Architectural Blueprint & Toolchain**:
   - Design `WindowsTelemetryProvider` conforming to `TelemetryPlatformProvider`.
   - Design native C++ Win32 addon (`windows_telemetry.node`) compiled via MSVC without subprocess spawning.
-- [ ] [#8](https://github.com/fabogit/resource-monitor_code-extension/issues/8) **CPU Utilization**:
+- [ ] [#8](https://github.com/fabogit/mira-bar-extension/issues/8) **CPU Utilization**:
   - Query per-core and aggregate CPU utilization using Performance Data Helper (PDH) or `GetSystemProcessorPerformanceInformation` via `ntdll.dll`.
-- [ ] [#9](https://github.com/fabogit/resource-monitor_code-extension/issues/9) **Memory Statistics**:
+- [ ] [#9](https://github.com/fabogit/mira-bar-extension/issues/9) **Memory Statistics**:
   - Instantaneous RAM, pagefile, and commit charge querying via `GlobalMemoryStatusEx`.
-- [ ] [#10](https://github.com/fabogit/resource-monitor_code-extension/issues/10) **Battery Telemetry**:
+- [ ] [#10](https://github.com/fabogit/mira-bar-extension/issues/10) **Battery Telemetry**:
   - AC line status, discharge state, and percentage via `GetSystemPowerStatus`.
-- [ ] [#11](https://github.com/fabogit/resource-monitor_code-extension/issues/11) **Drive Storage**:
+- [ ] [#11](https://github.com/fabogit/mira-bar-extension/issues/11) **Drive Storage**:
   - Enumerate active logical drives and query storage via `GetDiskFreeSpaceExW`.
-- [ ] [#12](https://github.com/fabogit/resource-monitor_code-extension/issues/12) **Thermal Telemetry Pragmatic Strategy**:
+- [ ] [#12](https://github.com/fabogit/mira-bar-extension/issues/12) **Thermal Telemetry Pragmatic Strategy**:
   - Evaluate non-blocking fallback to `MSAcpi_ThermalZoneTemperature` (WMI) where supported by OEM BIOS.
-- [ ] [#13](https://github.com/fabogit/resource-monitor_code-extension/issues/13) **Windows Packaging & Distribution**:
+- [ ] [#13](https://github.com/fabogit/mira-bar-extension/issues/13) **Windows Packaging & Distribution**:
   - Build pipeline for `win32-x64` and `win32-arm64` with dedicated Windows integration tests.
 
 ---
 
 ## 7. Phase 4: Internationalization & Localization (v1.5.0) [NICE TO HAVE]
 
-> Milestone: [**`v1.4.0 - Internationalization & Localization`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/5) • **Status: Open** (Backlog)
+> Milestone: [**`v1.4.0 - Internationalization & Localization`**](https://github.com/fabogit/mira-bar-extension/milestone/5) • **Status: Open** (Backlog)
 
 Phase 4 externalizes and translates user-facing strings once the underlying telemetry data models across Darwin, Linux, and Windows are fully consolidated.
 
-- [ ] [#14](https://github.com/fabogit/resource-monitor_code-extension/issues/14) **Localization Infrastructure**:
+- [ ] [#14](https://github.com/fabogit/mira-bar-extension/issues/14) **Localization Infrastructure**:
   - Integrate VS Code official `vscode.l10n` API.
   - Extract all hardcoded strings (now in `src/sections.ts`, `src/monitor.ts` and `src/settings/panel_html.ts`) into source bundle `l10n/bundle.core.json`.
   - Localize command titles, categories, and configuration settings in `package.nls.json`.
-- [ ] [#15](https://github.com/fabogit/resource-monitor_code-extension/issues/15) **Translation Bundles**:
+- [ ] [#15](https://github.com/fabogit/mira-bar-extension/issues/15) **Translation Bundles**:
   - Italian (`bundle.core.it.json`), German (`bundle.core.de.json`), French (`bundle.core.fr.json`), Spanish (`bundle.core.es.json`), Japanese (`bundle.core.ja.json`), Simplified Chinese (`bundle.core.zh-cn.json`).
-- [ ] [#16](https://github.com/fabogit/resource-monitor_code-extension/issues/16) **Layout Resilience**:
+- [ ] [#16](https://github.com/fabogit/mira-bar-extension/issues/16) **Layout Resilience**:
   - Audit Markdown tooltip tables and ASCII progress bars to prevent visual wrapping or layout misalignment caused by variable-length translated strings.
 
 ---
