@@ -31,7 +31,7 @@ const MIN_TICKS_PER_CORE = 5;
  * and runs on a native background thread; the minimum interval is set in config.ts
  * (MEASURED_MIN_STATUS_BAR_MS).
  */
-const TEMP_MAX_AGE_MS = 5_000;
+const TEMP_MAX_AGE_MS = 10_000;
 
 /** How often a missing battery is re-probed (desktop Macs never gain one; laptops may fail transiently). */
 const BATTERY_RECHECK_MS = 60_000;

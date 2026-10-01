@@ -36,28 +36,31 @@ export const MIN_INTERVAL_MS = 200;
 export const MAX_INTERVAL_MS = 3_600_000;
 
 /**
- * Measured minimum status bar interval per section, in milliseconds: the interval at which reading the
- * section's source costs its share of the project budget (0.5% of one core, shared by the 6 sections,
- * so all of them at their minimum stay within it). Each read happens at the status bar interval, so
- * the minimum applies there; tooltips only reuse the latest reading.
+ * Measured minimum status bar interval per section, in milliseconds: the interval at which the section's
+ * reads alone would use the whole project budget (0.5% of one core, docs/ROADMAP.md), rounded up to
+ * 100 ms. Reads happen only at the status bar interval, so the minimum applies there; tooltips reuse the
+ * latest reading. The defaults keep the whole extension within the budget.
  *
- * Source: test/bench-darwin.mjs on an Apple M4 (see docs/ARCHITECTURE.md, "Refresh floors"). Values
- * below MIN_INTERVAL_MS mean the source is cheap enough for the UI minimum.
+ * Measured on an Apple M4 on 2026-09-30 with test/bench-darwin.mjs and test/bench-extension.mjs
+ * (docs/ARCHITECTURE.md, "Refresh Floors"). Temperature: one sensor pass costs 40.4 ms of CPU across the
+ * system (HID server and our worker thread) plus 1.1 ms in the extension host, so 41.6 ms / 0.5% =
+ * 8314 ms -> 8400 ms. The other sections cost 0.35-0.47 ms per read (70-95 ms by the rule), so the UI
+ * minimum applies.
  */
 export const MEASURED_MIN_STATUS_BAR_MS: Readonly<Record<TooltipSection, number>> = {
   cpu: MIN_INTERVAL_MS,
   freq: MIN_INTERVAL_MS,
-  temp: 2000,
+  temp: 8400,
   mem: MIN_INTERVAL_MS,
-  battery: 2000,
-  disk: 2000,
+  battery: MIN_INTERVAL_MS,
+  disk: MIN_INTERVAL_MS,
 };
 
 /** Default status bar interval per section: how often it reads its source and updates its text. */
 export const DEFAULT_STATUS_BAR_MS: Readonly<Record<TooltipSection, number>> = {
   cpu: 2000,
   freq: 2000,
-  temp: 5000,
+  temp: 10_000,
   mem: 2000,
   battery: 10_000,
   disk: 10_000,
@@ -67,7 +70,7 @@ export const DEFAULT_STATUS_BAR_MS: Readonly<Record<TooltipSection, number>> = {
 export const DEFAULT_TOOLTIP_MS: Readonly<Record<TooltipSection, number>> = {
   cpu: 5000,
   freq: 5000,
-  temp: 5000,
+  temp: 10_000,
   mem: 5000,
   battery: 10_000,
   disk: 10_000,

@@ -105,15 +105,31 @@ There is no global tick. `ResourceMonitor` (`src/monitor.ts`) keeps, per section
 
 The measured minimums (`MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts`) follow one rule:
 
-> The minimum status bar interval of a section is the interval at which its reads cost **its share of the project budget**: 0.5% of one core (docs/ROADMAP.md) shared by the six sections, i.e. 0.083% of one core each. With every section at its minimum, the extension stays within the budget.
+> The minimum status bar interval of a section is the interval at which **its reads alone would use the whole project budget**: 0.5% of one core (docs/ROADMAP.md). The default intervals keep the whole extension within that budget.
 
-$$\text{minimum}_s = \max\left(200\ \text{ms},\ \frac{\text{source CPU per read}_s + \text{extension CPU per read}_s}{0.005 / 6}\right)$$
+$$\text{minimum}_s = \max\left(200\ \text{ms},\ \frac{\text{source CPU per read}_s + \text{extension CPU per read}_s}{0.005}\right)$$
+
+The budget is not split six ways because the costs are very uneven: temperature costs about 90 times more per read than any other section, so an equal split would push its minimum to ~50 s while leaving the others' shares unused. With the whole budget as the cap, no single section can exceed it, and the defaults (temperature 10 s, the others 2-10 s) add up to less than the budget.
 
 - *Source CPU per read* counts the whole machine: the calling thread plus the macOS services that answer the request (powerd for the battery, the HID event server for temperature). `test/bench-darwin.mjs` measures it from host CPU ticks (busy ticks while reading in a loop, minus the idle baseline); for temperature it is one background pass over all sensors.
 - *Extension CPU per read* is the extension host's work for one read: waking up, sampling through the provider, rendering the text and, in the worst case (Live mode), the tooltip. `test/bench-extension.mjs` measures it with one section visible at a time.
 - The result is rounded up to the next 100 ms. The renderer-side cost of a status bar update in VS Code is not included (it cannot be measured outside VS Code).
 
-*Measurement on the Apple M4 in progress: until it is recorded here, the minimums are the provisional values in `src/config.ts` (temperature, battery and disk 2000 ms; the other sections 200 ms).*
+Measured on an Apple M4 (macOS, Node 24), 30 September 2026:
+
+| Section | Source | Source CPU per read | Extension CPU per read | Exact | Minimum | Default | Source refresh |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | :--- |
+| CPU usage | `host_processor_info` | 8.0 µs | 440 µs | 90 ms | 200 ms | 2 s | continuous |
+| System load | `os.loadavg` | 0.5 µs | 449 µs | 90 ms | 200 ms | 2 s | kernel, every 5 s |
+| Temperature | 26 HID sensors, one pass | 40.4 ms | 1.1 ms | 8314 ms | **8400 ms** | 10 s | changes on every pass |
+| Memory | `host_statistics64` + sysctls | 8.6 µs | 466 µs | 95 ms | 200 ms | 2 s | continuous |
+| Battery | `IOPowerSources` (60 µs waiting on powerd) | 20.1 µs | 442 µs | 92 ms | 200 ms | 10 s | driver every 60 s |
+| Disk | `statfs` | 10.8 µs | 342 µs | 71 ms | 200 ms | 10 s | continuous |
+
+- **Temperature is the only expensive source.** One pass keeps our worker thread busy for only ~1 ms (19 ms of wall time, mostly waiting for IPC), but costs 40.4 ms of CPU across the system: the HID event server works for each of the 26 sensors. The extension host adds 1.1 ms per read (2.1 ms measured, minus the worker's 1 ms already in the system figure). The previous default of 5 s cost ~0.8% of one core, more than the whole budget; at the 10 s default it costs ~0.42%.
+- **Extension CPU per read** is measured with one section alone, so it includes a whole wake-up of the scheduler; with all six sections sharing wake-ups it drops to ~0.14 ms per read (measured: 14 ms/s for 30 reads/s at 200 ms, temperature excluded). The minimums use the larger, single-section figure.
+- **Battery**: the driver publishes new capacity, cycle and charge data every 60 s (`UpdateTime`), so a faster interval only catches power adapter changes sooner. The 10 s default shows a plug or unplug within 10 s.
+- **Cost at the defaults**: 0.49% of one core with all six sections shown (0.42% temperature, 0.07% the other five together), within the 0.5% budget; disk is hidden by default. The renderer-side cost of status bar updates in VS Code comes on top and cannot be measured outside VS Code.
 
 The same bench measures how often the sources refresh (temperature sensors, battery driver `UpdateTime`): reading faster than that only returns the same values, so the defaults are set at or above those periods. `resmon.allowFastRefresh` lowers every minimum to 200 ms; values set below a minimum are kept in the settings and apply whenever it is on.
 

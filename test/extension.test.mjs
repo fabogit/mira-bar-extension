@@ -100,12 +100,12 @@ await sleep(500);
 {
   await setCfg({ statusBarMs: { temp: 200, battery: 200, disk: 200, cpu: 200, mem: 200, freq: 200 } });
   const g = gear().tooltip.value;
-  assert.ok(g.includes('Temp 2 s') && g.includes('Battery 2 s') && g.includes('Disk 2 s'), 'locked at the measured minimums');
-  assert.ok(g.includes('CPU 200 ms') && g.includes('Mem 200 ms'), 'cpu and memory at 200 ms');
+  assert.ok(g.includes('Temp 8.4 s'), 'temperature locked at its measured minimum');
+  assert.ok(g.includes('CPU 200 ms') && g.includes('Mem 200 ms') && g.includes('Battery 200 ms') && g.includes('Disk 200 ms'), 'cheap sections at 200 ms');
   await setCfg({ allowFastRefresh: true });
-  assert.ok(gear().tooltip.value.includes('Disk 200 ms'), 'unlocked');
+  assert.ok(gear().tooltip.value.includes('Temp 200 ms'), 'unlocked');
   await setCfg({ allowFastRefresh: undefined, allowFastBatteryDiskRefresh: true });
-  assert.ok(gear().tooltip.value.includes('Disk 200 ms'), 'legacy unlock still read');
+  assert.ok(gear().tooltip.value.includes('Temp 200 ms'), 'legacy unlock still read');
   await setCfg({ allowFastBatteryDiskRefresh: undefined, statusBarMs: undefined });
   step('measured minimums');
 }
@@ -163,11 +163,11 @@ await sleep(500);
     assert.ok(!(k in s.cfg), `${k} removed after the first interval edit`);
   }
   assert.deepEqual(await write('tooltipMs', { cpu: 50, freq: 333.4, bogus: 1, disk: 99999999 }),
-    { cpu: 200, freq: 333, temp: 5000, mem: 5000, battery: 10000, disk: 3600000 }, 'tooltipMs clamped, whole ms');
+    { cpu: 200, freq: 333, temp: 10000, mem: 5000, battery: 10000, disk: 3600000 }, 'tooltipMs clamped, whole ms');
   await write('statusBarMs', { ...s.cfg.statusBarMs, temp: 300 });
   assert.equal(s.cfg.statusBarMs.temp, 300, 'stored below the minimum (applied on read)');
   await sleep(200);
-  assert.ok(gear().tooltip.value.includes('Temp 2 s'), 'effective value is the minimum');
+  assert.ok(gear().tooltip.value.includes('Temp 8.4 s'), 'effective value is the minimum');
   assert.deepEqual(await write('order', ['disk', 'bogus', 'disk', 'cpu']), ['disk', 'cpu', 'freq', 'temp', 'mem', 'battery']);
   const before = JSON.stringify(s.cfg);
   s.posted.length = 0;

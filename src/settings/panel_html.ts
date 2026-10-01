@@ -230,10 +230,11 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     </ul>
     <div class="fast">
       <label class="switch"><input type="checkbox" id="allowFast"> Allow status bar intervals below the measured minimums<span class="warn">*</span></label>
-      <p class="warn-note"><span class="warn">* Performance impact.</span> The minimums (${lockedList()}) are the intervals at which each
-        section's reads use its share of the extension's CPU budget (0.5% of one core for all six sections together).
-        Below them, reads cost more CPU time and energy than that budget. With this on, every status bar interval can go down to
-        ${label(LIMITS.intervalMin)}. Values set below a minimum are kept and apply whenever this is on.</p>
+      <p class="warn-note"><span class="warn">* Performance impact.</span> The minimums (${lockedList()}) are the intervals at which one
+        section's reads alone would use the extension's whole CPU budget (0.5% of one core), measured on an Apple M4: a
+        temperature reading costs about 42 ms of CPU across the system. Below them, that section alone costs more CPU time and
+        energy than the whole extension should. With this on, every status bar interval can go down to ${label(LIMITS.intervalMin)}.
+        Values set below a minimum are kept and apply whenever this is on.</p>
     </div>
   </section>
 

@@ -116,7 +116,12 @@ A click on any widget reads every visible section and rebuilds every tooltip.
 
 **Measured minimums.** The minimum status bar interval of a section is the interval at which its reads use its share of the extension's CPU budget: 0.5% of one core for all six sections together, so 0.083% each. The cost of a read includes the macOS services that answer it and the extension's own work to show it; both are measured on an Apple M4 with `pnpm run bench:darwin` and `pnpm run bench:extension`:
 
-*Measurement on the Apple M4 in progress: until it is recorded here, the minimums are the provisional values in `src/config.ts` (temperature, battery and disk 2000 ms; the other sections 200 ms).*
+| Section | Cost per read (M4) | Minimum | Default |
+| :--- | ---: | ---: | ---: |
+| CPU usage, system load, memory, battery, disk | under 30 µs to read, plus 0.34-0.47 ms to show | 200 ms | 2 s (battery and disk 10 s) |
+| Temperature | ~42 ms of CPU across the system (26 sensors through the HID server) | 8400 ms | 10 s |
+
+Temperature is the only expensive source: at the old 5 s default it alone cost ~0.8% of one core. At the defaults the whole extension uses ~0.49% of one core with all six sections shown. The battery driver publishes new data every 60 s, so a shorter battery interval only shows power adapter changes sooner.
 
 `resmon.allowFastRefresh` lowers every minimum to 200 ms, at the cost of exceeding that budget. The derivation is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#refresh-floors).
 

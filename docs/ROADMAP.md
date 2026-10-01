@@ -140,7 +140,7 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
 
 ## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v1.1.1) [IN PROGRESS]
 
-> Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Implemented, minimums pending measurement on Apple Silicon**
+> Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Implemented and measured, pending test in VS Code on Apple Silicon**
 
 Each section gets its own status bar and tooltip intervals, and the minimums are derived from measured costs instead of fixed values.
 
@@ -158,7 +158,11 @@ Each section gets its own status bar and tooltip intervals, and the minimums are
   - Disk requests capped at two in flight (a hung `statfs` holds a libuv pool thread); panel messages handled one at a time.
 - [x] **Settings Panel**: two intervals per section with notes on what applies, measured minimums and the budget rule explained in place.
 - [x] **Tests**: `test/extension.test.mjs` (schedule, tooltips, minimums, legacy settings and migration, panel, disk isolation, lifecycle, heap) runnable with `pnpm run test:extension`.
-- [ ] **Measured Minimums**: run the benches on Apple Silicon and set `MEASURED_MIN_STATUS_BAR_MS` by the rule in docs/ARCHITECTURE.md ("Refresh Floors").
+- [x] **Measured Minimums** (Apple M4, 2026-09-30; rule and table in docs/ARCHITECTURE.md, "Refresh Floors"):
+  - Rule: a section's reads alone may use at most the whole budget (0.5% of one core); the defaults keep the extension within it (~0.49% with all six sections shown).
+  - Temperature: 40.4 ms of system CPU per pass (HID server) + 1.1 ms in the extension host: minimum 8400 ms, default 10 s (was 5 s, ~0.8% of one core).
+  - CPU, load, memory, battery, disk: 0.34-0.47 ms per read, minimum 200 ms. The 2000 ms battery/disk lock of Phase 1.1 is removed; `resmon.allowFastRefresh` now only unlocks temperature.
+  - Battery driver publishes new data every 60 s; the 10 s default only serves power adapter changes.
 - [ ] **Verification in VS Code on Apple Silicon**.
 
 ---

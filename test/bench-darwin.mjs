@@ -7,8 +7,10 @@
 //     minus the idle baseline of the same duration.
 //   - how often the source itself refreshes (temperature sensors, battery driver), because reading
 //     faster than that returns the same value.
-// It then prints, per source, the interval at which its system cost reaches the budget share, which
-// is the rule used for the minimum refresh intervals (docs/ARCHITECTURE.md, "Refresh floors").
+// It then prints, per source, the interval at which its cost alone would use the whole budget (0.5% of
+// one core): the rule for the minimum status bar intervals (docs/ARCHITECTURE.md, "Refresh Floors").
+// With dist/bench-extension.json (run `pnpm run bench:extension` first) it adds the extension's own cost
+// per read, proposes the minimums and prints the total cost at the default intervals.
 //
 // Usage (on macOS, after `pnpm run compile:native`; close heavy apps for a stable baseline):
 //   node test/bench-darwin.mjs            # ~3.5 min (battery driver observed for 120 s)
@@ -37,9 +39,11 @@ const BATTERY_OBSERVE_MS = QUICK ? 30_000 : 120_000;
 
 /** Project budget (docs/ROADMAP.md): total extension overhead below 0.5% of one core. */
 const SLA_CORE_FRACTION = 0.005;
-/** Six sections share the budget: at their floors, all six together stay within it. */
-const SECTIONS = 6;
-const SHARE = SLA_CORE_FRACTION / SECTIONS;
+/**
+ * Rule for the minimums: a section's reads alone may use at most the whole budget. The defaults keep
+ * the whole extension within it (the total at the defaults is printed at the end).
+ */
+const SHARE = SLA_CORE_FRACTION;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ticksBuf = new Uint32Array(256 * 4);
@@ -190,10 +194,10 @@ async function measureBatteryDriver() {
 }
 
 /** Interval at which a per-read system cost (µs) uses the budget share (or, for comparison, the whole budget). */
-const floorMs = (costUs, fraction = SHARE) => costUs / 1000 / fraction;
+const floorMs = (costUs) => costUs / 1000 / SHARE;
 
 console.log(`bench-darwin: ${os.cpus()[0]?.model ?? 'unknown CPU'}, ${os.cpus().length} cores, node ${process.version}`);
-console.log(`Budget: ${(SLA_CORE_FRACTION * 100).toFixed(1)}% of one core shared by ${SECTIONS} sections = ${(SHARE * 100).toFixed(3)}% each\n`);
+console.log(`Budget: ${(SLA_CORE_FRACTION * 100).toFixed(1)}% of one core; minimum = interval at which one section alone uses it\n`);
 
 const diskPath = process.cwd();
 const results = [];
@@ -216,8 +220,7 @@ console.table(
     'wall µs/read': r.wallUs.toFixed(1),
     'process CPU µs': r.processCpuUs.toFixed(1),
     'system CPU µs': r.systemCpuUs.toFixed(1),
-    'floor at 1/6 budget (ms)': floorMs(Math.max(r.systemCpuUs, r.processCpuUs)).toFixed(1),
-    'floor at whole budget (ms)': floorMs(Math.max(r.systemCpuUs, r.processCpuUs), SLA_CORE_FRACTION).toFixed(1),
+    'floor, read only (ms)': floorMs(Math.max(r.systemCpuUs, r.processCpuUs)).toFixed(1),
   }))
 );
 
@@ -231,8 +234,7 @@ if (temp) {
       'worker CPU ms/pass': temp.passWorkerCpuMs.toFixed(2),
       'system CPU ms/pass': temp.passSystemCpuMs.toFixed(2),
       'value change median (ms)': Number.isFinite(temp.valueChangeMedianMs) ? temp.valueChangeMedianMs.toFixed(0) : 'n/a',
-      'floor at 1/6 budget (ms)': floorMs(passCost * 1000).toFixed(0),
-      'floor at whole budget (ms)': floorMs(passCost * 1000, SLA_CORE_FRACTION).toFixed(0),
+      'floor (ms)': floorMs(passCost * 1000).toFixed(0),
     },
   ]);
 } else {
@@ -251,7 +253,7 @@ if (battery) {
 }
 
 // Proposed minimums: native cost per read + extension-host cost per read (from `pnpm run bench:extension`,
-// run it first), divided by the section's budget share, rounded up to 100 ms, at least 200 ms.
+// run it first), divided by the budget, rounded up to 100 ms, at least 200 ms.
 const extFile = path.resolve(__dirname, '../dist/bench-extension.json');
 if (fs.existsSync(extFile)) {
   const ext = JSON.parse(fs.readFileSync(extFile, 'utf8')).perReadUs ?? {};
@@ -264,7 +266,8 @@ if (fs.existsSync(extFile)) {
     const native = section === 'temp'
       ? (temp ? Math.max(temp.passSystemCpuMs, temp.passWorkerCpuMs) * 1000 : NaN)
       : cost(nativeUs[section]);
-    const extension = ext[section];
+    // Temperature: the worker thread's CPU is in both figures (system ticks and this process): count it once.
+    const extension = section === 'temp' && ext.temp !== undefined && temp ? Math.max(0, ext.temp - temp.passWorkerCpuMs * 1000) : ext[section];
     if (!Number.isFinite(native) || extension === undefined) {
       rows.push({ section, 'native µs/read': Number.isFinite(native) ? native.toFixed(1) : 'n/a', 'extension µs/read': extension?.toFixed(0) ?? 'n/a', 'proposed minimum (ms)': 'n/a' });
       continue;
@@ -280,6 +283,15 @@ if (fs.existsSync(extFile)) {
   }
   console.log('\nProposed minimums (rule: docs/ARCHITECTURE.md, "Refresh Floors"):');
   console.table(rows);
+  // Mirror of DEFAULT_STATUS_BAR_MS in src/config.ts.
+  const DEFAULTS = { cpu: 2000, freq: 2000, temp: 10000, mem: 2000, battery: 10000, disk: 10000 };
+  let total = 0;
+  for (const r of rows) {
+    if (r['exact (ms)'] !== undefined) {
+      total += (Number(r['native µs/read']) + Number(r['extension µs/read'])) / 1000 / DEFAULTS[r.section];
+    }
+  }
+  console.log(`Cost at the default status bar intervals (sections measured above): ${(total * 100).toFixed(3)}% of one core (budget ${(SLA_CORE_FRACTION * 100).toFixed(1)}%)`);
 } else {
   console.log('\nRun `pnpm run bench:extension` first to get the proposed minimums (it writes dist/bench-extension.json).');
 }
