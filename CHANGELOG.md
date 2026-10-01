@@ -37,10 +37,10 @@ The extension is renamed **MiraBar** (formerly Resource Monitor NG) and includes
 - No global polling tick: one timer at the earliest section deadline; hidden sections are never read; no timer at all when every section is hidden.
 - Live tooltips are rebuilt only when their data changes; the macOS battery registry is read at most every 30 s.
 
-## [1.1.0] - 2026-09
+## [1.1.0] - 2026-09-20
 
 - Native macOS Apple Silicon support through a Node-API addon (Mach, IOKit, IOHID): CPU per P/E cluster, system load, SoC temperatures, memory, battery health; dual-runner release pipeline (macOS + Linux).
 
-## [1.0.1] / [1.0.0]
+## [1.0.1] - 2026-09-09 / [1.0.0] - 2026-09-07
 
 - First release: Linux status bar widgets for CPU, frequency, temperature, memory, battery and disk, with monospace tooltip tables and quick toggles.

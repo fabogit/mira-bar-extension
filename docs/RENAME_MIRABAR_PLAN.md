@@ -1,6 +1,6 @@
 # Rename Plan: Resource Monitor NG → MiraBar
 
-- **Status**: Proposed (2026-10-01)
+- **Status**: Implemented (2026-10-01) on `chore/rename-mirabar`, one commit per step; Steps 8-9 (GitHub repository, local settings) are manual. Decision record: [ADR-0015](adr/0015-rename-to-mirabar.md).
 - **Branch**: `chore/rename-mirabar` from `develop`
 - **Scope**: extension identity, settings prefix, commands, UI strings, tests, packaging, docs. No change to telemetry, native code or behaviour.
 
@@ -110,11 +110,11 @@ On GitHub, then `git remote set-url origin https://github.com/fabogit/mirabar.gi
 
 1. No leftover names outside historical docs:
    ```bash
-   grep -rnI -iE 'resmon|resource[ -]?monitor ng|resource-monitor-ng|ResMonConfig' \
-     --exclude-dir={node_modules,dist,.git} --exclude=pnpm-lock.yaml --exclude='*.vsix' . \
-     | grep -vE '^./docs/(adr/00(0[1-9]|1[0-4])-|audit-darwin-memory|RENAME_MIRABAR_PLAN)'
+   git grep -nI -iE 'resmon|resource[ -]monitor|ResMonConfig' -- . ':!node_modules' \
+     | grep -vE '^docs/(adr/00(0[1-9]|1[0-5])-|audit-darwin-memory|RENAME_MIRABAR_PLAN)' \
+     | grep -v 'resource-monitor_code-extension'
    ```
-   Expected: no output (before D4, also allow `resource-monitor_code-extension` URLs).
+   The pattern also catches plain "Resource Monitor" (the old status bar item names had no "NG") and skips the `ResourceMonitor` class, which keeps its name. Expected output: only the intentional mentions of the former name, i.e. the "Formerly Resource Monitor NG" note and the "Migrating from Resource Monitor NG" section of README, the 2.0.0 entry of CHANGELOG, the vision line and Phase 1.3 of ROADMAP, the intro line of `docs/adr/README.md`. `resource-monitor_code-extension` URLs stay until D4.
 2. `pnpm run typecheck && pnpm run build && pnpm run test:extension && pnpm run test:integration`; on the Mac also `pnpm run test:darwin`.
 3. `pnpm run package:darwin-arm64` produces `mirabar-darwin-arm64-2.0.0.vsix`; `npx vsce ls` shows no unexpected files.
 4. In Antigravity on the M4:

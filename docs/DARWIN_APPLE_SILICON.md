@@ -82,7 +82,7 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
 ## 3. Production Architecture & Layout
 
 ```
-resource-monitor/
+mirabar/
 ├── src/
 │   ├── extension.ts               # Activation, commands, settings listener
 │   ├── monitor.ts                 # ResourceMonitor: widgets and per-section scheduler
