@@ -7,7 +7,7 @@ Skills applied: cpp-coding-standards (R.1 RAII, P.8, C.21), memory-safety-patter
 
 ## Resolution status (2026-10-01)
 
-All 11 items are fixed on the branch `fix/darwin-memory` of resource-monitor_code-extension (from `develop` 0e09a22), merged into the local `develop` on 2026-10-01 (`12e90e6`, not pushed) together with Phase 1.2. The decisions are recorded as ADR-0002 to ADR-0006, ADR-0011 and ADR-0014 in `docs/adr/`. Confirmed on the Apple M4 with `test/leak-darwin.mjs`: Mach host port references stable, no RSS growth, memory pressure 62% "Warning" matching the kernel, `getDieTemperature` 2.1 µs per call (was 18,046 µs). Also verified on Linux with mocked Apple APIs under ASan/UBSan (0 live CF objects, 0 host urefs at exit) and TSan.
+All 11 items are fixed on the branch `fix/darwin-memory` of resource-monitor_code-extension (from `develop` 0e09a22), merged into the local `develop` on 2026-10-01 (`c5ebaba`, not pushed) together with Phase 1.2. The decisions are recorded as ADR-0002 to ADR-0006, ADR-0011 and ADR-0014 in `docs/adr/`. Confirmed on the Apple M4 with `test/leak-darwin.mjs`: Mach host port references stable, no RSS growth, memory pressure 62% "Warning" matching the kernel, `getDieTemperature` 2.1 µs per call (was 18,046 µs). Also verified on Linux with mocked Apple APIs under ASan/UBSan (0 live CF objects, 0 host urefs at exit) and TSan.
 
 | # | Resolution |
 |---|------------|

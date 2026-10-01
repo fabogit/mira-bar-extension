@@ -26,7 +26,7 @@ Resource Monitor NG is designed as an ultra-lightweight, zero-overhead hardware 
 | 3 – Windows (v1.3.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.4.0) | All | Backlog | — |
 
-Phases 1.1 and 1.2 are merged into the local `develop` (`12e90e6`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. Release as v1.1.1 after that check (version bump and release notes still to do; there is no CHANGELOG yet).
+Phases 1.1 and 1.2 are merged into the local `develop` (`c5ebaba`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. Release as v1.1.1 after that check (version bump and release notes still to do; there is no CHANGELOG yet).
 
 ---
 
