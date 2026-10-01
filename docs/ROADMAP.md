@@ -30,7 +30,7 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 
 Phases 1.1 to 1.3 are merged into the local `develop` (`c5ebaba`, `7b4c977`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **1.2.0**, the first MiraBar release, after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
 
-The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-settings-namespace.md). The first MiraBar release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones keep their old titles until renamed). Beta interval settings removed in 1.2.0 are named without prefix.
+The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-settings-namespace.md). The first MiraBar release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones were renamed accordingly). Beta interval settings removed in 1.2.0 are named without prefix.
 
 ---
 
@@ -206,13 +206,13 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 - [x] **Beta settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (the betas on GitHub Releases are early builds: no compatibility is kept with them).
 - [x] **Docs**: README, CHANGELOG, architecture docs and ADRs use the MiraBar name and `mirabar.*` keys throughout.
 - [x] **GitHub repository** renamed to `fabogit/mira-bar-extension` (old URLs redirect); remote, `package.json` `repository` and the links in the docs updated.
-- [ ] **Milestones** renamed on GitHub: Linux v1.2.0 → v1.3.0, Windows v1.3.0 → v1.4.0, localization v1.4.0 → v1.5.0.
+- [x] **Milestones** renamed on GitHub: Linux v1.2.0 → v1.3.0, Windows v1.3.0 → v1.4.0, localization v1.4.0 → v1.5.0.
 
 ---
 
 ## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.3.0) [IN PROGRESS]
 
-> Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/mira-bar-extension/milestone/3) • **Status: Open** (Active Target)
+> Milestone: [**`v1.3.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/mira-bar-extension/milestone/3) • **Status: Open** (Active Target)
 
 Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectural standard, establishing empirical performance baselines, and verifying telemetry directly on a native Linux workstation. Details and checklist: [`docs/LINUX_IMPLEMENTATION_PLAN.md`](LINUX_IMPLEMENTATION_PLAN.md).
 
@@ -221,14 +221,14 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 - [ ] On a Linux machine with real sensors: `pnpm run typecheck`, `test:linux`, `test:integration`, `test:extension`, `package:linux-x64`; install the VSIX and check the status bar, the settings panel, the gear tooltip, Static/Live tooltips.
 - [ ] Linux-specific code changed in Phase 1.1/1.2: `cpufreq` skips cores without `scaling_cur_freq` and rescans every 60 s; temperature is cached per interval and reports `sampleSeq` / `ageMs`. Check on hardware with cpufreq and hwmon, and on a laptop (battery).
 - [ ] **Per-platform refresh minimums** (ADR-0010): the minimums are macOS measurements applied everywhere (temperature 8400 ms). Measure Linux with `bench:extension` plus a Linux source bench (sysfs/procfs read cost), and make `MEASURED_MIN_STATUS_BAR_MS` per platform.
-- [ ] **CI**: run `test:extension` in both release jobs.
+- [x] **CI**: `test:extension` runs in both release jobs; the release notes come from the CHANGELOG section of the tag; a `prerelease` input (or a tag suffix such as `-rc.1`) publishes a pre-release.
 
 **Linux parity items:**
 
 - [ ] [#1](https://github.com/fabogit/mira-bar-extension/issues/1) **CPU Cold-Start Synchronization (Tick 0)**:
   - Pre-sample `/proc/stat` in constructor of `CpuProvider` to prime tick counters immediately.
-- [ ] [#2](https://github.com/fabogit/mira-bar-extension/issues/2) **CPU Frequency Monospace Table Layout**:
-  - Convert Markdown bulleted core frequency list into compact monospace ASCII cluster table for `freqOrLoad.kind === 'freq'` (now in `renderFreqOrLoad`, `src/sections.ts`).
+- [x] [#2](https://github.com/fabogit/mira-bar-extension/issues/2) **CPU Frequency Monospace Table Layout**:
+  - Done in 1.2.0: Average/Peak table and a two-column-pair per-core table in the frequency tooltip (`src/sections.ts`).
 - [ ] [#3](https://github.com/fabogit/mira-bar-extension/issues/3) **Battery Autonomy & Time Remaining**:
   - Parse sysfs `power_now` / `current_now` and `time_to_empty_now` / `time_to_full_now` to calculate `timeRemainingMinutes`.
 - [ ] [#4](https://github.com/fabogit/mira-bar-extension/issues/4) **Dynamic Hardware Thermal Trip Points**:
@@ -237,6 +237,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
   - Measure execution latency of TypeScript VFS reader at 200 ms polling intervals (`performance.now()`) against the < 250 µs SLA budget.
   - Profile V8 garbage collection overhead and heap allocation stability.
   - Tools available since Phase 1.2: `pnpm run bench:extension` (extension CPU per configuration and per section) and the heap check in `pnpm run test:extension`; the result feeds the per-platform minimums above.
+- [ ] **More temperature sensors** (Linux shows only the CPU today; macOS also shows NAND and battery): NVMe [#33](https://github.com/fabogit/mira-bar-extension/issues/33), RAM [#34](https://github.com/fabogit/mira-bar-extension/issues/34), Wi-Fi [#35](https://github.com/fabogit/mira-bar-extension/issues/35), battery [#36](https://github.com/fabogit/mira-bar-extension/issues/36); limits from hwmon `temp*_max` / `temp*_crit` ([#4](https://github.com/fabogit/mira-bar-extension/issues/4)).
 - [x] [#6](https://github.com/fabogit/mira-bar-extension/issues/6) **Cross-Platform Dual-Runner CI/CD**:
   - Configured `.github/workflows/release.yml` with decoupled dual-runner matrix (`macos-14` + `ubuntu-latest`), hardened least-privilege permissions, concurrency controls, and `workflow_dispatch` manual build testing.
 
@@ -244,7 +245,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 ## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.4.0) [PLANNED]
 
-> Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/mira-bar-extension/milestone/4) • **Status: Open** (Future Roadmap)
+> Milestone: [**`v1.4.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/mira-bar-extension/milestone/4) • **Status: Open** (Future Roadmap)
 
 Phase 3 introduces native Windows support through direct Win32 API bindings, adhering to the modular UI strategy and pragmatic hardware constraints.
 
@@ -270,7 +271,7 @@ What Phases 1.1–1.2 already provide: the platform-independent monitor, rendere
 
 ## 7. Phase 4: Internationalization & Localization (v1.5.0) [NICE TO HAVE]
 
-> Milestone: [**`v1.4.0 - Internationalization & Localization`**](https://github.com/fabogit/mira-bar-extension/milestone/5) • **Status: Open** (Backlog)
+> Milestone: [**`v1.5.0 - Internationalization & Localization`**](https://github.com/fabogit/mira-bar-extension/milestone/5) • **Status: Open** (Backlog)
 
 Phase 4 externalizes and translates user-facing strings once the underlying telemetry data models across Darwin, Linux, and Windows are fully consolidated.
 
