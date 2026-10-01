@@ -2,7 +2,7 @@
 
 ## 1. Vision & Core Architectural Principles
 
-Resource Monitor NG is designed as an ultra-lightweight, zero-overhead hardware telemetry monitor for the Visual Studio Code Status Bar.
+MiraBar (formerly Resource Monitor NG) is designed as an ultra-lightweight, zero-overhead hardware telemetry monitor for the Visual Studio Code Status Bar.
 
 * **Strict SLA Budget**: Target total CPU overhead must remain strictly below **0.5% of a single core**, with instantaneous sampling latency under **1 ms**.
 * **Zero Child Process Spawning**: Invocations of external shell utilities (`top`, `htop`, `df`, `vm_stat`, `wmic`, `powershell`) are strictly prohibited to prevent process creation overhead, IPC lag, and CPU spikes.
@@ -20,13 +20,16 @@ Resource Monitor NG is designed as an ultra-lightweight, zero-overhead hardware 
 | :--- | :--- | :--- | :--- |
 | 0 – Foundation & Linux genesis (v1.0.x) | Linux | Done, released | — |
 | 1 – Apple Silicon native overhaul (v1.1.0) | macOS | Done, released | — |
-| 1.1 – Darwin memory safety & native refactor | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
-| 1.2 – Per-section refresh & measured minimums | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
-| 2 – Linux modernization & parity (v1.2.0) | Linux | Open | Start with the Linux check below |
-| 3 – Windows (v1.3.0) | Windows | Not started | Blueprint (#7) |
-| 4 – Localization (v1.4.0) | All | Backlog | — |
+| 1.1 – Darwin memory safety & native refactor (v2.0.0) | macOS (shared code) | Done, verified on an M4 | Check the shared code on Linux |
+| 1.2 – Per-section refresh & measured minimums (v2.0.0) | All platforms (measured on macOS) | Done, verified on an M4 | Check on Linux; per-platform minimums |
+| 1.3 – Rename to MiraBar (v2.0.0) | All | Done, local branch | Merge, rename the GitHub repository, release |
+| 2 – Linux modernization & parity (v2.1.0) | Linux | Open | Start with the Linux check below |
+| 3 – Windows (v2.2.0) | Windows | Not started | Blueprint (#7) |
+| 4 – Localization (v2.3.0) | All | Backlog | — |
 
-Phases 1.1 and 1.2 are merged into the local `develop` (`c5ebaba`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. Release as v1.1.1 after that check (version bump and release notes still to do; there is no CHANGELOG yet).
+Phases 1.1 and 1.2 are merged into the local `develop` (`c5ebaba`, 2026-10-01) and **not pushed**: the code they changed outside `native/darwin` runs on Linux too and has only been tested there in a VM without sensors, battery or cpufreq. They ship as **2.0.0** together with the rename to MiraBar (Phase 1.3), after that check; release notes are in [CHANGELOG.md](../CHANGELOG.md).
+
+The rename ([ADR-0015](adr/0015-rename-to-mirabar.md)) changed every setting and command prefix from `mirabar.` to `mirabar.` and moved the milestones up: v1.2.0-v1.4.0 are now 2.1.0-2.3.0 (the GitHub milestones keep their old titles until renamed). Phase 0 and 1 below use the current `mirabar.` keys; legacy keys removed in 2.0.0 are named without prefix.
 
 ---
 
@@ -46,14 +49,14 @@ The foundational phase established the core extension functionality, UI widgets,
   - Modular status bar items for CPU Usage, CPU Frequency, CPU Temperature, RAM Usage, Battery Level, and Primary Disk Utilization.
   - Priority ordering and alignment within the VS Code Status Bar (`vscode.StatusBarAlignment.Right`).
 - [x] [#21](https://github.com/fabogit/resource-monitor_code-extension/issues/21) **Interactive Command & Configuration System**:
-  - Granular toggles (`resmon.show.*`) for each metric.
+  - Granular toggles (`mirabar.show.*`) for each metric.
   - Configurable update intervals and alert thresholds.
   - Interactive commands registered in `package.json`:
-    - `resmon.refresh`: Force immediate telemetry refresh.
-    - `resmon.toggleTooltipMode`: Switch between Live and Static tooltips.
-    - `resmon.toggleCpuLayout`: Toggle CPU per-core layout (Table vs List).
-    - `resmon.toggleLoadFormat`: Toggle system load format (Percent vs Value).
-    - `resmon.toggleDiskMultiDisplay`: Toggle multi-disk display (All vs Most-Full).
+    - `mirabar.refresh`: Force immediate telemetry refresh.
+    - `mirabar.toggleTooltipMode`: Switch between Live and Static tooltips.
+    - `mirabar.toggleCpuLayout`: Toggle CPU per-core layout (Table vs List).
+    - `mirabar.toggleLoadFormat`: Toggle system load format (Percent vs Value).
+    - `mirabar.toggleDiskMultiDisplay`: Toggle multi-disk display (All vs Most-Full).
 - [x] [#22](https://github.com/fabogit/resource-monitor_code-extension/issues/22) **Rich Markdown Tooltip Layout**:
   - ASCII visual gauge bars for RAM, Swap, and Storage capacity.
   - Tabular layout for per-core CPU breakdown.
@@ -101,7 +104,7 @@ Phase 1 restructured the codebase into a strict modular architecture, eliminated
 
 ---
 
-## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v1.1.1) [COMPLETED]
+## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v2.0.0) [COMPLETED]
 
 > Branch: `fix/darwin-memory` (from `develop`, local commits) • **Status: Done, verified in VS Code on Apple Silicon (2026-10-01)** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
 
@@ -133,21 +136,21 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - Profiled with `native/darwin/tools/hid_bench.cc`: cost evenly spread (~0.6 ms per sensor IPC), no single slow sensor.
   - Native background sampler (`ThermalSampler`): `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and asks the worker for a new pass when it is older than requested.
 - [x] **Refresh Model** (superseded by the per-section model of Phase 1.2):
-  - `resmon.updatefrequencyms` (200-15000 ms) is the clock: status bar values every tick, Live tooltips every tick.
-  - `resmon.refreshMs` per section (200 ms to 1 h): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `resmon.allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaces the pre-release `resmon.refreshSeconds`, still read as a fallback.
+  - `updatefrequencyms` (200-15000 ms, removed in 2.0.0) is the clock: status bar values every tick, Live tooltips every tick.
+  - `refreshMs` per section (200 ms to 1 h, removed in 2.0.0): Static tooltip auto-refresh and sampling interval for battery, disk and temperature. Minimum 2000 ms for temperature; minimum 2000 ms for battery and disk unless `allowFastBatteryDiskRefresh` is enabled (flagged as a performance cost). Replaced the pre-release `refreshSeconds`.
   - Half-tick tolerance so an interval equal to the tick fires every tick; update time with tenths of a second below 1000 ms; a click refreshes everything.
   - Configuration changes debounced (100 ms) so slider drags do not recreate the widgets on every step.
 - [x] **Final Check**:
   - Hidden CPU, load and memory widgets are no longer sampled (only temperature and battery were gated before).
   - Live tooltips of battery, disk and temperature rebuilt only when a new reading arrives (was 5 times a second at 200 ms).
-  - `statfs` off the tick: a dead network mount cannot freeze the status bar; at most one pending request per set of paths, and removing the mount from `resmon.disk.drives` recovers at once.
+  - `statfs` off the tick: a dead network mount cannot freeze the status bar; at most one pending request per set of paths, and removing the mount from `mirabar.disk.drives` recovers at once.
   - Configuration read once per change instead of twice per tick; activation generation guard for late callbacks.
   - Linux: cores without `cpufreq` skipped (no failing reads per tick), cores rescanned once a minute for hotplug.
 - [x] **Settings Widget & Panel**:
   - Gear status bar widget: tooltip with the current values and quick toggles; click opens a webview settings panel (preset sliders plus millisecond fields, visibility, drag-and-drop order, units, disk options). Strict CSP with nonce; rows updated in place so external changes never interrupt typing or dragging.
   - The panel writes validated values to the user settings (single source of truth); stored values are never rewritten by unrelated edits. Data tooltips keep only metrics, update time and Settings / Refresh links.
 - [x] **Configurable Widget Order**:
-  - `resmon.order` mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
+  - `mirabar.order` mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
 - [x] **Verification in VS Code on Apple Silicon** (2026-10-01): VSIX installed on an M4; settings panel and Static/Live tooltips checked (the battery/disk lock it also covered was later removed by Phase 1.2).
 - [x] **Extension Lifecycle Refactor**: done in Phase 1.2 below.
 
@@ -155,7 +158,7 @@ Decisions: ADR-0002 (RAII, addon state), ADR-0003 (thermal background thread), A
 
 ---
 
-## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v1.1.1) [COMPLETED]
+## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v2.0.0) [COMPLETED]
 
 > Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Done, measured and verified in VS Code on Apple Silicon (2026-10-01)**
 
@@ -166,34 +169,47 @@ Each section gets its own status bar and tooltip intervals, and the minimums are
   - `test/bench-extension.mjs`: extension-host CPU per configuration and per section (one section alone, Live).
   - Native temperature readings carry `sampleSeq`, `ageMs`, `passWallMs`, `passCpuMs`.
 - [x] **Per-Section Intervals**:
-  - `resmon.statusBarMs` (reads and status bar text) and `resmon.tooltipMs` (Static tooltips, never faster than the status bar); `resmon.allowFastRefresh` lowers the minimums to 200 ms.
-  - Pre-release keys read as fallbacks and migrated on the first interval edit in the panel; the released `resmon.updatefrequencyms` keeps working (CPU, load, memory; temperature, battery and disk at least as slow).
+  - `mirabar.statusBarMs` (reads and status bar text) and `mirabar.tooltipMs` (Static tooltips, never faster than the status bar); `mirabar.allowFastRefresh` lowers the minimums to 200 ms.
+  - Pre-release keys were read as fallbacks and migrated by the panel, and the released `updatefrequencyms` kept working (ADR-0012); the rename to MiraBar removed all of them (ADR-0015).
 - [x] **Deadline Scheduler & Lifecycle Refactor**:
   - `ResourceMonitor` (`src/monitor.ts`, `vscode.Disposable`): one timer at the earliest section deadline, no global tick, no timer when every section is hidden.
   - Renderers per section (`src/sections.ts`, pure functions) and formatting helpers (`src/format.ts`); `src/extension.ts` only wires commands and settings.
   - Temperature pass requested 100 ms before its read on macOS, so the value shown is fresh without waiting.
   - Disk requests capped at two in flight (a hung `statfs` holds a libuv pool thread); panel messages handled one at a time.
 - [x] **Settings Panel**: two intervals per section with notes on what applies, measured minimums and the budget rule explained in place.
-- [x] **Tests**: `test/extension.test.mjs` (schedule, tooltips, minimums, legacy settings and migration, panel, disk isolation, lifecycle, heap) runnable with `pnpm run test:extension`.
+- [x] **Tests**: `test/extension.test.mjs` (schedule, tooltips, minimums, settings namespace, panel, disk isolation, lifecycle, heap) runnable with `pnpm run test:extension`.
 - [x] **Measured Minimums** (Apple M4, 2026-09-30; rule and table in docs/ARCHITECTURE.md, "Refresh Floors"):
   - Rule: a section's reads alone may use at most the whole budget (0.5% of one core); the defaults keep the extension within it (~0.49% with all six sections shown).
   - Temperature: 40.4 ms of system CPU per pass (HID server) + 1.1 ms in the extension host: minimum 8400 ms, default 10 s (was 5 s, ~0.8% of one core).
-  - CPU, load, memory, battery, disk: 0.34-0.47 ms per read, minimum 200 ms. The 2000 ms battery/disk lock of Phase 1.1 is removed; `resmon.allowFastRefresh` now only unlocks temperature.
+  - CPU, load, memory, battery, disk: 0.34-0.47 ms per read, minimum 200 ms. The 2000 ms battery/disk lock of Phase 1.1 is removed; `mirabar.allowFastRefresh` now only unlocks temperature.
   - Battery driver publishes new data every 60 s; the 10 s default only serves power adapter changes.
 - [x] **Verification in VS Code on Apple Silicon** (2026-10-01): per-section intervals, settings panel, gear tooltip tables, minimums.
 
-Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from measurements), ADR-0012 (legacy settings), ADR-0007 (gear tooltip tables).
+Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from measurements), ADR-0012 (legacy settings, superseded by ADR-0015), ADR-0007 (gear tooltip tables).
 
 **Follow-ups (macOS):**
 
-- [ ] **Release v1.1.1**: version bump, release notes (no CHANGELOG yet), push `develop` once the Linux check passes.
+- [ ] **Release 2.0.0**: version and CHANGELOG are ready; date the CHANGELOG entry, push `develop` and tag once the Linux check passes.
 - [ ] **Fewer temperature sensors per pass**: a pass costs 40.4 ms of system CPU for 26 sensors; measure accuracy and cost with a subset, then revisit the 8400 ms minimum (ADR-0003, ADR-0010).
 - [ ] **macOS 11 support**: decide when to raise the deployment target (ADR-0006).
 - [ ] **Repeat `bench:darwin`** on an idle Mac to confirm the temperature figure (single run so far).
 
 ---
 
-## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.2.0) [IN PROGRESS]
+## 4c. Phase 1.3: Rename to MiraBar (v2.0.0) [COMPLETED]
+
+> Branch: `chore/rename-mirabar` (from `develop`, local commits) • Plan: [`docs/RENAME_MIRABAR_PLAN.md`](RENAME_MIRABAR_PLAN.md) • Decision: [ADR-0015](adr/0015-rename-to-mirabar.md)
+
+- [x] **Identity**: extension `fabogit.mirabar`, display name *MiraBar: System Monitor for the Status Bar*, version 2.0.0, VSIX `mirabar-<target>-<version>.vsix`.
+- [x] **Prefix**: settings and commands `mirabar.*`, command category *MiraBar*; output channel, status bar item names, settings panel and log prefix renamed.
+- [x] **Legacy settings removed**: `updatefrequencyms`, `refreshMs`, `refreshSeconds`, `allowFastBatteryDiskRefresh`, their fallbacks and the panel migration (a new extension ID has no old values to read).
+- [x] **Docs**: README with "Migrating from Resource Monitor NG", CHANGELOG, forward-looking docs; ADR-0001 to 0014 keep the old names.
+- [ ] **GitHub repository** renamed to `fabogit/mirabar` (old URLs redirect), then `git remote set-url` and the remaining links (`package.json` `repository`, milestone and issue links in this file).
+- [ ] **Milestones** v1.2.0-v1.4.0 renamed to v2.1.0-v2.3.0 on GitHub.
+
+---
+
+## 5. Phase 2: Linux Telemetry Modernization & Parity (v2.1.0) [IN PROGRESS]
 
 > Milestone: [**`v1.2.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/3) • **Status: Open** (Active Target)
 
@@ -225,7 +241,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 ---
 
-## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v1.3.0) [PLANNED]
+## 6. Phase 3: Windows NT Architecture & Win32 Telemetry (v2.2.0) [PLANNED]
 
 > Milestone: [**`v1.3.0 - Windows NT Architecture & Win32 Telemetry`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/4) • **Status: Open** (Future Roadmap)
 
@@ -251,7 +267,7 @@ What Phases 1.1–1.2 already provide: the platform-independent monitor, rendere
 
 ---
 
-## 7. Phase 4: Internationalization & Localization (v1.4.0) [NICE TO HAVE]
+## 7. Phase 4: Internationalization & Localization (v2.3.0) [NICE TO HAVE]
 
 > Milestone: [**`v1.4.0 - Internationalization & Localization`**](https://github.com/fabogit/resource-monitor_code-extension/milestone/5) • **Status: Open** (Backlog)
 

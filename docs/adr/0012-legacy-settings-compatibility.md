@@ -1,6 +1,6 @@
 # ADR-0012: Compatibility with released and pre-release interval settings
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0015](0015-rename-to-mirabar.md) (the rename drops every legacy key)
 - **Date**: 2026-10-01 (Phase 1.2)
 
 ## Context

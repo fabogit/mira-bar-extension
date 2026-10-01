@@ -10,7 +10,7 @@ const path = require('node:path');
 const DEFAULTS = Object.fromEntries(
   Object.entries(require(path.join(__dirname, '..', '..', 'package.json')).contributes.configuration.properties)
     .filter(([, spec]) => 'default' in spec)
-    .map(([key, spec]) => [key.replace(/^resmon\./, ''), spec.default])
+    .map(([key, spec]) => [key.replace(/^mirabar\./, ''), spec.default])
 );
 
 const state = {

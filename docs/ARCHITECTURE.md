@@ -4,13 +4,13 @@
 
 > The reasons behind these designs, with the measurements and rejected alternatives, are in the ADRs: [`docs/adr/`](adr/README.md).
 
-**Resource Monitor NG** is an ultra-lightweight, cross-platform (Linux & macOS Apple Silicon) extension for VS Code and Antigravity-IDE designed to replace legacy system monitoring extensions that rely on heavy subprocess spawning (e.g. `systeminformation` spawning `ps`, `df`, `free`, or `powermetrics`).
+**MiraBar** is an ultra-lightweight, cross-platform (Linux & macOS Apple Silicon) extension for VS Code and Antigravity-IDE designed to replace legacy system monitoring extensions that rely on heavy subprocess spawning (e.g. `systeminformation` spawning `ps`, `df`, `free`, or `powermetrics`).
 
 ## Zero Subprocess Dual-Platform Architecture
 
 Traditional Node.js system monitor extensions execute shell subprocesses every 1–2 seconds. On Linux and macOS, this causes constant process forks, context switches, thread pool starvation, and prevents CPU cores from entering deeper C-states (increasing power consumption and battery drain).
 
-Resource Monitor NG enforces a strict **Zero-Subprocess Invariant** on all supported platforms:
+MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platforms:
 - **Linux (`linux-x64`)**: Direct synchronous file descriptor reads from the virtual in-memory filesystems (`/proc` and `/sys`).
 - **macOS Apple Silicon (`darwin-arm64`)**: Direct synchronous C/C++ kernel API calls via a standalone Node-API native addon (`darwin_telemetry.node`) compiled with Apple Clang, linking Mach, IOKit, and CoreFoundation.
 
@@ -37,7 +37,7 @@ Resource Monitor NG enforces a strict **Zero-Subprocess Invariant** on all suppo
 
 ### 2. Clock Frequencies & System Load
 - **Linux**: Dynamically discovers `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`, gracefully skipping parked/offline cores (`ENOENT`).
-- **Darwin (Apple Silicon - System Load Average)**: Hardware frequency scaling on Apple Silicon is handled autonomously by Apple power firmware and not accessible to unprivileged userspace. Resource Monitor NG maps this slot to **Normalized System Load Average**:
+- **Darwin (Apple Silicon - System Load Average)**: Hardware frequency scaling on Apple Silicon is handled autonomously by Apple power firmware and not accessible to unprivileged userspace. MiraBar maps this slot to **Normalized System Load Average**:
   $$\text{Normalized Load \%} = \frac{\text{Load}_{1\text{m}}}{\text{Total Hardware Cores}} \times 100$$
   Toggleable between normalized percentage (`34.4% L`) and POSIX queue depth (`3.44 L`).
 
@@ -62,10 +62,10 @@ Resource Monitor NG enforces a strict **Zero-Subprocess Invariant** on all suppo
 
 ### 6. Storage & Multi-Disk Architecture
 - Uses non-blocking asynchronous `statfs()` targeting active workspaces or user-configured mount points.
-- **Multi-Disk Display Modes (`resmon.disk.multiDisplay`)**:
+- **Multi-Disk Display Modes (`mirabar.disk.multiDisplay`)**:
   - `'All'`: Displays compact percentages for all monitored filesystems on the status bar (e.g. `/ 24% | /data 55%`).
   - `'MostFull'`: Displays only the single filesystem with highest capacity utilization.
-  - Quick-toggle via command `resmon.toggleDiskMultiDisplay`.
+  - Quick-toggle via command `mirabar.toggleDiskMultiDisplay`.
 - **Smart Path Truncation (`truncatePath`)**: Intelligently truncates path strings by preserving directory boundaries and leaf folder names (e.g. `.../kind-newton` or `.../antigravity/kind-newton`) instead of blind character slicing, ensuring clear visual identification.
 
 ---
@@ -76,14 +76,14 @@ Every section has two intervals, set per section in the settings panel or in `se
 
 | Setting | What it controls | Applies to | Range |
 | :--- | :--- | :--- | :--- |
-| `resmon.statusBarMs` | How often the section **reads its data** and updates its status bar text | Both tooltip modes; Live tooltips follow it | 200 ms to 1 h, never below the section's measured minimum |
-| `resmon.tooltipMs` | How often the section's **tooltip is rebuilt** from the latest reading | Static mode with `resmon.tooltip.autoRefresh` on | 200 ms to 1 h, never below the section's status bar interval |
-| `resmon.allowFastRefresh` | Lowers every measured minimum to 200 ms | `resmon.statusBarMs` only | on / off (default off) |
+| `mirabar.statusBarMs` | How often the section **reads its data** and updates its status bar text | Both tooltip modes; Live tooltips follow it | 200 ms to 1 h, never below the section's measured minimum |
+| `mirabar.tooltipMs` | How often the section's **tooltip is rebuilt** from the latest reading | Static mode with `mirabar.tooltip.autoRefresh` on | 200 ms to 1 h, never below the section's status bar interval |
+| `mirabar.allowFastRefresh` | Lowers every measured minimum to 200 ms | `mirabar.statusBarMs` only | on / off (default off) |
 
 - **Reads happen only at the status bar interval.** A tooltip never triggers a read: it shows the latest reading, so a tooltip interval shorter than the status bar interval changes nothing and applies as the status bar interval (the panel says so under the value).
 - **Live** rebuilds a tooltip with every read of its section (temperature only when the sensors produced a new reading). **Static** rebuilds it on click and, with auto-refresh, at the read closest to its tooltip interval. With auto-refresh off, Static tooltips change only on click.
 - **Every tooltip shows the time of the reading it displays** (tenths of a second when the section's status bar interval is below 1000 ms). For temperature this is the time of the sensor pass, which can precede the read.
-- **A click** on any widget (or *Resource Monitor: Refresh Stats*) reads every visible section and rebuilds every tooltip.
+- **A click** on any widget (or *MiraBar: Refresh Stats*) reads every visible section and rebuilds every tooltip.
 
 ### Scheduler
 
@@ -100,7 +100,7 @@ There is no global tick. `ResourceMonitor` (`src/monitor.ts`) keeps, per section
 ```
 
 - **Temperature (macOS)**: a sensor pass takes ~16-18 ms on the native worker thread, so the monitor asks for it 100 ms before the read (`requestTempRefresh`); the read then shows a reading taken just before it, without waiting and with one pass per interval.
-- **Disk**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other sections running; no new request for the same paths starts until it returns, a change of `resmon.disk.drives` starts one at once and drops the stale result, and at most two requests are in flight (each hung `statfs` holds one of the 4 libuv pool threads shared by the extension host).
+- **Disk**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other sections running; no new request for the same paths starts until it returns, a change of `mirabar.disk.drives` starts one at once and drops the stale result, and at most two requests are in flight (each hung `statfs` holds one of the 4 libuv pool threads shared by the extension host).
 - **Configuration changes** are debounced (100 ms), so dragging a slider in the settings panel applies once.
 
 ### Refresh Floors
@@ -133,7 +133,7 @@ Measured on an Apple M4 (macOS, Node 24), 30 September 2026:
 - **Battery**: the driver publishes new capacity, cycle and charge data every 60 s (`UpdateTime`), so a faster interval only catches power adapter changes sooner. The 10 s default shows a plug or unplug within 10 s.
 - **Cost at the defaults**: 0.49% of one core with all six sections shown (0.42% temperature, 0.07% the other five together), within the 0.5% budget; disk is hidden by default. The renderer-side cost of status bar updates in VS Code comes on top and cannot be measured outside VS Code.
 
-The same bench measures how often the sources refresh (temperature sensors, battery driver `UpdateTime`): reading faster than that only returns the same values, so the defaults are set at or above those periods. `resmon.allowFastRefresh` lowers every minimum to 200 ms; values set below a minimum are kept in the settings and apply whenever it is on.
+The same bench measures how often the sources refresh (temperature sensors, battery driver `UpdateTime`): reading faster than that only returns the same values, so the defaults are set at or above those periods. `mirabar.allowFastRefresh` lowers every minimum to 200 ms; values set below a minimum are kept in the settings and apply whenever it is on.
 
 ---
 
@@ -141,7 +141,7 @@ The same bench measures how often the sources refresh (temperature sensors, batt
 
 In VS Code (Electron/Chromium), mutating properties on a `vscode.StatusBarItem` sends IPC messages that invalidate the renderer DOM node. Unconditional reassignments or redundant `item.show()` invocations destroy active `HoverWidget` popups, causing noticeable flickering or sudden closing while hovering.
 
-Resource Monitor NG enforces two UI stability invariants:
+MiraBar enforces two UI stability invariants:
 
 1. **Content Diffing**:
    - `item.text` is written only if `item.text !== nextText`.
@@ -152,18 +152,17 @@ Resource Monitor NG enforces two UI stability invariants:
    - Numeric percentages and values are padded with Unicode Figure Space (U+2007), which has the exact width of a digit in tabular numbers. This completely prevents horizontal status bar jitter as values fluctuate between single, double, and triple digits.
 4. **Dual Tooltip Modes (`Static` vs `Live`)**:
    - VS Code exposes no hover event, so tooltips are rebuilt ahead of time and a hover shows the last version.
-   - **`Static` (Default)**: tooltips are rebuilt on click and, with `resmon.tooltip.autoRefresh` (default on), every `resmon.tooltipMs` of their section, so they change rarely while the status bar text keeps updating.
-   - **`Live`**: tooltips are rebuilt with every read of their section (`resmon.statusBarMs`).
+   - **`Static` (Default)**: tooltips are rebuilt on click and, with `mirabar.tooltip.autoRefresh` (default on), every `mirabar.tooltipMs` of their section, so they change rarely while the status bar text keeps updating.
+   - **`Live`**: tooltips are rebuilt with every read of their section (`mirabar.statusBarMs`).
    - Every tooltip ends with the time of its reading (tenths of a second below 1000 ms) and links to *Settings* and *Refresh* (see "Refresh Model").
-   - Switchable via `resmon.toggleTooltipMode` / `resmon.toggleTooltipAutoRefresh` or from the gear widget's tooltip.
+   - Switchable via `mirabar.toggleTooltipMode` / `mirabar.toggleTooltipAutoRefresh` or from the gear widget's tooltip.
 5. **Unified Monospace ASCII Table Engine (`renderDynamicAsciiTable`)**:
    - Standard GitHub-Flavored Markdown tables rendered in VS Code hover popups rely on proportional system fonts and browser table layout algorithms, frequently causing misaligned columns, awkward line wraps, or excessive horizontal expansion.
-   - Resource Monitor NG replaces all HTML/Markdown tables with a 100% deterministic ASCII box-drawing engine (`┌─┬─┐`, `│ │ │`, `├─┼─┤`, `└─┴─┘`) rendered inside fenced `text` blocks.
+   - MiraBar replaces all HTML/Markdown tables with a 100% deterministic ASCII box-drawing engine (`┌─┬─┐`, `│ │ │`, `├─┼─┤`, `└─┴─┘`) rendered inside fenced `text` blocks.
    - Dynamically calculates maximum column widths, enforces numeric right-alignment and textual left-alignment, and ensures pixel-perfect column alignment across all VS Code themes.
    - Standardized across all 6 subsystems: CPU per-core breakdown, System Load / Frequency, Thermal die matrix, Memory & Swap breakdown, Storage filesystems, and Battery health & capacity.
 6. **Settings Widget & Panel**:
-   - The gear widget's tooltip holds two tables: the sections in status bar order (shown, status bar and tooltip intervals in effect, `*` where a value was raised to its measured minimum, "with bar" where the tooltip follows the status bar) and the display options with one-click toggles (a Markdown table, since command links cannot live in a code block). Clicking the gear opens a webview panel (`src/settings/`): per section a status bar interval (preset slider plus millisecond field) and a tooltip interval, with a note under a value when what applies differs from what is set; visibility, drag-and-drop order (`resmon.order`, mapped to status bar priorities), units and disk options.
-   - The first interval edit with pre-release settings present (`resmon.updatefrequencyms`, `resmon.refreshMs`, `resmon.refreshSeconds`, `resmon.allowFastBatteryDiskRefresh`) stores the intervals as they were in effect and removes those keys; until then they are read as fallbacks.
+   - The gear widget's tooltip holds two tables: the sections in status bar order (shown, status bar and tooltip intervals in effect, `*` where a value was raised to its measured minimum, "with bar" where the tooltip follows the status bar) and the display options with one-click toggles (a Markdown table, since command links cannot live in a code block). Clicking the gear opens a webview panel (`src/settings/`): per section a status bar interval (preset slider plus millisecond field) and a tooltip interval, with a note under a value when what applies differs from what is set; visibility, drag-and-drop order (`mirabar.order`, mapped to status bar priorities), units and disk options.
    - The panel is only a front-end: messages are validated against a whitelist (`EDITABLE_SETTINGS`) and written to the user settings, which remain the single source of truth. Values the user did not touch are never rewritten.
    - Strict Content Security Policy with a per-load nonce; rows are updated in place so a configuration change never interrupts typing or dragging.
 7. **Tooltip Footer**:
@@ -178,7 +177,7 @@ Resource Monitor NG enforces two UI stability invariants:
 
 ## Benchmarks & Runtime Footprint
 
-| Metric | Legacy (`systeminformation`) | Resource Monitor NG (Linux) | Resource Monitor NG (Darwin Apple Silicon) |
+| Metric | Legacy (`systeminformation`) | MiraBar (Linux) | MiraBar (Darwin Apple Silicon) |
 | :--- | :--- | :--- | :--- |
 | **Subprocesses spawned / tick** | 3 to 6 (`df`, `ps`, `free`) | **0** | **0** |
 | **Telemetry mechanism** | Shell commands | `/proc` & `/sys` VFS | Mach / IOKit / IOHID Node-API |

@@ -1,6 +1,6 @@
 # Darwin & Apple Silicon (M-Series) Technical Specification & Implementation Architecture
 
-This document formalizes the production architecture, C/Mach/IOKit kernel APIs, Clang toolchain, and verification methodology implemented for native macOS Apple Silicon (`darwin-arm64`) support in **Resource Monitor NG v1.1.x** on Apple M-Series hardware (M1, M2, M3, M4). Phase 1.1 (memory safety and native refactor) is documented in [`audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md).
+This document formalizes the production architecture, C/Mach/IOKit kernel APIs, Clang toolchain, and verification methodology implemented for native macOS Apple Silicon (`darwin-arm64`) support in **MiraBar v1.1.x** on Apple M-Series hardware (M1, M2, M3, M4). Phase 1.1 (memory safety and native refactor) is documented in [`audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md).
 
 ---
 
@@ -82,13 +82,13 @@ To maintain the strict **zero-subprocess** guarantee on macOS, all metrics are q
 ## 3. Production Architecture & Layout
 
 ```
-resource-monitor/
+mirabar/
 ├── src/
 │   ├── extension.ts               # Activation, commands, settings listener
 │   ├── monitor.ts                 # ResourceMonitor: widgets and per-section scheduler
 │   ├── sections.ts                # Status bar text and tooltip of each section (pure renderers)
 │   ├── format.ts                  # Formatting helpers (bars, ASCII tables, durations)
-│   ├── config.ts                  # ResMonConfig, intervals and measured minimums, widget order
+│   ├── config.ts                  # MiraBarConfig, intervals and measured minimums, widget order
 │   ├── types.ts                   # BatteryInfo, CpuUsageInfo, MemoryInfo, etc.
 │   ├── settings/
 │   │   ├── schema.ts              # Editable settings whitelist, validation, read/write
@@ -184,7 +184,7 @@ Platform-specific VSIX packages are built using VS Code's official target archit
 pnpm run package:darwin-arm64
 ```
 
-Output: `resource-monitor-ng-darwin-arm64-<version>.vsix`. `vscode:prepublish` rebuilds the production bundle, and `.vscodeignore` excludes local agent files (`.claude/`, `.agents/`, `skills-lock.json`).
+Output: `mirabar-darwin-arm64-<version>.vsix`. `vscode:prepublish` rebuilds the production bundle, and `.vscodeignore` excludes local agent files (`.claude/`, `.agents/`, `skills-lock.json`).
 
 ---
 

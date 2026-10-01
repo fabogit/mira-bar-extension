@@ -3,7 +3,7 @@
  * Markdown. Pure functions (no VS Code API, no sampling), so every section renders the same way
  * whatever schedule triggered it.
  */
-import { UNIT_DIVISORS, type ResMonConfig, type TooltipSection } from './config.js';
+import { UNIT_DIVISORS, type MiraBarConfig, type TooltipSection } from './config.js';
 import {
   formatBytes,
   formatMinutes,
@@ -25,7 +25,7 @@ export interface Rendered {
 
 /** Inputs shared by the renderers. */
 export interface RenderContext {
-  config: ResMonConfig;
+  config: MiraBarConfig;
   /** Time of the reading shown, already formatted (e.g. '16:15:27' or '16:15:27.4'). */
   updatedAt: string;
   /** Platform topology description (e.g. 'Apple M4 (4P + 6E)'), if any. */
@@ -52,7 +52,7 @@ export function tooltipFooter(updatedAt: string): string[] {
     '---',
     `*Updated at ${updatedAt}*`,
     '',
-    '[$(gear) Settings](command:resmon.openSettings) · [$(refresh) Refresh](command:resmon.refresh)',
+    '[$(gear) Settings](command:mirabar.openSettings) · [$(refresh) Refresh](command:mirabar.refresh)',
   ];
 }
 

@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Why Resource Monitor NG is built the way it is. Format and conventions: [ADR-0001](0001-record-architecture-decisions.md). How the system works: [docs/ARCHITECTURE.md](../ARCHITECTURE.md).
+Why MiraBar (formerly Resource Monitor NG) is built the way it is. Format and conventions: [ADR-0001](0001-record-architecture-decisions.md). How the system works: [docs/ARCHITECTURE.md](../ARCHITECTURE.md).
 
 | ADR | Decision | Status | Phase |
 | :--- | :--- | :--- | :--- |
@@ -15,8 +15,9 @@ Why Resource Monitor NG is built the way it is. Format and conventions: [ADR-000
 | [0009](0009-per-section-intervals-deadline-scheduler.md) | Per-section status bar and tooltip intervals, deadline scheduler | Accepted | 1.2 |
 | [0010](0010-refresh-minimums-from-measurements.md) | Refresh minimums derived from measurements | Accepted | 1.2 |
 | [0011](0011-disk-sampling-off-the-event-loop.md) | Disk sampled off the event loop turn, capped requests in flight | Accepted | 1.1, 1.2 |
-| [0012](0012-legacy-settings-compatibility.md) | Compatibility with released and pre-release interval settings | Accepted | 1.2 |
+| [0012](0012-legacy-settings-compatibility.md) | Compatibility with released and pre-release interval settings | Superseded by [0015](0015-rename-to-mirabar.md) | 1.2 |
 | [0013](0013-packaging-and-workflow.md) | Packaging hygiene and development workflow | Accepted | 1.1 |
 | [0014](0014-verification-strategy.md) | Verification without a Mac in the loop, measurements on the Mac | Accepted | 1.1, 1.2 |
+| [0015](0015-rename-to-mirabar.md) | Rename to MiraBar (`fabogit.mirabar`, `mirabar.*`), version 2.0.0 | Accepted | 2.0 |
 
 Open questions recorded in ADRs: macOS 11 support end (0006); fewer temperature sensors per pass (0003); per-platform minimums for Linux and Windows (0010).

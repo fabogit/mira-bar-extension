@@ -13,11 +13,8 @@ import {
 /** Kinds of value the settings panel may write, each with its own validation. */
 type SettingKind = 'boolean' | 'number' | 'enum' | 'stringArray' | 'order' | 'intervals';
 
-/** Pre-release interval settings, replaced by statusBarMs / tooltipMs / allowFastRefresh. */
-const LEGACY_INTERVAL_KEYS = ['updatefrequencyms', 'refreshMs', 'refreshSeconds', 'allowFastBatteryDiskRefresh'] as const;
-
 interface SettingSpec {
-  /** Key under the `resmon` configuration section. */
+  /** Key under the `mirabar` configuration section. */
   readonly key: string;
   readonly kind: SettingKind;
   readonly min?: number;
@@ -59,7 +56,7 @@ export type ValidationResult = { ok: true; value: unknown } | { ok: false; reaso
 /**
  * Validates a value sent by the settings panel for `key`, clamping numbers to their bounds.
  *
- * @param key - Setting key under `resmon`.
+ * @param key - Setting key under `mirabar`.
  * @param value - Untrusted value from the webview.
  * @returns The value to store, or the reason it was rejected.
  */
@@ -99,14 +96,14 @@ export function validateSetting(key: string, value: unknown): ValidationResult {
       }
       // Only the absolute bounds (200 ms to 1 h): the measured minimums are applied on read (getConfig),
       // so a value stored while they were unlocked survives edits to other rows and applies again
-      // whenever resmon.allowFastRefresh is on.
+      // whenever mirabar.allowFastRefresh is on.
       return { ok: true, value: readIntervals(value, key === 'statusBarMs' ? DEFAULT_STATUS_BAR_MS : DEFAULT_TOOLTIP_MS) };
   }
 }
 
 /**
  * Current values keyed like the settings, for the panel: defaults applied and clamped. Intervals are the
- * stored values (with the fallbacks of readStoredIntervals); the panel shows the minimums and the
+ * stored values (defaults for the sections the user did not set); the panel shows the minimums and the
  * effective values itself.
  */
 export function readSettingsSnapshot(): Record<string, unknown> {
@@ -142,33 +139,15 @@ export function readSettingsSnapshot(): Record<string, unknown> {
  * Writes one validated setting to the user (global) settings.
  */
 export async function writeSetting(key: string, value: unknown): Promise<void> {
-  const configuration = vscode.workspace.getConfiguration('resmon');
-  const target = vscode.ConfigurationTarget.Global;
-  const isIntervalSetting = key === 'statusBarMs' || key === 'tooltipMs' || key === 'allowFastRefresh';
-  const hasLegacy = LEGACY_INTERVAL_KEYS.some((k) => configuration.inspect(k)?.globalValue !== undefined);
-  if (isIntervalSetting && hasLegacy) {
-    // First interval edit with pre-release settings present: store both objects as currently in effect
-    // (legacy fallbacks included) and the unlock flag, then drop the legacy keys, so nothing changes
-    // except the edited value.
-    const stored = readStoredIntervals(configuration);
-    const allowFast = getConfig().allowFastRefresh;
-    await configuration.update('statusBarMs', key === 'statusBarMs' ? value : stored.statusBarMs, target);
-    await configuration.update('tooltipMs', key === 'tooltipMs' ? value : stored.tooltipMs, target);
-    await configuration.update('allowFastRefresh', key === 'allowFastRefresh' ? value : allowFast, target);
-    for (const legacy of LEGACY_INTERVAL_KEYS) {
-      await configuration.update(legacy, undefined, target);
-    }
-    return;
-  }
-  await configuration.update(key, value, target);
+  await vscode.workspace.getConfiguration('mirabar').update(key, value, vscode.ConfigurationTarget.Global);
 }
 
 /**
  * Removes every panel-editable setting from the user settings, restoring the defaults.
  */
 export async function resetSettings(): Promise<void> {
-  const configuration = vscode.workspace.getConfiguration('resmon');
-  for (const key of [...EDITABLE_SETTINGS.map((s) => s.key), ...LEGACY_INTERVAL_KEYS]) {
-    await configuration.update(key, undefined, vscode.ConfigurationTarget.Global);
+  const configuration = vscode.workspace.getConfiguration('mirabar');
+  for (const spec of EDITABLE_SETTINGS) {
+    await configuration.update(spec.key, undefined, vscode.ConfigurationTarget.Global);
   }
 }

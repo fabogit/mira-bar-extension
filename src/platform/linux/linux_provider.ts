@@ -52,7 +52,7 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
   /**
    * Samples CPU package temperature in degrees Celsius from /sys/class/hwmon/ or thermal zones.
    * Readings younger than `maxAgeMs` are served from cache (the monitor passes half the temperature
-   * status bar interval, resmon.statusBarMs.temp), with their age in `ageMs`.
+   * status bar interval, mirabar.statusBarMs.temp), with their age in `ageMs`.
    *
    * @param maxAgeMs - Maximum age of a cached reading (default 0: always read).
    * @returns CpuTempInfo reading and driver name, or `null` if no hwmon sensors exist.
