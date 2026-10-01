@@ -85,9 +85,9 @@ Phase 1 restructured the codebase into a strict modular architecture, eliminated
 
 ---
 
-## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v1.1.1) [IN PROGRESS]
+## 4. Phase 1.1: Darwin Memory Safety & Native Refactor (v1.1.1) [COMPLETED]
 
-> Branch: `fix/darwin-memory` (from `develop`, local commits) • **Status: Implemented, pending test in VS Code on Apple Silicon** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
+> Branch: `fix/darwin-memory` (from `develop`, local commits) • **Status: Done, verified in VS Code on Apple Silicon (2026-10-01)** • Audit: [`docs/audit-darwin-memory-2026-09.md`](audit-darwin-memory-2026-09.md)
 
 Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin native addon and in the extension lifecycle, corrects the memory pressure and battery metrics, and reworks the refresh model and settings UI. Native changes are verified on Apple Silicon with `test/leak-darwin.mjs`, `lsmp` and `leaks`, and on Linux with mocked Apple APIs under ASan/UBSan/TSan.
 
@@ -132,15 +132,15 @@ Phase 1.1 fixes the resource leaks and per-tick overhead found in the Darwin nat
   - The panel writes validated values to the user settings (single source of truth); stored values are never rewritten by unrelated edits. Data tooltips keep only metrics, update time and Settings / Refresh links.
 - [x] **Configurable Widget Order**:
   - `resmon.order` mapped to status bar priorities, applied live; unknown or duplicate entries are dropped and missing ones keep their default position.
-- [ ] **Verification in VS Code on Apple Silicon**:
+- [x] **Verification in VS Code on Apple Silicon** (2026-10-01):
   - Install the `darwin-arm64` VSIX and check the settings panel, Static/Live tooltips at 200 ms and the battery/disk lock.
 - [x] **Extension Lifecycle Refactor**: done in Phase 1.2 below.
 
 ---
 
-## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v1.1.1) [IN PROGRESS]
+## 4b. Phase 1.2: Per-Section Refresh & Measured Minimums (v1.1.1) [COMPLETED]
 
-> Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Implemented and measured, pending test in VS Code on Apple Silicon**
+> Branch: `feat/per-section-refresh` (from `fix/darwin-memory`, local commits) • **Status: Done, measured and verified in VS Code on Apple Silicon (2026-10-01)**
 
 Each section gets its own status bar and tooltip intervals, and the minimums are derived from measured costs instead of fixed values.
 
@@ -163,7 +163,7 @@ Each section gets its own status bar and tooltip intervals, and the minimums are
   - Temperature: 40.4 ms of system CPU per pass (HID server) + 1.1 ms in the extension host: minimum 8400 ms, default 10 s (was 5 s, ~0.8% of one core).
   - CPU, load, memory, battery, disk: 0.34-0.47 ms per read, minimum 200 ms. The 2000 ms battery/disk lock of Phase 1.1 is removed; `resmon.allowFastRefresh` now only unlocks temperature.
   - Battery driver publishes new data every 60 s; the 10 s default only serves power adapter changes.
-- [ ] **Verification in VS Code on Apple Silicon**.
+- [x] **Verification in VS Code on Apple Silicon** (2026-10-01): per-section intervals, settings panel, gear tooltip tables, minimums.
 
 ---
 
