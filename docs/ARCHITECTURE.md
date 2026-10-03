@@ -30,7 +30,7 @@ MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platfor
 ```
 
 ### 1. CPU Load & Topology
-- **Linux**: Reads `/proc/stat` delta counters across logical cores. Handles `iowait` as idle to avoid false I/O spikes.
+- **Linux**: Reads `/proc/stat` delta counters across logical cores. Handles `iowait` as idle to avoid false I/O spikes. The constructor primes the counters (as on Darwin), so the first read already has the core count and, after ~50 ms, a real delta; reads closer than 5 jiffies per core return the previous result and keep the baseline.
 - **Darwin (Apple Silicon)**: Calls `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` via Mach host APIs to retrieve user, system, idle, and nice ticks per core.
   - **Cold-Start Pre-Sampling (Tick 0)**: Pre-samples CPU ticks during provider instantiation so that the first hover immediately displays valid per-core metrics rather than waiting for an arbitrary polling cycle.
   - **Asymmetric Topology**: Discovers Performance (P) and Efficiency (E) core clusters via `sysctlbyname("hw.perflevel0.logicalcpu")` and `sysctlbyname("hw.perflevel1.logicalcpu")`.
@@ -53,7 +53,9 @@ MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platfor
   - **Memory pressure**: `100 - kern.memorystatus_level` as a percentage, and `kern.memorystatus_vm_pressure_level` (1 Normal, 2 Warning, 4 Critical) as the label, the same signals Activity Monitor uses. `vm.memory_pressure` is not a percentage and is no longer read.
 
 ### 5. Battery Telemetry & State Discovery
-- **Linux**: Scans `/sys/class/power_supply/BAT*` for charge percentage, AC state, `charge_full_design`/`energy_full_design`, and `cycle_count`.
+- **Linux**: Scans `/sys/class/power_supply/BAT*` once for the files each battery exposes, then reads only those: charge percentage, `status`, `charge_full_design`/`energy_full_design`, and `cycle_count`.
+  - **State**: the kernel `status` string (`Charging`, `Discharging`, `Not charging`, `Full`, `Unknown`); with several batteries the first of Charging, Discharging, Not charging, Full wins.
+  - **Time remaining** (`Charging` and `Discharging` only): the driver's `time_to_empty_now` / `time_to_full_now` (seconds, single battery), else `energy_now` (or `energy_full - energy_now` when charging) over `power_now`, else the same with `charge_*` over `current_now` (absolute value: some drivers sign it), summed over batteries. Estimates above 48 h are discarded; discharging without an estimate (rate 0 or missing, e.g. right after unplugging) reports -1, shown as "Estimating..." as on macOS. `power_now` / `current_now` are refreshed by most drivers every few seconds.
 - **Darwin (`IOPowerSources` & `AppleSmartBattery`)**:
   - `IOPowerSources` on every battery sample: percentage, charging state, time remaining (the internal battery is preferred over UPS devices).
   - `AppleSmartBattery` registry snapshot at most every 30 s (capacities change slowly). Recent macOS releases publish the mAh values only inside the `BatteryData` sub-dictionary (`DesignCapacity`, `NominalChargeCapacity`, `FullChargeCapacity`, `RemainingCapacity`), while the top-level `MaxCapacity` / `CurrentCapacity` are percentages; older releases expose `AppleRawMaxCapacity` / `AppleRawCurrentCapacity`, still used when present. `CycleCount` is read from either level.

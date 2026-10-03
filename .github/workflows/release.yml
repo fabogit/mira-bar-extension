@@ -63,6 +63,7 @@ jobs:
         run: |
           pnpm run test:darwin
           pnpm run test:linux-temp
+          pnpm run test:linux-battery
           pnpm run test:integration
           pnpm run test:extension
 
@@ -109,6 +110,7 @@ jobs:
         run: |
           pnpm run test:linux
           pnpm run test:linux-temp
+          pnpm run test:linux-battery
           pnpm run test:integration
           pnpm run test:extension
 
