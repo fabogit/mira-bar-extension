@@ -246,6 +246,7 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
   ];
   const rows: string[][] = [];
   const aboveMax: string[] = [];
+  const asleep: string[] = [];
   if (temp.peakCelsius !== undefined) {
     rows.push(row('SoC Die Peak', temp.peakCelsius, 100), row('SoC Die Average', temp.tempCelsius, 100));
     if (temp.nandCelsius !== undefined && temp.nandCelsius > 0) {
@@ -257,7 +258,14 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
   } else {
     rows.push(row('CPU Package', temp.tempCelsius, temp.critCelsius ?? DEFAULT_TEMP_LIMIT_C));
     for (const s of temp.sensors ?? []) {
-      rows.push(row(s.label, s.celsius, s.critCelsius ?? s.maxCelsius));
+      const limit = s.critCelsius ?? s.maxCelsius;
+      if (s.celsius === null) {
+        // Not read so as not to wake the device: no value rather than an old one shown as current.
+        rows.push([s.label, '', 'asleep', limit !== undefined ? `${Math.round(limit)} °C` : '—']);
+        asleep.push(s.label);
+        continue;
+      }
+      rows.push(row(s.label, s.celsius, limit));
       if (s.maxCelsius !== undefined && s.celsius >= s.maxCelsius) {
         aboveMax.push(`${s.label} (max ${Math.round(s.maxCelsius)} °C)`);
       }
@@ -266,6 +274,10 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
   const lines = ['### CPU & System Temperature', '', ...renderDynamicAsciiTable(columns, rows)];
   if (aboveMax.length > 0) {
     lines.push('', `*Above the operating maximum: ${aboveMax.join(', ')}.*`);
+  }
+  if (asleep.length > 0) {
+    const it = asleep.length === 1 ? 'it' : 'them';
+    lines.push('', `*Asleep (runtime-suspended), not read so as not to wake ${it}: ${asleep.join(', ')}.*`);
   }
   const tooltip = [...lines, ...tooltipFooter(ctx.updatedAt)].join('\n');
   return { text, tooltip };

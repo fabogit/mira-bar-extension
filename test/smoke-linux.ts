@@ -71,7 +71,8 @@ async function run(): Promise<void> {
       const limits = [s.maxCelsius !== undefined ? `max ${s.maxCelsius} °C` : '', s.critCelsius !== undefined ? `crit ${s.critCelsius} °C` : '']
         .filter(Boolean)
         .join(', ');
-      console.log(`  - ${s.label}: ${s.celsius.toFixed(1)} °C${limits ? ` (${limits})` : ''}`);
+      const value = s.celsius !== null ? `${s.celsius.toFixed(1)} °C` : 'asleep (runtime-suspended, not read)';
+      console.log(`  - ${s.label}: ${value}${limits ? ` (${limits})` : ''}`);
     }
     if (!temp.sensors?.length) {
       console.log('  No component sensors (NVMe, RAM, Wi-Fi, battery) exposed.');

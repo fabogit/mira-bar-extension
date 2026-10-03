@@ -1,5 +1,6 @@
 import type {
   BatteryInfo,
+  ComponentSensorsMode,
   CpuTempInfo,
   CpuUsageInfo,
   FreqOrLoadInfo,
@@ -34,6 +35,13 @@ export interface TelemetryPlatformProvider {
    * SSD, RAM and Wi-Fi sensors take up to ~40 ms and are read asynchronously).
    */
   requestTempRefresh?(): void;
+
+  /**
+   * Optional: which component temperature sensors to read (mirabar.temperature.componentSensors).
+   * Linux only; on macOS the NAND and battery readings come with the SoC sensor pass and the setting
+   * has no effect.
+   */
+  setComponentSensors?(mode: ComponentSensorsMode): void;
 
   /**
    * Samples system physical memory (RAM) and swap metrics.

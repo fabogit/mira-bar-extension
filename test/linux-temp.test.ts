@@ -14,20 +14,37 @@ import type { MiraBarConfig } from '../src/config.js';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mirabar-sysfs-'));
 const step = (name: string): void => console.log(`ok - ${name}`);
 
-/** Writes files under root (values as in sysfs, newline-terminated). */
-function write(dir: string, files: Record<string, string | number>): void {
-  fs.mkdirSync(path.join(root, dir), { recursive: true });
+/** Writes files under base (values as in sysfs, newline-terminated). */
+function write(dir: string, files: Record<string, string | number>, base = root): void {
+  fs.mkdirSync(path.join(base, dir), { recursive: true });
   for (const [name, value] of Object.entries(files)) {
-    fs.writeFileSync(path.join(root, dir, name), `${value}\n`);
+    fs.writeFileSync(path.join(base, dir, name), `${value}\n`);
   }
 }
 
 /** hwmon<n> with a `device` link to a fake device directory. */
-function hwmon(n: number, name: string, devicePath: string, files: Record<string, string | number>): void {
+function hwmon(n: number, name: string, devicePath: string, files: Record<string, string | number>, base = root): void {
   const dir = `class/hwmon/hwmon${n}`;
-  write(dir, { name, ...files });
-  fs.mkdirSync(path.join(root, devicePath), { recursive: true });
-  fs.symlinkSync(path.join(root, devicePath), path.join(root, dir, 'device'));
+  write(dir, { name, ...files }, base);
+  fs.mkdirSync(path.join(base, devicePath), { recursive: true });
+  fs.symlinkSync(path.join(base, devicePath), path.join(base, dir, 'device'));
+}
+
+/** Records the files and directories the component provider opens through fs.promises. */
+const opened: string[] = [];
+for (const method of ['readFile', 'readdir'] as const) {
+  const real = fs.promises[method] as (...args: unknown[]) => Promise<unknown>;
+  Object.assign(fs.promises, {
+    [method]: (target: unknown, ...rest: unknown[]) => {
+      opened.push(String(target));
+      return real.call(fs.promises, target, ...rest);
+    },
+  });
+}
+/** Sensor files (input and limits) opened since the last call, relative to `base`. */
+function sensorReads(base: string): string[] {
+  const files = opened.splice(0).filter((f) => /\/(temp1_input|temp1_max|temp1_crit|temp)$/.test(f));
+  return files.map((f) => path.relative(base, f));
 }
 
 async function run(): Promise<void> {
@@ -121,7 +138,119 @@ async function run(): Promise<void> {
   fs.rmSync(zoneRoot, { recursive: true, force: true });
   step('thermal zone critical trip point, 100 °C fallback');
 
+  await runtimePmModes(config);
+
   console.log('\nAll Linux temperature tests passed.');
+}
+
+/**
+ * mirabar.temperature.componentSensors: 'awake' skips runtime-suspended devices (and reads them again
+ * once active), 'always' reads them, 'off' neither scans nor reads. Layout of the test laptop: NVMe
+ * behind a PCI function and its PCIe port, a DDR5 module on the SMBus controller, an ACPI battery.
+ */
+async function runtimePmModes(config: MiraBarConfig): Promise<void> {
+  const base = path.join(root, 'pm');
+  const nvmeFn = 'devices/pci0000:00/0000:00:02.4/0000:02:00.0';
+  const nvmePort = 'devices/pci0000:00/0000:00:02.4';
+  const smbus = 'devices/pci0000:00/0000:00:14.0';
+  const status = (dev: string, value: string): void => write(`${dev}/power`, { runtime_status: value }, base);
+  hwmon(0, 'nvme', `${nvmeFn}/nvme/nvme0`, { temp1_input: 35850, temp1_max: 74850, temp1_crit: 79850 }, base);
+  hwmon(1, 'spd5118', `${smbus}/i2c-21/21-0050`, { temp1_input: 40250, temp1_max: 55000, temp1_crit: 85000 }, base);
+  // Runtime PM disabled ('unsupported'): the class device, the I2C client, the root complex, the battery chain.
+  for (const dev of [`${nvmeFn}/nvme/nvme0`, `${smbus}/i2c-21/21-0050`, 'devices/pci0000:00', 'devices/LNXSYSTM:00/PNP0C0A:00']) {
+    status(dev, 'unsupported');
+  }
+  status(nvmeFn, 'active');
+  status(nvmePort, 'active');
+  status(smbus, 'active');
+  // power_supply entries are links into the device tree, as in sysfs.
+  const bat = 'devices/LNXSYSTM:00/PNP0C0A:00/power_supply/BAT0';
+  write(bat, { type: 'Battery', temp: 305 }, base);
+  status(bat, 'unsupported');
+  fs.mkdirSync(path.join(base, 'class/power_supply'), { recursive: true });
+  fs.symlinkSync(path.join(base, bat), path.join(base, 'class/power_supply/BAT0'));
+
+  const rows = (p: ComponentTempProvider): Array<[string, number | null]> =>
+    p.latest()!.sensors.map((s) => [s.label, s.celsius]);
+  let now = 5_000_000;
+  const p = new ComponentTempProvider(base, () => now);
+
+  // Default 'awake', everything active: read as before.
+  opened.length = 0;
+  await p.refresh();
+  assert.deepEqual(rows(p), [['NVMe SSD', 35.85], ['RAM DIMM', 40.25], ['Battery Cell', 30.5]]);
+  sensorReads(base);
+  step('awake (default): active devices read');
+
+  // The NVMe PCI function suspends: not read (neither input nor limits), row asleep with the scanned limits.
+  status(nvmeFn, 'suspended');
+  await p.refresh();
+  const asleep = p.latest()!.sensors[0]!;
+  assert.deepEqual([asleep.label, asleep.celsius, asleep.maxCelsius, asleep.critCelsius], ['NVMe SSD', null, 74.85, 79.85]);
+  assert.deepEqual(sensorReads(base), ['class/hwmon/hwmon1/temp1_input', 'class/power_supply/BAT0/temp']);
+  const tooltip = renderTemp({ tempCelsius: 50, sensorName: 'k10temp', sensorLabel: 'Tctl', sensors: p.latest()!.sensors }, { config, updatedAt: '12:00:00' }, true).tooltip!;
+  assert.match(tooltip.split('\n').find((l) => l.startsWith('NVMe SSD '))!, /│\s+asleep │\s+80 °C$/);
+  assert.match(tooltip, /\*Asleep \(runtime-suspended\), not read so as not to wake it: NVMe SSD\.\*/);
+  step('awake: suspended device skipped, row asleep with its limits');
+
+  // A rescan while it sleeps keeps the sensor and its limits without touching the drive.
+  now += 60_000;
+  await p.refresh();
+  assert.equal(p.latest()!.sensors[0]!.celsius, null);
+  assert.equal(p.latest()!.sensors[0]!.critCelsius, 79.85, 'limits kept from the previous scan');
+  assert.ok(!sensorReads(base).some((f) => f.startsWith('class/hwmon/hwmon0/')), 'rescan does not read the sleeping drive');
+
+  // 'suspending' anywhere up the chain (here the PCIe port) also counts as asleep.
+  status(nvmeFn, 'active');
+  status(nvmePort, 'suspending');
+  await p.refresh();
+  assert.equal(p.latest()!.sensors[0]!.celsius, null, 'suspending port');
+  // Awake again: read again.
+  status(nvmePort, 'active');
+  write('class/hwmon/hwmon0', { temp1_input: 36850 }, base);
+  await p.refresh();
+  assert.deepEqual(rows(p)[0], ['NVMe SSD', 36.85]);
+  assert.ok(sensorReads(base).includes('class/hwmon/hwmon0/temp1_input'));
+  step('awake: suspended/suspending up the chain skipped, read again once active');
+
+  // A device asleep at the first scan: listed without limits, which are read by the first awake pass.
+  status(smbus, 'suspended');
+  const fresh = new ComponentTempProvider(base, () => now);
+  await fresh.refresh();
+  const dimm = fresh.latest()!.sensors[1]!;
+  assert.deepEqual([dimm.label, dimm.celsius, dimm.maxCelsius], ['RAM DIMM', null, undefined]);
+  assert.ok(!sensorReads(base).some((f) => f.startsWith('class/hwmon/hwmon1/')), 'DIMM not read at scan');
+  status(smbus, 'active');
+  await fresh.refresh();
+  const dimmAwake = fresh.latest()!.sensors[1]!;
+  assert.deepEqual([dimmAwake.celsius, dimmAwake.maxCelsius, dimmAwake.critCelsius], [40.25, 55, 85]);
+  step('awake: asleep at scan, limits read once awake');
+
+  // 'always': the suspended drive is read anyway.
+  status(nvmeFn, 'suspended');
+  p.setMode('always');
+  assert.equal(p.latest()!.sensors[0]!.celsius, 36.85, 'readings kept when switching awake -> always');
+  await p.refresh();
+  assert.deepEqual(rows(p)[0], ['NVMe SSD', 36.85]);
+  assert.ok(sensorReads(base).includes('class/hwmon/hwmon0/temp1_input'));
+  step('always: suspended device read');
+
+  // 'off': no readings, no scan, no reads; a pass running when it is set is dropped.
+  const running = p.refresh();
+  p.setMode('off');
+  await running;
+  assert.equal(p.latest(), null, 'pass started before off is dropped');
+  opened.length = 0;
+  now += 60_000;
+  await p.refresh();
+  assert.equal(p.latest(), null);
+  assert.equal(p.busy, false);
+  assert.deepEqual(opened, [], 'off: nothing opened (no scan, no reads)');
+  // Back on: scanned again at the next pass.
+  p.setMode('awake');
+  await p.refresh();
+  assert.deepEqual(rows(p), [['NVMe SSD', null], ['RAM DIMM', 40.25], ['Battery Cell', 30.5]]);
+  step('off: no scan, no reads, no rows; back on rescans');
 }
 
 run()

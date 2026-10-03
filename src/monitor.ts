@@ -76,6 +76,7 @@ export class ResourceMonitor implements vscode.Disposable {
     private readonly log: vscode.LogOutputChannel,
     private config: MiraBarConfig
   ) {
+    this.provider.setComponentSensors?.(config.componentSensors);
     this.items = this.createItems();
     this.run(true);
   }
@@ -85,7 +86,7 @@ export class ResourceMonitor implements vscode.Disposable {
     this.run(true);
   }
 
-  /** Applies a new configuration: placement, gear tooltip, then a full refresh. */
+  /** Applies a new configuration: component sensors (Linux), placement, gear tooltip, then a full refresh. */
   public applyConfig(next: MiraBarConfig): void {
     if (this.disposed) {
       return;
@@ -96,6 +97,7 @@ export class ResourceMonitor implements vscode.Disposable {
       next.showSettings !== this.config.showSettings ||
       next.order.join() !== this.config.order.join();
     this.config = next;
+    this.provider.setComponentSensors?.(next.componentSensors);
     if (placementChanged) {
       // VS Code cannot move an existing item: recreate them.
       this.disposeItems();

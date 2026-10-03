@@ -126,6 +126,8 @@ await sleep(500);
     assert.ok(!keys.includes(`mirabar.${legacy}`), `${legacy} not contributed`);
   }
   assert.ok(keys.every((k) => k.startsWith('mirabar.')), 'every setting under mirabar.*');
+  const sensors = pkg.contributes.configuration.properties['mirabar.temperature.componentSensors'];
+  assert.deepEqual([sensors.enum, sensors.default, sensors.enumDescriptions.length], [['awake', 'always', 'off'], 'awake', 3]);
   assert.ok(pkg.contributes.commands.every((c) => c.command.startsWith('mirabar.') && c.category === 'MiraBar'), 'commands under mirabar.*, category MiraBar');
   step('settings and commands namespace');
 }
@@ -155,6 +157,8 @@ await sleep(500);
   };
   const st = await state();
   assert.deepEqual(st.statusBarMs, { cpu: 2000, freq: 2000, temp: 10000, mem: 2000, battery: 10000, disk: 10000 }, 'panel sees the defaults');
+  assert.equal(st['temperature.componentSensors'], 'awake', 'component sensors default');
+  assert.ok(panel.webview.html.includes('data-setting="temperature.componentSensors"'), 'component sensors control');
 
   // A reset followed at once by an edit: the edit must apply after the reset (messages are serialized).
   s.cfg.priority = 50;
@@ -172,23 +176,46 @@ await sleep(500);
   await sleep(200);
   assert.equal(row('Temperature').bar, '8.4 s *', 'effective value is the minimum');
   assert.deepEqual(await write('order', ['disk', 'bogus', 'disk', 'cpu']), ['disk', 'cpu', 'freq', 'temp', 'mem', 'battery']);
+  assert.equal(await write('temperature.componentSensors', 'off'), 'off');
+  assert.equal((await state())['temperature.componentSensors'], 'off', 'panel sees the stored value');
   const before = JSON.stringify(s.cfg);
   s.posted.length = 0;
   panel.receive({ type: 'update', key: 'evil.key', value: 1 });
   panel.receive({ type: 'update', key: 'statusBarMs', value: 5 });
   panel.receive({ type: 'update', key: 'show.mem', value: 'yes' });
+  panel.receive({ type: 'update', key: 'temperature.componentSensors', value: 'sometimes' });
   await sleep(30);
   assert.equal(JSON.stringify(s.cfg), before, 'invalid updates rejected');
-  assert.equal(s.posted.filter((m) => m.type === 'error').length, 3);
+  assert.equal(s.posted.filter((m) => m.type === 'error').length, 4);
   const itemsBefore = s.items.length;
   panel.receive({ type: 'reset' });
   await sleep(400);
   assert.ok(s.items.length - itemsBefore <= 7, 'restore defaults recreates the widgets at most once');
-  for (const k of ['statusBarMs', 'tooltipMs', 'allowFastRefresh', 'order']) assert.ok(!(k in s.cfg), `${k} reset`);
+  for (const k of ['statusBarMs', 'tooltipMs', 'allowFastRefresh', 'order', 'temperature.componentSensors']) assert.ok(!(k in s.cfg), `${k} reset`);
   s.cfg['show.disk'] = true;
   vscode.__fireConfigChange();
   await sleep(300);
   step('settings panel');
+}
+
+// Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload.
+if (process.platform === 'linux') {
+  const componentRows = () => item('Temperature').tooltip.value.split('\n')
+    .filter((l) => /^(NVMe|RAM DIMM|Wi-Fi|Battery)/.test(l)).length;
+  const readTwice = async () => {
+    s.cmds['mirabar.refresh'](); // starts a pass
+    await sleep(300);
+    s.cmds['mirabar.refresh'](); // shows it
+  };
+  await readTwice();
+  const before = componentRows();
+  await setCfg({ 'temperature.componentSensors': 'off' }, 400);
+  await readTwice();
+  assert.equal(componentRows(), 0, 'off: CPU row only');
+  await setCfg({ 'temperature.componentSensors': undefined }, 400);
+  await readTwice();
+  assert.equal(componentRows(), before, 'awake again: component rows back');
+  step(`component sensors applied live (${before} rows here)`);
 }
 
 // Hidden sections are not read; with everything hidden no timer runs.
