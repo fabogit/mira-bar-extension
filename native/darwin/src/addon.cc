@@ -275,9 +275,8 @@ class JsObject {
 enum class SensorKind { Die, Nand, Battery };
 
 struct Sensor {
-  IOHIDServiceClientRef service;  // non-owning: kept alive by AddonState::hid_services
+  IOHIDServiceClientRef service;  // non-owning: kept alive by ThermalHid::services_
   SensorKind kind;
-  std::string name;
 };
 
 constexpr auto kThermalRescanInterval = std::chrono::seconds(60);
@@ -291,7 +290,6 @@ struct ThermalReading {
   bool valid = false;
   double avg_celsius = 0.0;
   double peak_celsius = 0.0;
-  std::string peak_sensor;
   int die_count = 0;
   double nand_celsius = -1.0;
   double battery_celsius = -1.0;
@@ -329,7 +327,6 @@ class ThermalHid {
     if (!EnsureSensors()) return reading;
 
     double sum_die = 0.0;
-    const Sensor* peak = nullptr;
     for (const Sensor& sensor : sensors_) {
       switch (sensor.kind) {
         case SensorKind::Die: {
@@ -337,10 +334,7 @@ class ThermalHid {
           if (temp > 0.0) {
             sum_die += temp;
             ++reading.die_count;
-            if (temp > reading.peak_celsius) {
-              reading.peak_celsius = temp;
-              peak = &sensor;
-            }
+            if (temp > reading.peak_celsius) reading.peak_celsius = temp;
           }
           break;
         }
@@ -361,7 +355,6 @@ class ThermalHid {
     }
     reading.valid = true;
     reading.avg_celsius = sum_die / reading.die_count;
-    reading.peak_sensor = peak != nullptr ? peak->name : "tdie";
     return reading;
   }
 
@@ -419,12 +412,12 @@ class ThermalHid {
 
       // tdev/tcal/als sensors are skipped: they are not SoC die readings (and cost ~1.5 ms each).
       if (std::strstr(name, "tdie") != nullptr) {
-        sensors_.push_back({service, SensorKind::Die, name});
+        sensors_.push_back({service, SensorKind::Die});
         has_die = true;
       } else if (std::strstr(name, "NAND") != nullptr || std::strstr(name, "nand") != nullptr) {
-        sensors_.push_back({service, SensorKind::Nand, name});
+        sensors_.push_back({service, SensorKind::Nand});
       } else if (std::strstr(name, "gas gauge") != nullptr || std::strstr(name, "battery") != nullptr) {
-        sensors_.push_back({service, SensorKind::Battery, name});
+        sensors_.push_back({service, SensorKind::Battery});
       }
     }
 
@@ -725,7 +718,6 @@ napi_value GetMemoryStats(napi_env env, napi_callback_info info) {
       .Int("wiredBytes", static_cast<int64_t>(wired))
       .Int("compressedBytes", static_cast<int64_t>(compressed))
       .Int("inactiveBytes", static_cast<int64_t>(inactive))
-      .Int("freeBytes", static_cast<int64_t>(free_bytes))
       .Int("swapTotalBytes", static_cast<int64_t>(swap_total))
       .Int("swapUsedBytes", static_cast<int64_t>(swap_used))
       .Int("swapFreeBytes", static_cast<int64_t>(swap_free))
@@ -896,16 +888,10 @@ napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
       std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(max_age_ms)));
   if (!reading.valid) return Null(env);
 
-  char label[64];
-  std::snprintf(label, sizeof(label), "%d sensors (max %.1f C)", reading.die_count, reading.peak_celsius);
-
   JsObject obj(env);
   obj.Double("tempCelsius", reading.avg_celsius)
       .Double("peakCelsius", reading.peak_celsius)
-      .Str("peakSensor", reading.peak_sensor.c_str())
-      .Int("dieCount", reading.die_count)
-      .Str("sensorName", "Apple Silicon Die")
-      .Str("sensorLabel", label);
+      .Int("dieCount", reading.die_count);
   if (reading.nand_celsius > 0.0) obj.Double("nandCelsius", reading.nand_celsius);
   if (reading.battery_celsius > 0.0) obj.Double("batteryCelsius", reading.battery_celsius);
   const double age_ms = std::chrono::duration<double, std::milli>(Clock::now() - reading.taken).count();

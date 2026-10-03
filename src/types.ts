@@ -61,7 +61,7 @@ export interface CpuFreqInfo {
 }
 
 /**
- * Represents system load average statistics (1m, 5m, 15m) and CPU architecture metadata.
+ * Represents system load average statistics (1m, 5m, 15m) and the core count that normalizes them.
  */
 export interface CpuLoadInfo {
   /** 1-minute exponential system load average. */
@@ -70,14 +70,8 @@ export interface CpuLoadInfo {
   load5: number;
   /** 15-minute exponential system load average. */
   load15: number;
-  /** Hardware model or brand description (e.g. 'Apple M4'). */
-  modelName: string;
   /** Total number of logical cores. */
   totalCores: number;
-  /** Number of Performance cores if asymmetric architecture, otherwise 0. */
-  pCores: number;
-  /** Number of Efficiency cores if asymmetric architecture, otherwise 0. */
-  eCores: number;
 }
 
 /**
@@ -118,23 +112,16 @@ export interface CpuTempInfo {
   tempCelsius: number;
 
   /**
-   * Kernel driver or subsystem name (e.g. 'k10temp', 'coretemp', 'acpi', 'Apple Silicon Die').
+   * Linux: kernel driver or subsystem of the CPU sensor that discovery picked (e.g. 'k10temp', 'coretemp',
+   * 'acpi'). Not rendered: it identifies the sensor in the smoke and integration output and in tests.
    */
-  sensorName: string;
+  sensorName?: string;
 
-  /**
-   * Label descriptor associated with the reading (e.g. 'Tctl', 'Tccd1', 'Package id 0').
-   */
-  sensorLabel: string;
+  /** Linux: label of that sensor (e.g. 'Tctl', 'Package id 0'). Not rendered, as `sensorName`. */
+  sensorLabel?: string;
 
   /** Peak die temperature recorded across all die thermal sensors in °C. */
   peakCelsius?: number;
-
-  /** Identifier of the hottest die sensor (e.g. 'PMU tdie6'). */
-  peakSensor?: string;
-
-  /** Total number of silicon die thermal zones aggregated. */
-  dieCount?: number;
 
   /** Temperature of the NAND flash storage controller in °C (if available). */
   nandCelsius?: number;

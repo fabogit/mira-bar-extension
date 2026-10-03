@@ -22,6 +22,7 @@ const state = {
   tooltipSets: 0,
   errors: [],
   infos: [],
+  warnings: [],
   panels: [],
   posted: [],
   executed: [],
@@ -129,7 +130,7 @@ module.exports = {
   MarkdownString,
   window: {
     createStatusBarItem: (alignment, priority) => new Item(alignment, priority),
-    createOutputChannel: () => ({ info: (m) => state.infos.push(m), error: (m) => state.errors.push(m), dispose() {} }),
+    createOutputChannel: () => ({ info: (m) => state.infos.push(m), warn: (m) => state.warnings.push(m), error: (m) => state.errors.push(m), dispose() {} }),
     createWebviewPanel,
     showInformationMessage() {},
   },

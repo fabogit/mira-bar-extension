@@ -8,11 +8,23 @@ import type {
 } from '../types.js';
 
 /**
- * Universal contract for operating-system and architecture-specific telemetry providers.
+ * Where providers report problems that do not stop them (e.g. the native addon failing to load): the
+ * MiraBar output channel in the extension (a vscode.LogOutputChannel fits), the console in tests.
+ */
+export interface PlatformLogger {
+  warn(message: string): void;
+}
+
+/**
+ * Universal contract for operating-system-specific telemetry providers.
  */
 export interface TelemetryPlatformProvider {
-  /** Identifier of the active platform target (e.g. 'darwin' or 'linux'). */
-  readonly platformName: 'darwin' | 'linux' | 'win32';
+  /**
+   * Which provider this is, and so what its readings mean: 'darwin' reports the system load in
+   * sampleFreqOrLoad(), 'linux' the CPU frequency. Use it, not process.platform, for anything that
+   * depends on the readings (labels, options).
+   */
+  readonly platformName: 'darwin' | 'linux';
 
   /**
    * Samples active CPU utilization percentages across overall processor and logical cores.
@@ -26,8 +38,11 @@ export interface TelemetryPlatformProvider {
 
   /**
    * Samples CPU / SoC die temperature in degrees Celsius.
+   *
+   * @param maxAgeMs - Age up to which a cached reading is returned instead of a new one being started
+   *   (the monitor passes half the temperature interval).
    */
-  sampleTemp(maxAgeMs?: number): CpuTempInfo | null;
+  sampleTemp(maxAgeMs: number): CpuTempInfo | null;
 
   /**
    * Optional: starts a background temperature reading without waiting for it, so that the next

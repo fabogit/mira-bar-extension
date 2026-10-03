@@ -25,7 +25,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(log);
   log.info('Activated');
 
-  const current = new ResourceMonitor(createPlatformProvider(), new DiskProvider(), log, getConfig());
+  const current = new ResourceMonitor(createPlatformProvider(log), new DiskProvider(), log, getConfig());
   monitor = current;
   context.subscriptions.push(current, { dispose: () => SettingsPanel.disposeCurrent() });
 

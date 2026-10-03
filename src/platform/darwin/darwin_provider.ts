@@ -6,8 +6,8 @@ import type {
   FreqOrLoadInfo,
   MemoryInfo,
 } from '../../types.js';
-import type { TelemetryPlatformProvider } from '../interface.js';
-import { loadDarwinNativeAddon, type DarwinNativeAddon } from './native_loader.js';
+import type { PlatformLogger, TelemetryPlatformProvider } from '../interface.js';
+import { describeError, loadDarwinNativeAddon, type DarwinNativeAddon } from './native_loader.js';
 
 interface CoreTicks {
   user: number;
@@ -15,6 +15,9 @@ interface CoreTicks {
   idle: number;
   nice: number;
 }
+
+/** Chip model and core counts (pCores and eCores are 0 when unknown: os.cpus() fallback). */
+type CpuTopology = ReturnType<DarwinNativeAddon['getCpuTopology']>;
 
 /** Counters per core in the native tick buffer: user, system, idle, nice (processor_cpu_load_info order). */
 const TICK_STATES = 4;
@@ -25,13 +28,6 @@ const TICK_STATES = 4;
  * so they return the previous result and keep accumulating the baseline instead.
  */
 const MIN_TICKS_PER_CORE = 5;
-
-/**
- * Default age of a temperature reading when no age is given. A full HID pass costs ~16 ms of IPC on an M4
- * and runs on a native background thread; the minimum interval is set in config.ts
- * (MEASURED_MIN_STATUS_BAR_MS.darwin).
- */
-const TEMP_MAX_AGE_MS = 10_000;
 
 /** How often a missing battery is re-probed (desktop Macs never gain one; laptops may fail transiently). */
 const BATTERY_RECHECK_MS = 60_000;
@@ -51,8 +47,8 @@ const PRESSURE_LEVELS: Record<number, MemoryInfo['pressureLevel']> = {
 export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
   public readonly platformName = 'darwin' as const;
 
-  private nativeAddon: DarwinNativeAddon | null;
-  private topology: { model: string; totalCores: number; pCores: number; eCores: number };
+  private readonly nativeAddon: DarwinNativeAddon | null;
+  private readonly topology: CpuTopology;
   private lastCpuResult: CpuUsageInfo = { overallPercent: 0, perCorePercent: [] };
 
   /** Core architecture per logical core, computed once (E-cores are indexed first on Apple Silicon). */
@@ -69,10 +65,33 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
   private batteryPresent = false;
   private batteryRecheckAt = 0;
 
-  constructor() {
-    this.nativeAddon = loadDarwinNativeAddon();
-    if (this.nativeAddon) {
-      this.topology = this.nativeAddon.getCpuTopology();
+  /**
+   * @param log - Where a native addon failure is reported (the MiraBar output channel).
+   * @param addon - The native addon (default: the bundled one; a fake in tests, `null` for the fallback).
+   *   If its first calls throw, the provider uses the Node.js fallback instead of failing activation.
+   */
+  constructor(log: PlatformLogger, addon: DarwinNativeAddon | null = loadDarwinNativeAddon(log)) {
+    let topology: CpuTopology | null = null;
+    if (addon) {
+      try {
+        topology = addon.getCpuTopology();
+        // Prime the tick baseline so the first real sample already has a delta.
+        const cores = this.readNativeTicks(addon);
+        if (cores > 0) {
+          this.swapTickBuffers(cores);
+        }
+        this.batteryPresent = addon.getBatteryStats().isAvailable;
+        this.batteryRecheckAt = Date.now() + BATTERY_RECHECK_MS;
+      } catch (err) {
+        log.warn(`Native addon failed at startup; using the Node.js fallback: ${describeError(err)}`);
+        topology = null;
+        this.batteryPresent = false;
+      }
+    }
+
+    this.nativeAddon = topology ? addon : null;
+    if (topology) {
+      this.topology = topology;
       const coreTypes: ('P' | 'E')[] = [];
       for (let i = 0; i < this.topology.totalCores; i++) {
         if (this.topology.eCores > 0 && i < this.topology.eCores) {
@@ -87,13 +106,6 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
         perCorePercent: new Array<number>(this.topology.totalCores).fill(0),
         coreTypes: this.coreTypes,
       };
-      // Prime the tick baseline so the first real sample already has a delta.
-      const cores = this.readNativeTicks(this.nativeAddon);
-      if (cores > 0) {
-        this.swapTickBuffers(cores);
-      }
-      this.batteryPresent = this.nativeAddon.getBatteryStats().isAvailable;
-      this.batteryRecheckAt = Date.now() + BATTERY_RECHECK_MS;
     } else {
       const cpus = os.cpus();
       this.topology = {
@@ -291,10 +303,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
         load1: loads[0] ?? 0,
         load5: loads[1] ?? 0,
         load15: loads[2] ?? 0,
-        modelName: this.topology.model,
         totalCores: this.topology.totalCores,
-        pCores: this.topology.pCores,
-        eCores: this.topology.eCores,
       },
     };
   }
@@ -310,13 +319,15 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
 
   /**
    * Samples Apple Silicon SoC die, NAND flash, and battery temperatures via IOHIDEventSystemClient.
-   * Non-blocking: returns the latest background reading. A stale call starts a new pass and still returns
-   * the previous reading, so a value can be up to `maxAgeMs` plus one call interval (one tick) old.
+   * Non-blocking (except the first call, which waits up to 250 ms for the first pass): returns the latest
+   * background reading. A stale call starts a new pass and still returns the previous reading, so a value
+   * can be up to `maxAgeMs` plus one temperature interval old. The minimum interval is set in config.ts
+   * (a full HID pass costs ~16 ms of IPC on an M4).
    *
-   * @param maxAgeMs - Age after which a background refresh is requested (default 5 s).
+   * @param maxAgeMs - Age after which a background refresh is requested.
    * @returns Synthesized thermal metrics in degrees Celsius, or `null` if unprivileged HID is unavailable.
    */
-  public sampleTemp(maxAgeMs = TEMP_MAX_AGE_MS): CpuTempInfo | null {
+  public sampleTemp(maxAgeMs: number): CpuTempInfo | null {
     if (this.nativeAddon) {
       return this.nativeAddon.getDieTemperature(maxAgeMs);
     }

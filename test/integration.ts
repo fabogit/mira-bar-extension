@@ -6,7 +6,7 @@ async function sleep(ms: number): Promise<void> {
 }
 
 async function run(): Promise<void> {
-  const provider = createPlatformProvider();
+  const provider = createPlatformProvider(console);
   console.log(`=== MIRABAR - INTEGRATION TEST (${provider.platformName.toUpperCase()}) ===\n`);
 
   console.log('Platform:', provider.platformName);
@@ -30,7 +30,7 @@ async function run(): Promise<void> {
   console.log('Tick 2 Sampling...');
   const cpu = provider.sampleCpu();
   const freqOrLoad = provider.sampleFreqOrLoad();
-  const temp = provider.sampleTemp();
+  const temp = provider.sampleTemp(5000); // first call: a fresh reading (macOS waits for the first pass)
   const mem = provider.sampleMemory();
   const bat = provider.sampleBattery();
 
@@ -56,7 +56,8 @@ async function run(): Promise<void> {
     console.log('Frequency/Load:', freqOrLoad);
   }
 
-  console.log('Temperature:', temp ? `${temp.tempCelsius.toFixed(2)} °C [${temp.sensorName}: ${temp.sensorLabel}]` : 'N/A or Not Accessible');
+  const sensor = temp?.sensorName ? ` [${temp.sensorName}: ${temp.sensorLabel}]` : '';
+  console.log('Temperature:', temp ? `${temp.tempCelsius.toFixed(2)} °C${sensor}` : 'N/A or Not Accessible');
   console.log('Memory:', mem ? `Used: ${(mem.usedBytes / 1024**3).toFixed(2)} GB / ${(mem.totalBytes / 1024**3).toFixed(2)} GB (${mem.usedPercent.toFixed(1)}%) | Compressed: ${((mem.compressedBytes || 0) / 1024**3).toFixed(2)} GB` : 'FAILED');
   if (bat) {
     console.log(`Battery: ${bat.percent}% (${bat.status}) | Health: ${bat.healthPercent?.toFixed(1)}% | Current: ${bat.currentCapacity}/${bat.maxCapacity} ${bat.capacityUnit} | Design: ${bat.designCapacity} ${bat.capacityUnit} | Cycles: ${bat.cycleCount}`);
