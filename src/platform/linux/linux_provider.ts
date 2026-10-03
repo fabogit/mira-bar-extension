@@ -96,10 +96,10 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
    * CPU readings younger than `maxAgeMs` are served from cache (the monitor passes half the temperature
    * status bar interval, mirabar.statusBarMs.temp), with their age in `ageMs`.
    *
-   * @param maxAgeMs - Maximum age of a cached reading (default 0: always read).
+   * @param maxAgeMs - Maximum age of a cached reading (0: always read).
    * @returns CpuTempInfo reading and driver name, or `null` if no hwmon sensors exist.
    */
-  public sampleTemp(maxAgeMs = 0): CpuTempInfo | null {
+  public sampleTemp(maxAgeMs: number): CpuTempInfo | null {
     const now = this.now();
     const result = this.temp.cached(maxAgeMs, now);
     if (!result) {

@@ -76,7 +76,7 @@ async function run(): Promise<void> {
   // Component sensors (SSD, RAM, Wi-Fi, battery) are read asynchronously: request a pass, then read.
   provider.requestTempRefresh();
   await new Promise((r) => setTimeout(r, 200));
-  const temp = provider.sampleTemp();
+  const temp = provider.sampleTemp(0);
   if (temp) {
     console.log({
       tempCelsius: `${temp.tempCelsius.toFixed(1)} °C`,
