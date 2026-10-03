@@ -27,6 +27,13 @@ const SCHEDULE_SLACK_MS = 25;
  */
 const TEMP_PREFETCH_MS = 100;
 
+/**
+ * CPU usage is the difference between two readings, and the first one after activation has only the
+ * baseline taken by the provider a moment before: the second read comes this long after activation
+ * instead of a whole interval later.
+ */
+const FIRST_CPU_DELTA_MS = 500;
+
 /** Disk requests allowed in flight at once: the current one plus one superseded (possibly hung) one. */
 const MAX_DISK_IN_FLIGHT = 2;
 
@@ -79,6 +86,11 @@ export class ResourceMonitor implements vscode.Disposable {
     this.provider.setComponentSensors?.(config.componentSensors);
     this.items = this.createItems();
     this.run(true);
+    const cpuMs = config.statusBarMs.cpu;
+    if (this.visible('cpu') && cpuMs > FIRST_CPU_DELTA_MS) {
+      this.lastReadAt.cpu -= cpuMs - FIRST_CPU_DELTA_MS;
+      this.run(false);
+    }
   }
 
   /** Reads every visible section now and rebuilds every tooltip (click, command). */
