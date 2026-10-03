@@ -257,6 +257,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 - [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) **Thread latency of cpufreq and battery**: p95 238–256 µs and 304–311 µs at 200 ms (401–421 µs and 359–395 µs every 2 s), above the 250 µs target of #5; options: async reads, one cpufreq file per policy, `pread` on open descriptors.
 - [x] **Desktop without battery** (2026-10-03, v1.3.0): the whole suite (`typecheck`, `build`, `test:linux`, `test:linux-temp`, `test:linux-battery`, `test:integration`, `test:extension`) passes on a Ryzen 7 3700X desktop (Garuda Linux, kernel 7.2 zen, Node 24 and 26): no battery (widget hidden), `k10temp` Tctl without a critical limit (100 °C shown), one NVMe component sensor. Multiple disks (`mirabar.disk.drives` with the NVMe btrfs root, two SATA SSDs on ntfs3, an 8 TB SATA HDD on exfat, plus a missing path): every mount read, values as `df`, the missing path skipped, *All* and *MostFull* rendered; `statfs` ~12 µs per mount, no device access. Still open: the VSIX in VS Code on that desktop.
+- [x] **SATA drives in standby** (2026-10-03, Garuda): `statfs` and `drivetemp` (SCT Status) leave SSDs and the hard disk in standby; the SMART attributes, `drivetemp`'s fallback without SCT, wake them (hard disk spin-up 9.5 s). SATA temperatures are therefore not read (ADR-0016).
 - [ ] **Battery time on a real discharge**: compare with `upower -i` on battery (the test laptop was held at its charge limit, *Not charging*).
 - [ ] **Battery `temp` file** (#36) on a laptop that exposes it (verified with the mock only).
 
@@ -309,6 +310,9 @@ Phase 4 externalizes and translates user-facing strings once the underlying tele
 
 Improvements independent of the platform phases; each one gets a milestone when scheduled.
 
+- [ ] [#41](https://github.com/fabogit/mira-bar-extension/issues/41) **Disk picker in the settings panel**:
+  - List the detected mounts in the panel (read when it opens, no cost while running); the checked ones go to `mirabar.disk.drives`. Network and removable file systems marked, btrfs subvolumes grouped.
+  - Automatic discovery in the status bar was evaluated and dropped (2026-10-03): on a four-disk desktop it would show 6-7 mounts (`/boot/efi`, btrfs subvolumes) or need guessing filters, and it would pull in network mounts that can hang `statfs`. Duplicates (two paths on one file system) stay the user's choice.
 - [ ] **Accessibility**:
   - Every status bar item already has a `name` (*MiraBar: CPU usage*, *MiraBar Settings*: the label of the status bar context menu).
   - Add `accessibilityInformation` to every item: a spoken label with the current value instead of the visible text with icons (e.g. "CPU usage 23 percent", "Memory pressure Warning"), updated together with the text; role `button` for items that run a command on click.
