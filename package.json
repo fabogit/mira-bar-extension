@@ -346,6 +346,7 @@
     "test:extension": "node --expose-gc test/extension.test.mjs",
     "bench:darwin": "node test/bench-darwin.mjs",
     "bench:extension": "node test/bench-extension.mjs",
+    "bench:linux": "node --expose-gc test/bench-linux.mjs",
     "test:integration": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/integration.ts'], outfile: 'dist/test-integration.cjs', bundle: true, platform: 'node', format: 'cjs', external: ['*.node'] });\" && node dist/test-integration.cjs && rm -f dist/test-integration.cjs",
     "package": "vsce package --no-dependencies",
     "package:darwin-arm64": "bash native/darwin/compile.sh && vsce package --target darwin-arm64 --no-dependencies",

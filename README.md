@@ -177,9 +177,10 @@ pnpm run test:extension
 # Native leak & cost probe (on macOS): µs per call, RSS growth, Mach host port refs
 node --expose-gc test/leak-darwin.mjs
 
-# Measurements behind the refresh minimums (on macOS):
-pnpm run bench:darwin      # cost per read of each source, sensor and battery refresh periods
+# Measurements behind the refresh minimums (bench:extension first, on the same machine):
 pnpm run bench:extension   # extension CPU per read, per section and per configuration
+pnpm run bench:darwin      # macOS: cost per read of each source, sensor and battery refresh periods
+pnpm run bench:linux       # Linux: cost per read (thread, process, system), latency at 200 ms, V8 heap and GC
 
 # AddressSanitizer build of the native addon (on macOS):
 DEBUG=1 pnpm run compile:native
