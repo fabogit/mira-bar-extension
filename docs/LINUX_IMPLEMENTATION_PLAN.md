@@ -11,7 +11,7 @@ Phases 1.1 and 1.2 focused on macOS, but most of the extension is shared. On Lin
 | Area | Change | Where | Tested on Linux |
 | :--- | :--- | :--- | :--- |
 | Refresh model | Per-section status bar and tooltip intervals, one timer at the earliest deadline, hidden sections never read (ADR-0009) | `src/monitor.ts`, `src/config.ts` | VM only |
-| Minimums | Measured on macOS and applied everywhere: temperature 8400 ms, the rest 200 ms (ADR-0010). Likely too conservative for sysfs temperature | `src/config.ts` | — |
+| Minimums | Measured on macOS and applied everywhere: temperature 8400 ms, the rest 200 ms (ADR-0010). Since 2026-10-03 per platform: Linux temperature 600 ms, the rest 200 ms | `src/config.ts` | Linux laptop |
 | Settings | Gear widget with tables, webview settings panel, widget order (ADR-0007, ADR-0008) | `src/settings/`, `src/monitor.ts` | VM + Chromium |
 | Rendering | Tooltips moved from `extension.ts` into renderers per section | `src/sections.ts`, `src/format.ts` | VM only |
 | Disk | `statfs` off the event loop, capped requests in flight (ADR-0011) | `src/monitor.ts` | VM (simulated hang) |
@@ -184,7 +184,7 @@ When testing and developing on the Linux PC, execute the following steps in sequ
 ### Phase 2: Implementation of Linux Parity
 - [x] **CPU Cold-Start** (#1): [`src/platform/linux/cpu.ts`](../src/platform/linux/cpu.ts) primes in the constructor; second read 500 ms after activation (`src/monitor.ts`).
 - [x] **Frequency Monospace Table** (#2, shipped in 1.2.0): Average/Peak table and per-core table in `renderFreqOrLoad` ([`src/sections.ts`](../src/sections.ts)).
-- [x] **Linux refresh minimums** (#5): `pnpm run bench:linux` and `bench:extension`; `MEASURED_MIN_STATUS_BAR_MS` per platform (Linux: temperature 900 ms, frequency 400 ms, battery 300 ms, the rest 200 ms; ADR-0010).
+- [x] **Linux refresh minimums** (#5): `pnpm run bench:linux` and `bench:extension`; `MEASURED_MIN_STATUS_BAR_MS` per platform (Linux: temperature 600 ms, the rest 200 ms; ADR-0010).
 - [x] **Battery Time Remaining** (#3): [`src/platform/linux/battery.ts`](../src/platform/linux/battery.ts), `test:linux-battery`; a real discharge is still to be checked on the laptop.
 - [x] **Thermal Limits**: [`src/platform/linux/cputemp.ts`](../src/platform/linux/cputemp.ts) reads `temp*_crit`/`temp*_max` and the thermal zone `critical` trip point.
 - [x] **Component temperatures** (NVMe, RAM, Wi-Fi, battery): [`src/platform/linux/components.ts`](../src/platform/linux/components.ts), read asynchronously (ADR-0016); `mirabar.temperature.componentSensors` avoids waking runtime-suspended devices.

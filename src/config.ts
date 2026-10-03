@@ -62,19 +62,18 @@ export const MEASURED_MIN_STATUS_BAR_MS: Readonly<Record<MeasuredPlatform, Reado
   },
   /**
    * AMD Ryzen 7 7840U laptop (16 threads), 2026-10-03, test/bench-linux.mjs and test/bench-extension.mjs,
-   * three runs, highest result. Costs are process CPU, kernel time in our syscalls included (the
-   * system-wide figure was within the noise of a busy desktop). Temperature: CPU hwmon read 0.06 ms,
-   * component pass 2.3-2.6 ms (async, libuv pool; the device time of the SSD, RAM and Wi-Fi sensors is not
-   * CPU) and 0.7-1.6 ms in the extension host: up to 4.0 ms / 0.5% = 803 ms -> 900 ms. CPU frequency
-   * reads 16 cpufreq files (1.7 ms with the extension, 340 ms by the rule), the battery answers through
-   * the ACPI embedded controller once its 1 s cache expires (1.4 ms, 282 ms). The others: 200 ms.
+   * three runs at the machine's usual load (load average 1.1-2.0), highest result. Costs are process CPU,
+   * kernel time in our syscalls included. Temperature: CPU hwmon read ~0.03 ms, component pass up to
+   * 1.7 ms (async, libuv pool; the device time of the SSD, RAM and Wi-Fi sensors is not CPU) and up to
+   * 0.87 ms in the extension host: 2.5 ms / 0.5% = 505 ms -> 600 ms. The other sections cost 0.2-0.7 ms
+   * per read (40-136 ms by the rule), so the UI minimum applies.
    */
   linux: {
     cpu: MIN_INTERVAL_MS,
-    freq: 400,
-    temp: 900,
+    freq: MIN_INTERVAL_MS,
+    temp: 600,
     mem: MIN_INTERVAL_MS,
-    battery: 300,
+    battery: MIN_INTERVAL_MS,
     disk: MIN_INTERVAL_MS,
   },
 };

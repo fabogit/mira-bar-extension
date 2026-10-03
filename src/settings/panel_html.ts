@@ -49,7 +49,7 @@ function measuredOn(platform: NodeJS.Platform): string {
       return 'measured on an Apple M4: a temperature reading costs about 42 ms of CPU across the system';
     case 'linux':
       return 'measured on an AMD Ryzen 7 7840U laptop: a temperature reading (CPU sensor, then the SSD, RAM and ' +
-        'Wi-Fi sensors off the main thread) costs about 4 ms of CPU';
+        'Wi-Fi sensors off the main thread) costs about 2.5 ms of CPU';
     default:
       return 'not measured on this platform yet, so the highest values measured on macOS and Linux apply';
   }

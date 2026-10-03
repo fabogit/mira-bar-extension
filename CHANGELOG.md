@@ -14,7 +14,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 ### Changed
 
 - Linux: the CPU temperature limit comes from the kernel (`temp*_crit` / `temp*_max`, thermal zone `critical` trip point) instead of a fixed 100 °C, which remains the fallback (#4).
-- Refresh minimums per platform. Linux, measured on a Ryzen 7 7840U: temperature 900 ms (was the macOS 8400 ms), CPU frequency 400 ms, battery 300 ms, the rest 200 ms; macOS unchanged; platforms not measured yet use the highest value per section. The settings panel and the setting descriptions show the host's minimums ([ADR-0010](docs/adr/0010-refresh-minimums-from-measurements.md)) (#5).
+- Refresh minimums per platform. Linux, measured on a Ryzen 7 7840U: temperature 600 ms (was the macOS 8400 ms), the rest 200 ms; macOS unchanged; platforms not measured yet use the highest value per section. The settings panel and the setting descriptions show the host's minimums ([ADR-0010](docs/adr/0010-refresh-minimums-from-measurements.md)) (#5).
 - Linux: the CPU counters are primed when the provider is created, so the first CPU tooltip shows every core instead of an empty table, and the second read comes 500 ms after activation instead of a whole interval; reads less than ~50 ms apart keep the previous result, as on macOS (#1).
 
 ### Fixed

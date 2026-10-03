@@ -39,7 +39,7 @@ The component reads go through the device and take milliseconds, up to ~41 ms fo
 
 - Extension host thread per temperature read: ~45 µs (median, CPU plus merge). A component pass on the test laptop: ~8.7 ms wall (p95 37 ms, NVMe), ~3.3 ms of process CPU; at the 10 s default ~0.03% of one core.
 - Reading the NVMe temperature sends a command to the drive and can bring it out of a low power state once per temperature interval. See "Sleeping devices" below for `mirabar.temperature.componentSensors`.
-- The pass's CPU counts in the Linux temperature minimum (900 ms, ADR-0010, measured with `test/bench-linux.mjs`, #5): off the thread, but counted in full.
+- The pass's CPU counts in the Linux temperature minimum (600 ms, ADR-0010, measured with `test/bench-linux.mjs`, #5): off the thread, but counted in full.
 - Covered by `test/linux-temp.test.ts` (`pnpm run test:linux-temp`, mocked sysfs tree: limits, labels, invalid values, rescan, tooltip rows, the three `componentSensors` modes) and by `test:linux` on real hardware. The battery `temp` file is verified only with the mock (absent on the test laptop).
 
 ## Sleeping devices (`mirabar.temperature.componentSensors`, 2026-10-03)

@@ -120,12 +120,12 @@ A click on any widget reads every visible section and rebuilds every tooltip.
 
 | Section | Cost per read, macOS (M4) | Minimum | Cost per read, Linux (7840U) | Minimum | Default |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| CPU usage, memory, disk | under 30 µs to read, plus 0.34-0.47 ms to show | 200 ms | 0.1-0.4 ms to read, plus 0.4-0.6 ms to show | 200 ms | 2 s (disk 10 s) |
-| System load / CPU frequency | 0.5 µs, plus 0.45 ms | 200 ms | 0.7 ms (16 cpufreq files), plus 1 ms | 400 ms | 2 s |
-| Battery | 20 µs, plus 0.44 ms | 200 ms | up to 0.74 ms (ACPI embedded controller), plus 0.67 ms | 300 ms | 10 s |
-| Temperature | ~42 ms of CPU across the system (26 sensors through the HID server) | 8400 ms | ~4 ms (CPU sensor, then SSD, RAM and Wi-Fi sensors off the main thread) | 900 ms | 10 s |
+| CPU usage, memory, disk | under 30 µs to read, plus 0.34-0.47 ms to show | 200 ms | 0.03-0.14 ms to read, plus 0.17-0.27 ms to show | 200 ms | 2 s (disk 10 s) |
+| System load / CPU frequency | 0.5 µs, plus 0.45 ms | 200 ms | 0.25 ms (16 cpufreq files), plus 0.44 ms | 200 ms | 2 s |
+| Battery | 20 µs, plus 0.44 ms | 200 ms | up to 0.29 ms (ACPI embedded controller), plus 0.29 ms | 200 ms | 10 s |
+| Temperature | ~42 ms of CPU across the system (26 sensors through the HID server) | 8400 ms | ~2.5 ms (CPU sensor, then SSD, RAM and Wi-Fi sensors off the main thread) | 600 ms | 10 s |
 
-On macOS temperature is the only expensive source: at the old 5 s default it alone cost ~0.8% of one core. At the defaults the whole extension uses ~0.49% of one core on macOS and ~0.24% on Linux, with all six sections shown. Platforms not measured yet use the higher of the two minimums. The battery driver publishes new data every 60 s, so a shorter battery interval only shows power adapter changes sooner.
+On macOS temperature is the only expensive source: at the old 5 s default it alone cost ~0.8% of one core. At the defaults the whole extension uses ~0.49% of one core on macOS and ~0.05-0.1% on Linux, with all six sections shown. Platforms not measured yet use the higher of the two minimums. The battery driver publishes new data every 60 s, so a shorter battery interval only shows power adapter changes sooner.
 
 `mirabar.allowFastRefresh` lowers every minimum to 200 ms, at the cost of exceeding that budget. The derivation is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#refresh-floors).
 
