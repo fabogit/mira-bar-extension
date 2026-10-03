@@ -454,9 +454,11 @@ class ThermalHid {
  * Runs ThermalHid passes on a dedicated background thread so the JS thread never blocks on HID IPC.
  *
  * Get() returns the latest reading immediately and, if it is older than `max_age`, asks the worker
- * for a new pass (requests coalesce: at most one pass runs at a time). Only the very first call
- * waits, up to kFirstReadingWait, so the first tick can already show a temperature. The worker is
- * started lazily and joined in the destructor (N-API instance-data finalizer).
+ * for a new pass (requests coalesce: at most one pass runs at a time). There is no reading until the
+ * first pass completes: the first call with a non-zero `max_age` waits for it, up to kFirstReadingWait,
+ * so the first status bar read can already show a temperature. No other call waits, and a refresh
+ * request (`max_age` 0, the monitor's prefetch) never does. The worker is started lazily and joined in
+ * the destructor (N-API instance-data finalizer).
  */
 class ThermalSampler {
  public:
@@ -491,7 +493,8 @@ class ThermalSampler {
       requested_ = true;
       wake_.notify_one();
     }
-    if (!has_reading_) {
+    if (!has_reading_ && !first_wait_done_ && max_age > Clock::duration::zero()) {
+      first_wait_done_ = true;
       done_.wait_for(lock, kFirstReadingWait, [this] { return has_reading_; });
     }
     return reading_;
@@ -531,6 +534,7 @@ class ThermalSampler {
   bool requested_ = false;
   bool busy_ = false;
   bool has_reading_ = false;
+  bool first_wait_done_ = false;
   uint64_t pass_count_ = 0;
   ThermalReading reading_;
   std::thread worker_;
@@ -864,13 +868,13 @@ napi_value GetBatteryStats(napi_env env, napi_callback_info info) {
 // Thermal
 // ---------------------------------------------------------------------------
 
-constexpr double kDefaultThermalMaxAgeMs = 5000.0;
-
 /**
- * getDieTemperature(maxAgeMs = 5000): returns the latest SoC die average / peak, NAND and battery
- * temperatures, or null if unavailable. Never blocks on HID IPC after the first call: a new pass
- * runs in the background when the latest reading is older than `maxAgeMs`; its result is returned by
- * a later call, so a value can be up to maxAgeMs plus the caller's call interval old.
+ * getDieTemperature(maxAgeMs: number): returns the latest SoC die average / peak, NAND and battery
+ * temperatures, or null if unavailable. Blocks on HID IPC at most once, for the first reading (see
+ * ThermalSampler): a new pass runs in the background when the latest reading is older than `maxAgeMs`;
+ * its result is returned by a later call, so a value can be up to maxAgeMs plus the caller's call
+ * interval old. `maxAgeMs` is required: the caller sets the policy (the extension passes half the
+ * temperature interval, and 0 to request a pass ahead of a read).
  */
 napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
   size_t argc = 1;
@@ -878,17 +882,13 @@ napi_value GetDieTemperature(napi_env env, napi_callback_info info) {
   AddonState* state = GetState(env, info, &argc, argv);
   if (state == nullptr) return nullptr;
 
-  double max_age_ms = kDefaultThermalMaxAgeMs;
-  if (argc >= 1) {
-    napi_valuetype type = napi_undefined;
-    NAPI_CALL(env, napi_typeof(env, argv[0], &type));
-    if (type == napi_number) {
-      NAPI_CALL(env, napi_get_value_double(env, argv[0], &max_age_ms));
-    } else if (type != napi_undefined) {
-      napi_throw_type_error(env, nullptr, "getDieTemperature(maxAgeMs): maxAgeMs must be a number");
-      return nullptr;
-    }
+  napi_valuetype type = napi_undefined;
+  if (argc < 1 || napi_typeof(env, argv[0], &type) != napi_ok || type != napi_number) {
+    napi_throw_type_error(env, nullptr, "getDieTemperature(maxAgeMs): maxAgeMs must be a number");
+    return nullptr;
   }
+  double max_age_ms = 0.0;
+  NAPI_CALL(env, napi_get_value_double(env, argv[0], &max_age_ms));
   if (!(max_age_ms >= 0.0)) max_age_ms = 0.0;  // also catches NaN
   if (max_age_ms > 3600e3) max_age_ms = 3600e3;
 

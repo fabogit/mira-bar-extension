@@ -103,7 +103,7 @@ if (batt.isAvailable) {
 }
 
 console.log('\n--- Die Temperature ---');
-const temp = addon.getDieTemperature();
+const temp = addon.getDieTemperature(5000); // the first call with a non-zero max age waits for the first pass
 console.log(temp);
 if (temp) {
   if (temp.tempCelsius <= 0 || temp.tempCelsius > 120) {

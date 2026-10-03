@@ -5,7 +5,7 @@
 //   - RSS growth across batches (after GC)   -> growth in every batch after the warm-up = native leak
 //   - Mach port refs of this process (lsmp)   -> growth of the "host" send right = mach_host_self() leak
 //
-// getDieTemperature() returns the latest reading of a native background sampler, so its µs/call is the
+// getDieTemperature(5000) returns the latest reading of a native background sampler, so its µs/call is the
 // cached path; the HID sampling cost itself is measured by native/darwin/tools/hid_bench.cc.
 //
 // Usage (on macOS, after `pnpm run compile:native`):
@@ -61,7 +61,7 @@ function kb(bytes) {
 
 const functions = ['getCpuTicks', 'getCpuTopology', 'getMemoryStats', 'getBatteryStats', 'getDieTemperature'];
 // getCpuTicks(out) fills a caller-owned buffer (4 counters per core); 256 cores is plenty.
-const argsFor = { getCpuTicks: [new Uint32Array(256 * 4)] };
+const argsFor = { getCpuTicks: [new Uint32Array(256 * 4)], getDieTemperature: [5000] };
 
 console.log(`Addon: ${addonPath}`);
 console.log(`PID:   ${process.pid}`);

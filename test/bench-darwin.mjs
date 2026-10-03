@@ -110,7 +110,7 @@ async function measureLoop(name, fn, isAsync = false) {
 
 /** Temperature: back-to-back background passes; pass cost and how often the readings change. */
 async function measureTemperature() {
-  const first = addon.getDieTemperature(0);
+  const first = addon.getDieTemperature(1000); // waits for the first pass (a 0 max age never waits)
   if (!first) {
     return null;
   }
