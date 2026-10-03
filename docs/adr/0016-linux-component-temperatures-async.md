@@ -89,3 +89,25 @@ Likewise the mt7921 firmware power save (mt76 `runtime-pm`) is internal to the d
 - In a component pass on the test laptop, `awake` adds 6 checks (NVMe 2, each DIMM 1, Wi-Fi 2), ~44 µs each within a pass, ~0.26 ms on the extension host thread per pass (~0.003% of one core at the 10 s default); pass CPU 2.0 ms against 1.8 ms with `always` (200 passes each). Here nothing is ever skipped (`control` = `on`), so the readings are those of `always`.
 - When a device is skipped, the read it would have caused (up to ~41 ms and a device wake-up for NVMe) is not made.
 - A device that suspends between its check and its read is still read once (a window of microseconds; autosuspend delays are hundreds of milliseconds or more).
+
+## SATA drives (`drivetemp`), 2026-10-03
+
+### Context
+
+SATA drives expose a temperature only through the `drivetemp` hwmon driver, which is not loaded by default (it needs `modprobe drivetemp`, as root). A hard disk in standby has its spindle stopped: waking it every temperature interval would spin it up (seconds of motor work, wear, noise, energy), which is the opposite of what MiraBar should do.
+
+Measured on the Garuda desktop (Seagate ST8000DM004 8 TB, exfat, kernel 7.2 zen) with `smartctl -s standby,now` and `smartctl -n standby` (CHECK POWER MODE, which does not wake the drive):
+
+- `statfs` on the mounted file system (the disk section): the drive stays in standby. The file system answers from memory.
+- `drivetemp` `temp1_input` with the drive in standby: 31 °C in 2 ms, and the drive stays in standby. This drive answers through SCT Status, served by its controller without spinning up.
+- `power/runtime_status` of the SCSI device is `active` while the drive is in standby: ATA standby is not runtime PM, so the `awake` mode of `componentSensors` cannot see it.
+
+### Decision
+
+SATA drives are not read. `drivetemp` is not in the component classes.
+
+- The result above is one drive. `drivetemp` uses SCT Status when the drive supports it and otherwise reads the SMART attributes, which many drives answer only after spinning up; which one a drive does is not visible before reading.
+- Knowing whether a drive is in standby needs an ATA command through `SG_IO` (CHECK POWER MODE), which needs root: the extension cannot ask first.
+- The module is not loaded by default, so the feature would show nothing to most users and invite them to load a driver as root.
+
+To revisit only as an explicit opt-in, after testing drives without SCT.
