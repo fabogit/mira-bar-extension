@@ -103,6 +103,38 @@ export function renderBar(percent: number, width = 8, codeWrapped = true): strin
   return codeWrapped ? `[\`${bar}\`]` : `[${bar}]`;
 }
 
+/** Width of the bars inside tooltip tables and per-core lists. */
+const TABLE_BAR_WIDTH = 6;
+
+/**
+ * Renders a plain bar followed by its right-aligned percentage, the value cell of the tooltip tables
+ * (e.g. '[███░░░]   42.9%').
+ *
+ * @param pct - Value between 0 and 100.
+ * @param gap - Spaces between the bar and the percentage (default: 2).
+ * @returns Formatted cell string.
+ */
+export function barCell(pct: number, gap = 2): string {
+  return `${renderBar(pct, TABLE_BAR_WIDTH, false)}${' '.repeat(gap)}${pct.toFixed(1).padStart(5, ' ')}%`;
+}
+
+/** Load of one core as listed in the CPU tooltip (e.g. { label: 'P6', pct: 42.9 }). */
+export interface CoreLoad {
+  label: string;
+  pct: number;
+}
+
+/**
+ * Renders per-core loads as a Markdown list, one '- **Core X**: bar pct%' line per core, with the
+ * percentage padded by figure spaces so the bars stay aligned in proportional fonts.
+ *
+ * @param cores - Cores to list, in display order.
+ * @returns Markdown list lines.
+ */
+export function renderCoreList(cores: CoreLoad[]): string[] {
+  return cores.map((c) => `- **Core ${c.label}**: ${renderBar(c.pct, TABLE_BAR_WIDTH)} ${padNum(c.pct.toFixed(1), 5)}%`);
+}
+
 /**
  * Renders two columns of core utilization in a fixed-width monospace block
  * using box-drawing characters for pixel-perfect vertical alignment without horizontal jitter.
@@ -116,12 +148,13 @@ export function renderBar(percent: number, width = 8, codeWrapped = true): strin
 export function renderMonospaceTable(
   leftTitle: string,
   rightTitle: string,
-  leftCores: { label: string; pct: number }[],
-  rightCores: { label: string; pct: number }[]
+  leftCores: CoreLoad[],
+  rightCores: CoreLoad[]
 ): string[] {
   const colWidth = 23;
   const maxRows = Math.max(leftCores.length, rightCores.length);
   const lines: string[] = ['```text'];
+  const cell = (core: CoreLoad | undefined): string => (core ? `${core.label.padEnd(3, ' ')}: ${barCell(core.pct, 1)}` : '');
 
   const leftHeader = leftTitle.padEnd(colWidth, ' ');
   const rightHeader = rightTitle.padEnd(colWidth, ' ');
@@ -129,26 +162,7 @@ export function renderMonospaceTable(
   lines.push(`${'─'.repeat(colWidth)}─┼─${'─'.repeat(colWidth)}`);
 
   for (let r = 0; r < maxRows; r++) {
-    const left = leftCores[r];
-    const right = rightCores[r];
-
-    let leftCell = ''.padEnd(colWidth, ' ');
-    if (left) {
-      const label = left.label.padEnd(3, ' ');
-      const bar = renderBar(left.pct, 6, false);
-      const pctStr = left.pct.toFixed(1).padStart(5, ' ');
-      leftCell = `${label}: ${bar} ${pctStr}%`.padEnd(colWidth, ' ');
-    }
-
-    let rightCell = '';
-    if (right) {
-      const label = right.label.padEnd(3, ' ');
-      const bar = renderBar(right.pct, 6, false);
-      const pctStr = right.pct.toFixed(1).padStart(5, ' ');
-      rightCell = `${label}: ${bar} ${pctStr}%`;
-    }
-
-    lines.push(`${leftCell} │ ${rightCell}`);
+    lines.push(`${cell(leftCores[r]).padEnd(colWidth, ' ')} │ ${cell(rightCores[r])}`);
   }
 
   lines.push('```');
