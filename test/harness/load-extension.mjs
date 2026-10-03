@@ -15,9 +15,22 @@ export const mockPath = path.join(here, 'vscode-mock.cjs');
  * @returns {{ vscode: any, ext: any, cleanup: () => void }}
  */
 export function loadExtension(name) {
+  const { module: ext, cleanup } = loadModule('src/extension.ts', name);
+  return { vscode: require(mockPath), ext, cleanup };
+}
+
+/**
+ * Bundles one source file the same way (with the same `vscode` mock) and loads it, for tests of a single
+ * module (e.g. src/config.ts with an injected platform).
+ *
+ * @param {string} entry - Source file, relative to the repository root.
+ * @param {string} name - Bundle name, written to dist/.
+ * @returns {{ module: any, cleanup: () => void }}
+ */
+export function loadModule(entry, name) {
   const outfile = path.join(root, 'dist', `${name}.cjs`);
   require('esbuild').buildSync({
-    entryPoints: [path.join(root, 'src', 'extension.ts')],
+    entryPoints: [path.join(root, entry)],
     bundle: true,
     platform: 'node',
     format: 'cjs',
@@ -27,7 +40,6 @@ export function loadExtension(name) {
   });
   // Point the bundle at the same mock instance the caller inspects.
   fs.writeFileSync(outfile, fs.readFileSync(outfile, 'utf8').replaceAll('require("vscode")', `require(${JSON.stringify(mockPath)})`));
-  const vscode = require(mockPath);
-  const ext = require(outfile);
-  return { vscode, ext, cleanup: () => fs.rmSync(outfile, { force: true }) };
+  const module = require(outfile);
+  return { module, cleanup: () => fs.rmSync(outfile, { force: true }) };
 }

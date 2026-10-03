@@ -30,7 +30,7 @@ MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platfor
 ```
 
 ### 1. CPU Load & Topology
-- **Linux**: Reads `/proc/stat` delta counters across logical cores. Handles `iowait` as idle to avoid false I/O spikes.
+- **Linux**: Reads `/proc/stat` delta counters across logical cores. Handles `iowait` as idle to avoid false I/O spikes. The constructor primes the counters (as on Darwin), so the first read already has the core count and, after ~50 ms, a real delta; reads closer than 5 jiffies per core return the previous result and keep the baseline.
 - **Darwin (Apple Silicon)**: Calls `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` via Mach host APIs to retrieve user, system, idle, and nice ticks per core.
   - **Cold-Start Pre-Sampling (Tick 0)**: Pre-samples CPU ticks during provider instantiation so that the first hover immediately displays valid per-core metrics rather than waiting for an arbitrary polling cycle.
   - **Asymmetric Topology**: Discovers Performance (P) and Efficiency (E) core clusters via `sysctlbyname("hw.perflevel0.logicalcpu")` and `sysctlbyname("hw.perflevel1.logicalcpu")`.
@@ -42,7 +42,9 @@ MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platfor
   Toggleable between normalized percentage (`34.4% L`) and POSIX queue depth (`3.44 L`).
 
 ### 3. Hardware Thermal Discovery
-- **Linux (`/sys/class/hwmon/`)**: One-time startup heuristic scanning AMD `k10temp`/`zenpower`, Intel `coretemp`, and ACPI thermal zones.
+- **Linux (`/sys/class/hwmon/`)**: One-time startup heuristic scanning AMD `k10temp`/`zenpower`, Intel `coretemp`, and ACPI thermal zones; the CPU limit is the kernel trip point (`temp*_crit`, else `temp*_max`, or the thermal zone `critical` trip), 100 °C when none is exposed.
+  - **Components** (`src/platform/linux/components.ts`): NVMe drives (`nvme`), memory modules (`spd5118`, `jc42`), wireless adapters and batteries (`power_supply/BAT*/temp`), with their `temp1_max` / `temp1_crit` limits, found by a scan every 60 s. Their reads go through the device (NVMe up to ~41 ms, DIMM ~1.5 ms over I2C, Wi-Fi ~2 ms), so they run asynchronously, one at a time, with at most one pass in flight ([ADR-0016](adr/0016-linux-component-temperatures-async.md)).
+  - **Sleeping devices** (`mirabar.temperature.componentSensors`): in the default `awake` mode, a sensor is read only when no `power/runtime_status` of its device chain (recorded at scan: the PCI function and port for NVMe and Wi-Fi, the SMBus/I2C controller for DIMMs) reads `suspended` / `suspending`; otherwise its row shows *asleep*. The check is a synchronous sysfs attribute read (~25 µs per file, no device access). `always` reads every sensor; `off` skips the scan and the reads (CPU row only). Applied live through the optional `setComponentSensors` provider method (no-op on macOS).
 - **Darwin Apple Silicon (`IOHIDEventSystemClient`)**: Unprivileged kernel HID event tap matching `PrimaryUsagePage = 0xff00` and `PrimaryUsage = 0x5`. Samples 24 on-die SoC sensors (reporting both average and peak die temperatures), NAND SSD controller temperature, and battery cell temperature without root permissions.
   - **Background sampler**: one pass costs ~16-18 ms on an M4 (~0.6 ms of IPC per sensor), so a native worker thread (`ThermalSampler`) performs the reads. `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and wakes the worker when the reading is older than `maxAgeMs`; the extension host thread never waits for the sensors after the first reading. Each reading carries `sampleSeq` (changes with every pass), `ageMs`, and the cost of its pass (`passWallMs`, `passCpuMs`).
 
@@ -52,7 +54,9 @@ MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platfor
   - **Memory pressure**: `100 - kern.memorystatus_level` as a percentage, and `kern.memorystatus_vm_pressure_level` (1 Normal, 2 Warning, 4 Critical) as the label, the same signals Activity Monitor uses. `vm.memory_pressure` is not a percentage and is no longer read.
 
 ### 5. Battery Telemetry & State Discovery
-- **Linux**: Scans `/sys/class/power_supply/BAT*` for charge percentage, AC state, `charge_full_design`/`energy_full_design`, and `cycle_count`.
+- **Linux**: Scans `/sys/class/power_supply/BAT*` once for the files each battery exposes, then reads only those: charge percentage, `status`, `charge_full_design`/`energy_full_design`, and `cycle_count`.
+  - **State**: the kernel `status` string (`Charging`, `Discharging`, `Not charging`, `Full`, `Unknown`); with several batteries the first of Charging, Discharging, Not charging, Full wins.
+  - **Time remaining** (`Charging` and `Discharging` only): the driver's `time_to_empty_now` / `time_to_full_now` (seconds, single battery), else `energy_now` (or `energy_full - energy_now` when charging) over `power_now`, else the same with `charge_*` over `current_now` (absolute value: some drivers sign it), summed over batteries. Estimates above 48 h are discarded; discharging without an estimate (rate 0 or missing, e.g. right after unplugging) reports -1, shown as "Estimating..." as on macOS. `power_now` / `current_now` are refreshed by most drivers every few seconds.
 - **Darwin (`IOPowerSources` & `AppleSmartBattery`)**:
   - `IOPowerSources` on every battery sample: percentage, charging state, time remaining (the internal battery is preferred over UPS devices).
   - `AppleSmartBattery` registry snapshot at most every 30 s (capacities change slowly). Recent macOS releases publish the mAh values only inside the `BatteryData` sub-dictionary (`DesignCapacity`, `NominalChargeCapacity`, `FullChargeCapacity`, `RemainingCapacity`), while the top-level `MaxCapacity` / `CurrentCapacity` are percentages; older releases expose `AppleRawMaxCapacity` / `AppleRawCurrentCapacity`, still used when present. `CycleCount` is read from either level.
@@ -100,12 +104,13 @@ There is no global tick. `ResourceMonitor` (`src/monitor.ts`) keeps, per section
 ```
 
 - **Temperature (macOS)**: a sensor pass takes ~16-18 ms on the native worker thread, so the monitor asks for it 100 ms before the read (`requestTempRefresh`); the read then shows a reading taken just before it, without waiting and with one pass per interval.
+- **Temperature (Linux)**: the CPU sensor is read at the read (~36 µs); `requestTempRefresh` starts the asynchronous pass over the component sensors 100 ms before it (none with `mirabar.temperature.componentSensors` set to `off`), and the read merges the latest completed pass.
 - **Disk**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other sections running; no new request for the same paths starts until it returns, a change of `mirabar.disk.drives` starts one at once and drops the stale result, and at most two requests are in flight (each hung `statfs` holds one of the 4 libuv pool threads shared by the extension host).
 - **Configuration changes** are debounced (100 ms), so dragging a slider in the settings panel applies once.
 
 ### Refresh Floors
 
-The measured minimums (`MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts`) follow one rule:
+The measured minimums (`MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts`, one set per platform) follow one rule:
 
 > The minimum status bar interval of a section is the interval at which **its reads alone would use the whole project budget**: 0.5% of one core (docs/ROADMAP.md). The default intervals keep the whole extension within that budget.
 
@@ -113,9 +118,12 @@ $$\text{minimum}_s = \max\left(200\ \text{ms},\ \frac{\text{source CPU per read}
 
 The budget is not split six ways because the costs are very uneven: temperature costs about 90 times more per read than any other section, so an equal split would push its minimum to ~50 s while leaving the others' shares unused. With the whole budget as the cap, no single section can exceed it, and the defaults (temperature 10 s, the others 2-10 s) add up to less than the budget.
 
-- *Source CPU per read* counts the whole machine: the calling thread plus the macOS services that answer the request (powerd for the battery, the HID event server for temperature). `test/bench-darwin.mjs` measures it from host CPU ticks (busy ticks while reading in a loop, minus the idle baseline); for temperature it is one background pass over all sensors.
+- *Source CPU per read* counts the whole machine: the calling thread plus the system services that answer the request (on macOS powerd for the battery, the HID event server for temperature; on Linux the kernel). `test/bench-darwin.mjs` and `test/bench-linux.mjs` measure it from host CPU ticks (busy ticks while reading in a loop, minus the idle baseline); for temperature it includes the background pass over the sensors.
 - *Extension CPU per read* is the extension host's work for one read: waking up, sampling through the provider, rendering the text and, in the worst case (Live mode), the tooltip. `test/bench-extension.mjs` measures it with one section visible at a time.
 - The result is rounded up to the next 100 ms. The renderer-side cost of a status bar update in VS Code is not included (it cannot be measured outside VS Code).
+- The minimums are per platform, because the sources are different (`measuredMinimums()` in `src/config.ts`). A platform not measured yet (Windows) takes the higher of the measured values, section by section. The settings panel, the gear tooltip and the setting descriptions show the minimums of the host platform.
+
+#### macOS
 
 Measured on an Apple M4 (macOS, Node 24), 30 September 2026:
 
@@ -134,6 +142,28 @@ Measured on an Apple M4 (macOS, Node 24), 30 September 2026:
 - **Cost at the defaults**: 0.49% of one core with all six sections shown (0.42% temperature, 0.07% the other five together), within the 0.5% budget; disk is hidden by default. The renderer-side cost of status bar updates in VS Code comes on top and cannot be measured outside VS Code.
 
 The same bench measures how often the sources refresh (temperature sensors, battery driver `UpdateTime`): reading faster than that only returns the same values, so the defaults are set at or above those periods. `mirabar.allowFastRefresh` lowers every minimum to 200 ms; values set below a minimum are kept in the settings and apply whenever it is on.
+
+#### Linux
+
+Measured on an AMD Ryzen 7 7840U laptop (16 threads; `k10temp`, NVMe, two `spd5118` DIMM sensors, `mt7921` Wi-Fi, ACPI battery `BAT1`, `amd-pstate-epp` cpufreq; Arch Linux, kernel 7.2, Node 24), 3 October 2026, at the machine's usual load (desktop session, load average 1.1-2.0). Three runs of `bench:linux` and two of `bench:extension`; ranges are across the runs, and each minimum comes from the run with the highest cost:
+
+| Section | Source | Thread, per read (median / p95 at 200 ms) | Source CPU per read | Extension CPU per read | Exact | Minimum | Default |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CPU usage | `/proc/stat` | 119-131 / 149-153 µs | 138-144 µs | 252-272 µs | 78-83 ms | 200 ms | 2 s |
+| CPU frequency | 16 × `cpufreq/scaling_cur_freq` | 202-208 / 238-256 µs | 228-245 µs | 408-437 µs | 128-136 ms | 200 ms | 2 s |
+| Temperature | CPU `hwmon` (sync) + component pass (async) | 22-27 / 27-32 µs | 0.03 + 1.1-1.7 ms | 0.44-0.87 ms | 321-505 ms | **600 ms** | 10 s |
+| Memory | `/proc/meminfo` | 26 / 29-39 µs | 28 µs | 171-203 µs | 40-46 ms | 200 ms | 2 s |
+| Battery | `power_supply/BAT1` (ACPI) | 86-87 / 304-311 µs | 262-289 µs | 282-285 µs | 109-115 ms | 200 ms | 10 s |
+| Disk | `statfs` (async) | off the thread | 82-83 µs | 185-212 µs | 53-59 ms | 200 ms | 10 s |
+
+- **Source CPU is process CPU**, the largest of three regimes: reads back to back, every 200 ms and every 2 s (kernel caches expired, slower clock between reads). It holds the kernel's work inside our syscalls (65-90% of it: generating `/proc/stat`, the cpufreq reads, the ACPI battery method, the I2C and NVMe commands of the component pass). The system-wide figure from `/proc/stat` agrees with it within ±2-20 µs per synchronous read: on Linux the work happens in the calling thread's syscall, with no server process answering elsewhere.
+- **Load matters**: a first series on the same laptop with a file indexer running (load average 1.7-5.9) gave costs two to three times higher, and minimums of 900 ms for temperature, 400 ms for CPU frequency and 300 ms for the battery. The minimums use the usual load, as on macOS; on a busy machine a section at its minimum can cost up to about three times its share of the budget.
+- **Temperature** is a CPU sensor read on the extension host thread (~9 µs back to back, ~27 µs at 200 ms) plus the component pass (ADR-0016): four files read one after the other on the libuv pool, 6-7 ms of wall time back to back and 9-21 ms every 2 s (NVMe 0.6-0.7 ms, each DIMM 1.7-2.0 ms over I2C, Wi-Fi 1.7-2.3 ms through the firmware; up to 41-72 ms when the SSD leaves a low power state). That wall time is mostly the devices working, not CPU, so it does not count against the CPU budget. The pass costs 0.9-1.0 ms of CPU back to back and 1.1-1.7 ms every 2 s. `bench:extension` measures the pass inside the extension host process, so the pass is subtracted from the extension figure and counted once, in the source figure. Total: up to 2.5 ms per read, 600 ms minimum. The 10 s default stays: the pass sends a command to the SSD at every read and can wake it from a low power state, so a short interval costs energy beyond the CPU figure.
+- **Rescan**: every 60 s the component sensors are found again (hwmon and power_supply, limits): 6.7-8.8 ms of CPU and 44-123 ms of wall time, ~0.015% of one core, whatever the interval. It is not per read and does not change the minimum.
+- **CPU frequency** reads one file per core: 16 reads, each one handled by the cpufreq driver. **Battery**: the ACPI battery driver caches its readings for 1 s (`battery.cache_time`), after which a read runs the ACPI method through the embedded controller (~0.3 ms instead of ~0.05 ms). At 200 ms one read in five does that, and at the defaults every read does.
+- **Thread latency (issue #5, 250 µs target at 200 ms polling)**: CPU usage, memory, CPU temperature and load stay below it (p95 ≤ 153 µs); CPU frequency is at the limit (p95 238-256 µs); the battery exceeds it once the ACPI cache has expired (p95 304-311 µs). Every 2 s, with cold kernel caches, CPU frequency (p95 401-421 µs) and the battery (359-395 µs) exceed it. Disk and the component sensors never block the thread.
+- **V8 heap**: bytes allocated per read are 15 KB for `/proc/stat`, 3-5 KB for cpufreq, memory and disk, 1.3 KB for the battery, 0.3 KB for the CPU sensor and 46 KB per component pass. With every source read every 200 ms: 33 KB per tick, 10 scavenges per minute, 1.1-1.3 ms of GC pause per minute (0.002% of one core), heap between 6.1 and 6.9 MB, 41 KB retained after a full GC (code compiled once for the read paths, not growth). Every 2 s with the component pass: 1.5 scavenges per minute, 0.2-0.25 ms of GC pause per minute. In the extension, `test:extension` measures ~60 KB of heap growth over 15 s with every section at 200 ms Live.
+- **Cost at the defaults**: 0.05% of one core measured by `bench:extension` with all six sections shown, 0.10-0.11% estimated by `bench:linux` from the per-read costs (rescan included); a fifth of the macOS figure or less.
 
 ---
 

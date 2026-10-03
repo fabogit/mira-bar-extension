@@ -27,6 +27,13 @@ const SCHEDULE_SLACK_MS = 25;
  */
 const TEMP_PREFETCH_MS = 100;
 
+/**
+ * CPU usage is the difference between two readings, and the first one after activation has only the
+ * baseline taken by the provider a moment before: the second read comes this long after activation
+ * instead of a whole interval later.
+ */
+const FIRST_CPU_DELTA_MS = 500;
+
 /** Disk requests allowed in flight at once: the current one plus one superseded (possibly hung) one. */
 const MAX_DISK_IN_FLIGHT = 2;
 
@@ -76,8 +83,14 @@ export class ResourceMonitor implements vscode.Disposable {
     private readonly log: vscode.LogOutputChannel,
     private config: MiraBarConfig
   ) {
+    this.provider.setComponentSensors?.(config.componentSensors);
     this.items = this.createItems();
     this.run(true);
+    const cpuMs = config.statusBarMs.cpu;
+    if (this.visible('cpu') && cpuMs > FIRST_CPU_DELTA_MS) {
+      this.lastReadAt.cpu -= cpuMs - FIRST_CPU_DELTA_MS;
+      this.run(false);
+    }
   }
 
   /** Reads every visible section now and rebuilds every tooltip (click, command). */
@@ -85,7 +98,7 @@ export class ResourceMonitor implements vscode.Disposable {
     this.run(true);
   }
 
-  /** Applies a new configuration: placement, gear tooltip, then a full refresh. */
+  /** Applies a new configuration: component sensors (Linux), placement, gear tooltip, then a full refresh. */
   public applyConfig(next: MiraBarConfig): void {
     if (this.disposed) {
       return;
@@ -96,6 +109,7 @@ export class ResourceMonitor implements vscode.Disposable {
       next.showSettings !== this.config.showSettings ||
       next.order.join() !== this.config.order.join();
     this.config = next;
+    this.provider.setComponentSensors?.(next.componentSensors);
     if (placementChanged) {
       // VS Code cannot move an existing item: recreate them.
       this.disposeItems();
@@ -219,7 +233,7 @@ export class ResourceMonitor implements vscode.Disposable {
     }
   }
 
-  /** Whether the temperature pass can be requested ahead of the read (macOS, intervals of 400 ms or more). */
+  /** Whether the temperature pass can be requested ahead of the read (macOS sensors, Linux components; intervals of 400 ms or more). */
   private tempPrefetchEnabled(): boolean {
     return this.provider.requestTempRefresh !== undefined && this.config.statusBarMs.temp >= 4 * TEMP_PREFETCH_MS;
   }

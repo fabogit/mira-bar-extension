@@ -22,8 +22,9 @@ fsp.statfs = (p, ...rest) => {
   return origStatfs(p, ...rest);
 };
 
-const { loadExtension } = await import('./harness/load-extension.mjs');
+const { loadExtension, loadModule } = await import('./harness/load-extension.mjs');
 const { vscode, ext, cleanup } = loadExtension('test-extension');
+const { module: config, cleanup: cleanupConfig } = loadModule('src/config.ts', 'test-config');
 const s = vscode.__state;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const keepAlive = setInterval(() => {}, 1000); // the extension timer is unref()'d
@@ -53,6 +54,38 @@ const tooltipRate = async (label, ms) => {
 };
 const step = (name) => console.log(`ok - ${name}`);
 
+// Measured minimums of this host (they differ per platform, ADR-0010) and how the gear tooltip shows them.
+const MIN = config.measuredMinimums(process.platform);
+const LABELS = { cpu: 'CPU usage', freq: process.platform === 'darwin' ? 'System load' : 'CPU frequency', temp: 'Temperature', mem: 'Memory', battery: 'Battery', disk: 'Disk' };
+const duration = (ms) => (ms < 1000 ? `${ms} ms` : `${Number((ms / 1000).toFixed(1))} s`);
+/** Status bar cell for a stored value: raised to the minimum (flagged) when below it. */
+const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[section])} *` : duration(stored));
+
+// Minimums per platform, with the platform injected: macOS keeps its measured values, Linux has its own,
+// an unmeasured platform takes the highest of each section; the unlock lowers all of them to 200 ms.
+{
+  const all = (ms) => ({ cpu: ms, freq: ms, temp: ms, mem: ms, battery: ms, disk: ms });
+  assert.deepEqual(config.measuredMinimums('darwin'), { ...all(200), temp: 8400 }, 'macOS minimums unchanged');
+  const linux = config.measuredMinimums('linux');
+  for (const section of config.TOOLTIP_SECTIONS) {
+    assert.ok(linux[section] >= 200 && linux[section] % 100 === 0, `linux ${section}: ${linux[section]} ms`);
+    assert.equal(config.measuredMinimums('win32')[section], Math.max(linux[section], config.measuredMinimums('darwin')[section]), `win32 ${section}: highest measured`);
+    for (const platform of ['darwin', 'linux', 'win32']) {
+      assert.equal(config.minStatusBarMs(section, true, platform), 200, `${platform} ${section} unlocked`);
+      assert.equal(config.minStatusBarMs(section, false, platform), config.measuredMinimums(platform)[section]);
+    }
+  }
+  assert.ok(linux.temp < 8400, 'linux temperature below the macOS minimum');
+  for (const section of config.TOOLTIP_SECTIONS) {
+    assert.ok(config.DEFAULT_STATUS_BAR_MS[section] >= Math.max(...['darwin', 'linux', 'win32'].map((p) => config.measuredMinimums(p)[section])),
+      `default ${section} not below any platform's minimum`);
+  }
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
+  assert.deepEqual(pkg['mirabar.statusBarMs'].default, config.DEFAULT_STATUS_BAR_MS, 'package.json statusBarMs default = config.ts');
+  assert.deepEqual(pkg['mirabar.tooltipMs'].default, config.DEFAULT_TOOLTIP_MS, 'package.json tooltipMs default = config.ts');
+  step(`minimums per platform (this host, ${process.platform}: ${config.TOOLTIP_SECTIONS.map((x) => `${x} ${MIN[x]}`).join(', ')})`);
+}
+
 s.cfg = { 'show.disk': true };
 ext.activate({ subscriptions: [] });
 await sleep(500);
@@ -76,9 +109,10 @@ await sleep(500);
   step('activation and gear tooltip');
 }
 
-// Per-section status bar intervals: Live tooltips follow each section's own reads.
+// Per-section status bar intervals: Live tooltips follow each section's own reads (minimums unlocked:
+// the schedule is under test here, not the platform's minimums).
 {
-  await setCfg({ 'tooltip.mode': 'Live', statusBarMs: { cpu: 200, mem: 1000, freq: 5000, temp: 5000, battery: 10000, disk: 10000 } }, 400);
+  await setCfg({ allowFastRefresh: true, 'tooltip.mode': 'Live', statusBarMs: { cpu: 200, mem: 1000, freq: 5000, temp: 5000, battery: 10000, disk: 10000 } }, 400);
   const [cpu, mem] = await Promise.all([tooltipRate('CPU usage', 3000), tooltipRate('Memory', 3000)]);
   assert.ok(cpu >= 4 && cpu <= 5.6, `cpu reads/s at 200 ms: ${cpu}`);
   assert.ok(mem >= 0.6 && mem <= 1.4, `memory reads/s at 1000 ms: ${mem}`);
@@ -107,13 +141,17 @@ await sleep(500);
 
 // Measured minimums on the status bar interval, unlockable.
 {
-  await setCfg({ statusBarMs: { temp: 200, battery: 200, disk: 200, cpu: 200, mem: 200, freq: 200 } });
-  assert.equal(row('Temperature').bar, '8.4 s *', 'temperature raised to its measured minimum, flagged');
+  await setCfg({ allowFastRefresh: undefined, statusBarMs: { temp: 200, battery: 200, disk: 200, cpu: 200, mem: 200, freq: 200 } });
+  assert.equal(row('Temperature').bar, barCell('temp', 200), 'temperature raised to its measured minimum, flagged');
   assert.ok(gear().tooltip.value.includes('raised to its measured minimum'), 'note under the table');
-  assert.deepEqual(['CPU usage', 'Memory', 'Battery', 'Disk'].map((l) => row(l).bar), ['200 ms', '200 ms', '200 ms', '200 ms'], 'cheap sections at 200 ms');
+  for (const [section, label] of Object.entries(LABELS)) {
+    assert.equal(row(label).bar, barCell(section, 200), `${section} at this platform's minimum`);
+  }
   assert.equal(row('CPU usage').tooltip, '5 s');
   await setCfg({ allowFastRefresh: true });
-  assert.equal(row('Temperature').bar, '200 ms', 'unlocked');
+  for (const label of Object.values(LABELS)) {
+    assert.equal(row(label).bar, '200 ms', `${label} unlocked`);
+  }
   await setCfg({ allowFastRefresh: undefined, statusBarMs: undefined });
   step('measured minimums');
 }
@@ -126,6 +164,8 @@ await sleep(500);
     assert.ok(!keys.includes(`mirabar.${legacy}`), `${legacy} not contributed`);
   }
   assert.ok(keys.every((k) => k.startsWith('mirabar.')), 'every setting under mirabar.*');
+  const sensors = pkg.contributes.configuration.properties['mirabar.temperature.componentSensors'];
+  assert.deepEqual([sensors.enum, sensors.default, sensors.enumDescriptions.length], [['awake', 'always', 'off'], 'awake', 3]);
   assert.ok(pkg.contributes.commands.every((c) => c.command.startsWith('mirabar.') && c.category === 'MiraBar'), 'commands under mirabar.*, category MiraBar');
   step('settings and commands namespace');
 }
@@ -141,6 +181,8 @@ await sleep(500);
   const nonce = html.match(/script-src 'nonce-([^']+)'/)[1];
   assert.ok(html.includes(`<script nonce="${nonce}">`) && html.includes("default-src 'none'"));
   assert.ok(!/https?:\/\//.test(html.replace(/http-equiv/g, '')), 'no remote resources');
+  assert.ok(html.includes(`temperature ${MIN.temp} ms`), "panel explains this platform's temperature minimum");
+  assert.deepEqual(JSON.parse(html.match(/const LIMITS = (\{.*\});/)[1]).measuredMin, MIN, "panel enforces this platform's minimums");
 
   const state = async () => {
     s.posted.length = 0;
@@ -155,6 +197,8 @@ await sleep(500);
   };
   const st = await state();
   assert.deepEqual(st.statusBarMs, { cpu: 2000, freq: 2000, temp: 10000, mem: 2000, battery: 10000, disk: 10000 }, 'panel sees the defaults');
+  assert.equal(st['temperature.componentSensors'], 'awake', 'component sensors default');
+  assert.ok(panel.webview.html.includes('data-setting="temperature.componentSensors"'), 'component sensors control');
 
   // A reset followed at once by an edit: the edit must apply after the reset (messages are serialized).
   s.cfg.priority = 50;
@@ -170,25 +214,48 @@ await sleep(500);
   await write('statusBarMs', { ...s.cfg.statusBarMs, temp: 300 });
   assert.equal(s.cfg.statusBarMs.temp, 300, 'stored below the minimum (applied on read)');
   await sleep(200);
-  assert.equal(row('Temperature').bar, '8.4 s *', 'effective value is the minimum');
+  assert.equal(row('Temperature').bar, barCell('temp', 300), 'effective value is the minimum');
   assert.deepEqual(await write('order', ['disk', 'bogus', 'disk', 'cpu']), ['disk', 'cpu', 'freq', 'temp', 'mem', 'battery']);
+  assert.equal(await write('temperature.componentSensors', 'off'), 'off');
+  assert.equal((await state())['temperature.componentSensors'], 'off', 'panel sees the stored value');
   const before = JSON.stringify(s.cfg);
   s.posted.length = 0;
   panel.receive({ type: 'update', key: 'evil.key', value: 1 });
   panel.receive({ type: 'update', key: 'statusBarMs', value: 5 });
   panel.receive({ type: 'update', key: 'show.mem', value: 'yes' });
+  panel.receive({ type: 'update', key: 'temperature.componentSensors', value: 'sometimes' });
   await sleep(30);
   assert.equal(JSON.stringify(s.cfg), before, 'invalid updates rejected');
-  assert.equal(s.posted.filter((m) => m.type === 'error').length, 3);
+  assert.equal(s.posted.filter((m) => m.type === 'error').length, 4);
   const itemsBefore = s.items.length;
   panel.receive({ type: 'reset' });
   await sleep(400);
   assert.ok(s.items.length - itemsBefore <= 7, 'restore defaults recreates the widgets at most once');
-  for (const k of ['statusBarMs', 'tooltipMs', 'allowFastRefresh', 'order']) assert.ok(!(k in s.cfg), `${k} reset`);
+  for (const k of ['statusBarMs', 'tooltipMs', 'allowFastRefresh', 'order', 'temperature.componentSensors']) assert.ok(!(k in s.cfg), `${k} reset`);
   s.cfg['show.disk'] = true;
   vscode.__fireConfigChange();
   await sleep(300);
   step('settings panel');
+}
+
+// Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload.
+if (process.platform === 'linux') {
+  const componentRows = () => item('Temperature').tooltip.value.split('\n')
+    .filter((l) => /^(NVMe|RAM DIMM|Wi-Fi|Battery)/.test(l)).length;
+  const readTwice = async () => {
+    s.cmds['mirabar.refresh'](); // starts a pass
+    await sleep(300);
+    s.cmds['mirabar.refresh'](); // shows it
+  };
+  await readTwice();
+  const before = componentRows();
+  await setCfg({ 'temperature.componentSensors': 'off' }, 400);
+  await readTwice();
+  assert.equal(componentRows(), 0, 'off: CPU row only');
+  await setCfg({ 'temperature.componentSensors': undefined }, 400);
+  await readTwice();
+  assert.equal(componentRows(), before, 'awake again: component rows back');
+  step(`component sensors applied live (${before} rows here)`);
 }
 
 // Hidden sections are not read; with everything hidden no timer runs.
@@ -273,7 +340,7 @@ if (typeof globalThis.gc === 'function') {
   await sleep(600);
   assert.equal(s.textSets + s.tooltipSets, t0, 'nothing runs after deactivate');
   hang = false;
-  s.cfg = { 'tooltip.mode': 'Live', statusBarMs: { cpu: 200 } };
+  s.cfg = { allowFastRefresh: true, 'tooltip.mode': 'Live', statusBarMs: { cpu: 200 } };
   ext.activate({ subscriptions: [] });
   await sleep(300);
   for (const resolve of hung.splice(0)) resolve();
@@ -287,4 +354,5 @@ if (typeof globalThis.gc === 'function') {
 assert.deepEqual(s.errors.filter((e) => /disposed/.test(e)), [], 'no writes to disposed items');
 clearInterval(keepAlive);
 cleanup();
+cleanupConfig();
 console.log('EXTENSION TESTS OK');

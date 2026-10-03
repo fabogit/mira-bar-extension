@@ -12,6 +12,8 @@ interface DiscoveredSensor {
   sensorName: string;
   /** Descriptive label associated with the sensor node (e.g. `Tctl`, `Tccd1`). */
   sensorLabel: string;
+  /** Critical trip point in °C (`temp*_crit`, else `temp*_max`; thermal zone `critical` trip), if exposed. */
+  critCelsius?: number;
 }
 
 /**
@@ -27,8 +29,10 @@ export class CpuTempProvider {
 
   /**
    * Initializes the provider and triggers initial sensor discovery.
+   *
+   * @param sysRoot - Root of the sysfs tree (tests pass a mocked tree).
    */
-  constructor() {
+  constructor(private readonly sysRoot = '/sys') {
     this.discoverSensor();
   }
 
@@ -37,7 +41,7 @@ export class CpuTempProvider {
    */
   private discoverSensor(): void {
     this.discoveryAttempted = true;
-    const hwmonBase = '/sys/class/hwmon';
+    const hwmonBase = path.join(this.sysRoot, 'class', 'hwmon');
 
     try {
       if (fs.existsSync(hwmonBase)) {
@@ -80,12 +84,14 @@ export class CpuTempProvider {
       }
 
       // Fallback: /sys/class/thermal/thermal_zone0/temp
-      const thermalZonePath = '/sys/class/thermal/thermal_zone0/temp';
+      const zoneDir = path.join(this.sysRoot, 'class', 'thermal', 'thermal_zone0');
+      const thermalZonePath = path.join(zoneDir, 'temp');
       if (fs.existsSync(thermalZonePath)) {
         this.sensor = {
           tempFilePath: thermalZonePath,
           sensorName: 'acpi',
           sensorLabel: 'thermal_zone0',
+          critCelsius: criticalTripPoint(zoneDir),
         };
       }
     } catch {
@@ -129,6 +135,8 @@ export class CpuTempProvider {
         tempFilePath,
         sensorName,
         sensorLabel,
+        critCelsius: readLimit(path.join(dirPath, targetFile.replace('_input', '_crit')))
+          ?? readLimit(path.join(dirPath, targetFile.replace('_input', '_max'))),
       };
     } catch {
       return null;
@@ -162,9 +170,35 @@ export class CpuTempProvider {
         tempCelsius,
         sensorName: this.sensor.sensorName,
         sensorLabel: this.sensor.sensorLabel,
+        critCelsius: this.sensor.critCelsius,
       };
     } catch {
       return null;
     }
   }
+}
+
+/** A limit file in m°C as °C, or undefined when missing or implausible (some drivers report 0 or garbage). */
+function readLimit(file: string): number | undefined {
+  try {
+    const celsius = parseInt(fs.readFileSync(file, 'utf8').trim(), 10) / 1000;
+    return celsius > 0 && celsius <= 200 ? celsius : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The `critical` trip point of a thermal zone in °C, if any. */
+function criticalTripPoint(zoneDir: string): number | undefined {
+  try {
+    for (const file of fs.readdirSync(zoneDir)) {
+      const match = /^trip_point_(\d+)_type$/.exec(file);
+      if (match && fs.readFileSync(path.join(zoneDir, file), 'utf8').trim() === 'critical') {
+        return readLimit(path.join(zoneDir, `trip_point_${match[1]}_temp`));
+      }
+    }
+  } catch {
+    // no trip points
+  }
+  return undefined;
 }
