@@ -142,4 +142,11 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
   public isBatteryAvailable(): boolean {
     return this.batt.isAvailable;
   }
+
+  /** Closes the sysfs files kept open between reads (cpufreq, CPU sensor, battery). */
+  public dispose(): void {
+    this.freq.dispose();
+    this.temp.dispose();
+    this.batt.dispose();
+  }
 }

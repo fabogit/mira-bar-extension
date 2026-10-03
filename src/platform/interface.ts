@@ -74,6 +74,12 @@ export interface TelemetryPlatformProvider {
   isBatteryAvailable(): boolean;
 
   /**
+   * Optional: releases what the provider keeps open between reads (Linux: the sysfs files read at
+   * every sample). Called when the monitor is disposed.
+   */
+  dispose?(): void;
+
+  /**
    * Optional platform-specific architecture topology description (e.g. 'Apple M4 (4P + 6E)').
    */
   getTopologyDescription?(): string;

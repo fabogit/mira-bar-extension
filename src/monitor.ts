@@ -134,6 +134,7 @@ export class ResourceMonitor implements vscode.Disposable {
     }
     this.diskPending = null;
     this.disposeItems();
+    this.provider.dispose?.();
   }
 
   // --- widgets -------------------------------------------------------------------------------------

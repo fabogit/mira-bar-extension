@@ -99,6 +99,12 @@ export class CpuTempProvider {
     }
   }
 
+  /** Closes the open sensor file. */
+  public dispose(): void {
+    this.sensor?.input.close();
+    this.sensor = null;
+  }
+
   /**
    * Reads and parses the current temperature from the discovered sensor file.
    *

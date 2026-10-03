@@ -47,34 +47,104 @@ export function listDir(dir: string): string[] {
   }
 }
 
+/** The canonical path (symlinks resolved), or `null` if it does not exist. */
+export function realpath(p: string): string | null {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a file exists: a stat, which neither reads the attribute nor reaches the device. */
 export function exists(file: string): boolean {
   return fs.existsSync(file);
 }
 
 /**
+ * Read buffer shared by every {@link SysfsAttribute}: reads are synchronous, so it is never used by
+ * two reads at once. A sysfs attribute is at most one page.
+ */
+const ATTRIBUTE_BUFFER = Buffer.allocUnsafe(4096);
+
+/**
  * A sysfs attribute a provider reads at every sample (per-core cpufreq, the CPU sensor, the battery
- * files), found once by discovery. Each read opens the file by path; how it is read (e.g. keeping the
- * descriptor open and reading at offset 0) is decided here only.
+ * files), found once by discovery. The file is opened at the first read and kept open: each read is a
+ * single `pread` at offset 0, which makes the kernel produce the value again, instead of
+ * open + read + close (issue #40: about 2 µs per file instead of 12 for the 16 cpufreq files).
+ * A failed read closes the descriptor and retries once with a fresh one (device removed and back,
+ * core offlined); `close()` releases it when the provider drops the attribute.
  */
 export class SysfsAttribute {
+  private fd = -1;
+
   constructor(public readonly file: string) {}
 
   /** The content without surrounding whitespace, or `null` if unreadable. */
   public readText(): string | null {
-    return readText(this.file);
+    const length = this.read();
+    return length < 0 ? null : ATTRIBUTE_BUFFER.toString('utf8', 0, length).trim();
   }
 
   /** The value as an integer, or `NaN` if unreadable or not a number. */
   public readInt(): number {
-    return readInt(this.file);
+    const length = this.read();
+    return length < 0 ? NaN : parseInt(ATTRIBUTE_BUFFER.toString('latin1', 0, length), 10);
+  }
+
+  /** Closes the descriptor, if open; a later read opens it again. */
+  public close(): void {
+    if (this.fd >= 0) {
+      try {
+        fs.closeSync(this.fd);
+      } catch {
+        // already invalid: nothing to release
+      }
+      this.fd = -1;
+    }
+  }
+
+  /** Reads the attribute into the shared buffer: the number of bytes, or -1 if unreadable. */
+  private read(): number {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const reopened = this.fd < 0;
+      try {
+        if (reopened) {
+          this.fd = fs.openSync(this.file, 'r');
+        }
+        return fs.readSync(this.fd, ATTRIBUTE_BUFFER, 0, ATTRIBUTE_BUFFER.length, 0);
+      } catch {
+        this.close();
+        if (reopened) {
+          return -1; // a fresh descriptor failed too: missing file or the driver refuses the read
+        }
+      }
+    }
+    return -1;
   }
 }
 
-/** The attribute `name` of `dir` if the file exists (checked with a stat, not read), else `undefined`. */
-export function attribute(dir: string, name: string): SysfsAttribute | undefined {
+/** Closes the attributes no longer in use after a rediscovery (those of `previous` not in `current`). */
+export function closeDropped(previous: Iterable<SysfsAttribute | undefined>, current: Iterable<SysfsAttribute | undefined>): void {
+  const kept = new Set(current);
+  for (const attr of previous) {
+    if (attr && !kept.has(attr)) {
+      attr.close();
+    }
+  }
+}
+
+/**
+ * The attribute `name` of `dir` if the file exists (checked with a stat, not read), else `undefined`.
+ *
+ * @param reuse - Attributes of the previous discovery by path: the same file keeps its open descriptor.
+ */
+export function attribute(dir: string, name: string, reuse?: ReadonlyMap<string, SysfsAttribute>): SysfsAttribute | undefined {
   const file = path.join(dir, name);
-  return exists(file) ? new SysfsAttribute(file) : undefined;
+  if (!exists(file)) {
+    return undefined;
+  }
+  return reuse?.get(file) ?? new SysfsAttribute(file);
 }
 
 // --- asynchronous (libuv pool) ---------------------------------------------------------------------
