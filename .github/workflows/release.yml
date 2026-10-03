@@ -70,10 +70,14 @@ jobs:
       - name: Package VSIX (darwin-arm64)
         run: pnpm run package:darwin-arm64
 
+      - name: Read Extension Version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Upload Darwin VSIX Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: vsix-darwin-arm64
+          name: mirabar-darwin-arm64-${{ steps.pkg.outputs.version }}
           path: '*.vsix'
           if-no-files-found: error
 
@@ -117,10 +121,14 @@ jobs:
       - name: Package VSIX (linux-x64)
         run: pnpm run package:linux-x64
 
+      - name: Read Extension Version
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Upload Linux VSIX Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: vsix-linux-x64
+          name: mirabar-linux-x64-${{ steps.pkg.outputs.version }}
           path: '*.vsix'
           if-no-files-found: error
 
@@ -165,7 +173,7 @@ jobs:
       - name: Download All VSIX Artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: vsix-*
+          pattern: mirabar-*
           path: vsix/
           merge-multiple: true
 
@@ -182,3 +190,4 @@ jobs:
           generate_release_notes: ${{ steps.meta.outputs.has_notes != 'true' }}
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           tag_name: ${{ steps.meta.outputs.tag }}
+          name: MiraBar ${{ steps.meta.outputs.tag }}
