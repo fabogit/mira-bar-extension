@@ -2,19 +2,29 @@
  * Pure formatting helpers for status bar texts and tooltip Markdown (no VS Code dependency).
  */
 
+/** Shown instead of a size or duration that cannot be formatted (NaN, infinite, negative duration). */
+const NO_VALUE = '—';
+
+/** Truncation marker of table cells. */
+const ELLIPSIS = '...';
+
 /**
  * Formats a raw byte count into a human-readable string with dynamic unit scaling (B, KB, MB, GB, TB).
+ * The unit is chosen after rounding, so 1023.999 B is '1.00 KB', not '1024.00 B'.
  *
  * @param bytes - The size in bytes to format.
  * @param precision - Number of decimal places to include (default: 2).
- * @returns Formatted size string (e.g. '16.42 GB').
+ * @returns Formatted size string (e.g. '16.42 GB'), or '—' when not finite.
  */
 export function formatBytes(bytes: number, precision = 2): string {
+  if (!Number.isFinite(bytes)) {
+    return NO_VALUE;
+  }
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let val = bytes;
   let unitIndex = 0;
 
-  while (val >= 1024 && unitIndex < units.length - 1) {
+  while (Math.abs(Number(val.toFixed(precision))) >= 1024 && unitIndex < units.length - 1) {
     val /= 1024;
     unitIndex++;
   }
@@ -23,17 +33,18 @@ export function formatBytes(bytes: number, precision = 2): string {
 }
 
 /**
- * Formats a duration in minutes into a human-readable string (e.g. '1h 24m').
+ * Formats a duration in minutes, rounded to whole minutes, into a human-readable string (e.g. '1h 24m').
  *
  * @param minutes - Total duration in minutes.
- * @returns Formatted duration string or 'Estimating...'.
+ * @returns Formatted duration string, or 'Estimating...' when negative or not finite.
  */
 export function formatMinutes(minutes: number): string {
-  if (minutes < 0) {
+  if (!Number.isFinite(minutes) || minutes < 0) {
     return 'Estimating...';
   }
-  const hrs = Math.floor(minutes / 60);
-  const mins = minutes % 60;
+  const total = Math.round(minutes);
+  const hrs = Math.floor(total / 60);
+  const mins = total % 60;
   if (hrs > 0) {
     return `${hrs}h ${mins}m`;
   }
@@ -41,17 +52,23 @@ export function formatMinutes(minutes: number): string {
 }
 
 /**
- * Formats a duration in milliseconds compactly: '200 ms', '1.5 s', '10 s', '2 min'.
+ * Formats a duration in milliseconds compactly: '200 ms', '1.5 s', '10 s', '2 min' (minutes are the
+ * largest unit: one hour is '60 min'). The unit is chosen after rounding, so 59999 ms is '1 min', not '60 s'.
  *
  * @param ms - Duration in milliseconds.
- * @returns Human-readable duration.
+ * @returns Human-readable duration, or '—' when negative or not finite.
  */
 export function formatDuration(ms: number): string {
-  if (ms < 1000) {
-    return `${ms} ms`;
+  if (!Number.isFinite(ms) || ms < 0) {
+    return NO_VALUE;
   }
-  if (ms < 60_000) {
-    return `${Number((ms / 1000).toFixed(1))} s`;
+  const wholeMs = Math.round(ms);
+  if (wholeMs < 1000) {
+    return `${wholeMs} ms`;
+  }
+  const seconds = Number((ms / 1000).toFixed(1));
+  if (seconds < 60) {
+    return `${seconds} s`;
   }
   return `${Number((ms / 60_000).toFixed(1))} min`;
 }
@@ -79,7 +96,7 @@ export function formatClock(date: Date, withTenths = false): string {
  * @returns Formatted progress bar string.
  */
 export function renderBar(percent: number, width = 8, codeWrapped = true): string {
-  const clamped = isNaN(percent) ? 0 : Math.max(0, Math.min(100, percent));
+  const clamped = Number.isNaN(percent) ? 0 : Math.max(0, Math.min(100, percent));
   const filledCount = Math.round((clamped / 100) * width);
   const emptyCount = width - filledCount;
   const bar = `${'█'.repeat(filledCount)}${'░'.repeat(emptyCount)}`;
@@ -150,6 +167,9 @@ export function truncatePath(path: string, maxLength: number): string {
   if (path.length <= maxLength) {
     return path;
   }
+  if (maxLength <= 0) {
+    return '';
+  }
   if (maxLength <= 4) {
     return path.slice(-maxLength);
   }
@@ -200,6 +220,25 @@ export interface ColumnDef {
 }
 
 /**
+ * Fits a cell value into a column width: paths keep their trailing segments, other values end with
+ * '...' (or are cut short when the column is narrower than the marker itself).
+ *
+ * @param val - Cell value.
+ * @param width - Column width in characters.
+ * @param asPath - Truncate as a filesystem path (ColumnDef.truncatePath).
+ * @returns The value, at most `width` characters long.
+ */
+function fitCell(val: string, width: number, asPath = false): string {
+  if (val.length <= width) {
+    return val;
+  }
+  if (asPath) {
+    return truncatePath(val, width);
+  }
+  return width >= ELLIPSIS.length ?val.slice(0, width - ELLIPSIS.length) + ELLIPSIS : val.slice(0, width);
+}
+
+/**
  * Renders an ASCII table inside a markdown code block with automatically calculated
  * column widths, boundary clamping, and box-drawing characters.
  *
@@ -215,12 +254,7 @@ export function renderDynamicAsciiTable(
   const colWidths = columns.map((col, cIdx) => {
     let maxLen = col.header.length;
     for (const row of rows) {
-      let val = row[cIdx] ?? '';
-      if (col.maxWidth && val.length > col.maxWidth) {
-        val = col.truncatePath
-          ? truncatePath(val, col.maxWidth)
-          : val.slice(0, Math.max(0, col.maxWidth - 3)) + '...';
-      }
+      const val = col.maxWidth ? fitCell(row[cIdx] ?? '', col.maxWidth, col.truncatePath) : (row[cIdx] ?? '');
       if (val.length > maxLen) {
         maxLen = val.length;
       }
@@ -236,12 +270,15 @@ export function renderDynamicAsciiTable(
 
   const lines: string[] = ['```text'];
 
-  // 2. Format header
-  const headerCells = columns.map((col, idx) => {
+  // Fits a value into its column (a header too, when maxWidth is below its length) and aligns it.
+  const cell = (val: string, idx: number, asPath?: boolean): string => {
     const w = colWidths[idx]!;
-    return col.align === 'right' ? col.header.padStart(w, ' ') : col.header.padEnd(w, ' ');
-  });
-  lines.push(headerCells.join(' │ '));
+    const fitted = fitCell(val, w, asPath);
+    return columns[idx]!.align === 'right' ? fitted.padStart(w, ' ') : fitted.padEnd(w, ' ');
+  };
+
+  // 2. Format header
+  lines.push(columns.map((col, idx) => cell(col.header, idx)).join(' │ '));
 
   // 3. Format divider line
   const dividerCells = colWidths.map((w) => '─'.repeat(w));
@@ -249,17 +286,7 @@ export function renderDynamicAsciiTable(
 
   // 4. Format rows
   for (const row of rows) {
-    const rowCells = columns.map((col, idx) => {
-      const w = colWidths[idx]!;
-      let val = row[idx] ?? '';
-      if (val.length > w) {
-        val = col.truncatePath
-          ? truncatePath(val, w)
-          : val.slice(0, Math.max(0, w - 3)) + '...';
-      }
-      return col.align === 'right' ? val.padStart(w, ' ') : val.padEnd(w, ' ');
-    });
-    lines.push(rowCells.join(' │ '));
+    lines.push(columns.map((col, idx) => cell(row[idx] ?? '', idx, col.truncatePath)).join(' │ '));
   }
 
   lines.push('```');
