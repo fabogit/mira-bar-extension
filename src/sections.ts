@@ -225,7 +225,7 @@ export function renderFreqOrLoad(info: FreqOrLoadInfo, ctx: RenderContext, withT
   return { text, tooltip: lines.join('\n') };
 }
 
-/** Temperature: SoC die average/peak, NAND and battery cell on macOS; CPU package on Linux. */
+/** Temperature: SoC die average/peak, NAND and battery cell on macOS; CPU package and component sensors on Linux. */
 export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: boolean): Rendered {
   const text = `$(flame) ${padNum(temp.tempCelsius.toFixed(2), 5)} C`;
   if (!withTooltip) {
@@ -271,7 +271,7 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
       }
     }
   }
-  const lines = ['### CPU & System Temperature', '', ...renderDynamicAsciiTable(columns, rows)];
+  const lines = ['### Temperature', '', ...renderDynamicAsciiTable(columns, rows)];
   if (aboveMax.length > 0) {
     lines.push('', `*Above the operating maximum: ${aboveMax.join(', ')}.*`);
   }
