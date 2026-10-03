@@ -82,6 +82,23 @@ export type FreqOrLoadInfo =
 
 
 /**
+ * Temperature of a component other than the CPU, with the limits its driver reports.
+ */
+export interface TempSensorReading {
+  /** Row label in the tooltip (e.g. 'SSD nvme0', 'RAM DIMM 1', 'Wi-Fi', 'Battery Cell'). */
+  label: string;
+
+  /** Temperature in °C. */
+  celsius: number;
+
+  /** Upper operating threshold in °C (hwmon `temp*_max`), if exposed. */
+  maxCelsius?: number;
+
+  /** Critical threshold in °C (hwmon `temp*_crit`), if exposed. */
+  critCelsius?: number;
+}
+
+/**
  * Represents CPU temperature measurements and hardware sensor identification.
  */
 export interface CpuTempInfo {
@@ -114,6 +131,12 @@ export interface CpuTempInfo {
 
   /** Temperature of the battery cell in °C (if available). */
   batteryCelsius?: number;
+
+  /** Critical trip point of the CPU sensor in °C, when the kernel exposes one (Linux `temp*_crit`). */
+  critCelsius?: number;
+
+  /** Other components with their own sensor (Linux hwmon and power_supply: SSD, RAM, Wi-Fi, battery). */
+  sensors?: TempSensorReading[];
 
   /** Sequence number of the sensor reading: it changes exactly when a new reading is taken. */
   sampleSeq?: number;

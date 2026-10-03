@@ -219,7 +219,7 @@ export class ResourceMonitor implements vscode.Disposable {
     }
   }
 
-  /** Whether the temperature pass can be requested ahead of the read (macOS, intervals of 400 ms or more). */
+  /** Whether the temperature pass can be requested ahead of the read (macOS sensors, Linux components; intervals of 400 ms or more). */
   private tempPrefetchEnabled(): boolean {
     return this.provider.requestTempRefresh !== undefined && this.config.statusBarMs.temp >= 4 * TEMP_PREFETCH_MS;
   }

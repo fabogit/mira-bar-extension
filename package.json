@@ -342,6 +342,7 @@
     "compile:native": "bash native/darwin/compile.sh",
     "test:darwin": "node test/smoke-darwin.mjs",
     "test:linux": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/smoke-linux.ts'], outfile: 'dist/test-smoke-linux.cjs', bundle: true, platform: 'node', format: 'cjs' });\" && node dist/test-smoke-linux.cjs && rm -f dist/test-smoke-linux.cjs",
+    "test:linux-temp": "node -e \"require('esbuild').buildSync({ entryPoints: ['test/linux-temp.test.ts'], outfile: 'dist/test/linux-temp.cjs', bundle: true, platform: 'node', format: 'cjs', alias: { vscode: './test/harness/vscode-mock.cjs' } });\" && node dist/test/linux-temp.cjs && rm -rf dist/test",
     "test:extension": "node --expose-gc test/extension.test.mjs",
     "bench:darwin": "node test/bench-darwin.mjs",
     "bench:extension": "node test/bench-extension.mjs",

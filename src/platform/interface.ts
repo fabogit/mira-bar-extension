@@ -30,7 +30,8 @@ export interface TelemetryPlatformProvider {
 
   /**
    * Optional: starts a background temperature reading without waiting for it, so that the next
-   * sampleTemp() returns a fresh value (macOS, where a sensor pass takes ~16-18 ms).
+   * sampleTemp() returns a fresh value (macOS, where a sensor pass takes ~16-18 ms; Linux, where the
+   * SSD, RAM and Wi-Fi sensors take up to ~40 ms and are read asynchronously).
    */
   requestTempRefresh?(): void;
 

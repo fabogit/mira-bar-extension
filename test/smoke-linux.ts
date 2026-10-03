@@ -56,13 +56,26 @@ async function run(): Promise<void> {
   }
 
   console.log('\n--- 4. Hardware Thermal Sensors (/sys/class/hwmon) ---');
+  // Component sensors (SSD, RAM, Wi-Fi, battery) are read asynchronously: request a pass, then read.
+  provider.requestTempRefresh();
+  await new Promise((r) => setTimeout(r, 200));
   const temp = provider.sampleTemp();
   if (temp) {
     console.log({
       tempCelsius: `${temp.tempCelsius.toFixed(1)} °C`,
       sensorName: temp.sensorName,
       sensorLabel: temp.sensorLabel,
+      critCelsius: temp.critCelsius !== undefined ? `${temp.critCelsius} °C` : 'not exposed (100 °C shown)',
     });
+    for (const s of temp.sensors ?? []) {
+      const limits = [s.maxCelsius !== undefined ? `max ${s.maxCelsius} °C` : '', s.critCelsius !== undefined ? `crit ${s.critCelsius} °C` : '']
+        .filter(Boolean)
+        .join(', ');
+      console.log(`  - ${s.label}: ${s.celsius.toFixed(1)} °C${limits ? ` (${limits})` : ''}`);
+    }
+    if (!temp.sensors?.length) {
+      console.log('  No component sensors (NVMe, RAM, Wi-Fi, battery) exposed.');
+    }
   } else {
     console.log('Temperature: No supported hwmon sensors found (expected on non-Linux OS).');
   }

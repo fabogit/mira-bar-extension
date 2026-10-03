@@ -42,7 +42,8 @@ MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platfor
   Toggleable between normalized percentage (`34.4% L`) and POSIX queue depth (`3.44 L`).
 
 ### 3. Hardware Thermal Discovery
-- **Linux (`/sys/class/hwmon/`)**: One-time startup heuristic scanning AMD `k10temp`/`zenpower`, Intel `coretemp`, and ACPI thermal zones.
+- **Linux (`/sys/class/hwmon/`)**: One-time startup heuristic scanning AMD `k10temp`/`zenpower`, Intel `coretemp`, and ACPI thermal zones; the CPU limit is the kernel trip point (`temp*_crit`, else `temp*_max`, or the thermal zone `critical` trip), 100 °C when none is exposed.
+  - **Components** (`src/platform/linux/components.ts`): NVMe drives (`nvme`), memory modules (`spd5118`, `jc42`), wireless adapters and batteries (`power_supply/BAT*/temp`), with their `temp1_max` / `temp1_crit` limits, found by a scan every 60 s. Their reads go through the device (NVMe up to ~41 ms, DIMM ~1.5 ms over I2C, Wi-Fi ~2 ms), so they run asynchronously, one at a time, with at most one pass in flight ([ADR-0016](adr/0016-linux-component-temperatures-async.md)).
 - **Darwin Apple Silicon (`IOHIDEventSystemClient`)**: Unprivileged kernel HID event tap matching `PrimaryUsagePage = 0xff00` and `PrimaryUsage = 0x5`. Samples 24 on-die SoC sensors (reporting both average and peak die temperatures), NAND SSD controller temperature, and battery cell temperature without root permissions.
   - **Background sampler**: one pass costs ~16-18 ms on an M4 (~0.6 ms of IPC per sensor), so a native worker thread (`ThermalSampler`) performs the reads. `getDieTemperature(maxAgeMs)` returns the latest reading in ~2 µs and wakes the worker when the reading is older than `maxAgeMs`; the extension host thread never waits for the sensors after the first reading. Each reading carries `sampleSeq` (changes with every pass), `ageMs`, and the cost of its pass (`passWallMs`, `passCpuMs`).
 
@@ -100,6 +101,7 @@ There is no global tick. `ResourceMonitor` (`src/monitor.ts`) keeps, per section
 ```
 
 - **Temperature (macOS)**: a sensor pass takes ~16-18 ms on the native worker thread, so the monitor asks for it 100 ms before the read (`requestTempRefresh`); the read then shows a reading taken just before it, without waiting and with one pass per interval.
+- **Temperature (Linux)**: the CPU sensor is read at the read (~36 µs); `requestTempRefresh` starts the asynchronous pass over the component sensors 100 ms before it, and the read merges the latest completed pass.
 - **Disk**: `statfs` is started without awaiting it and the widget is rendered when the result arrives. A call hung on a dead network mount leaves the other sections running; no new request for the same paths starts until it returns, a change of `mirabar.disk.drives` starts one at once and drops the stale result, and at most two requests are in flight (each hung `statfs` holds one of the 4 libuv pool threads shared by the extension host).
 - **Configuration changes** are debounced (100 ms), so dragging a slider in the settings panel applies once.
 

@@ -2,6 +2,17 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/). Decisions behind the changes: [docs/adr/](docs/adr/README.md).
 
+## [Unreleased]
+
+### Added
+
+- Linux: NVMe SSD, RAM module (`spd5118`, `jc42`), Wi-Fi adapter and battery cell temperatures in the temperature tooltip, with the limits the drivers report and a note for readings above the operating maximum (#33, #34, #35, #36). They are read asynchronously, off the extension host thread ([ADR-0016](docs/adr/0016-linux-component-temperatures-async.md)).
+- Development: `test:linux-temp` (Linux temperature sensors against a mocked sysfs tree).
+
+### Changed
+
+- Linux: the CPU temperature limit comes from the kernel (`temp*_crit` / `temp*_max`, thermal zone `critical` trip point) instead of a fixed 100 °C, which remains the fallback (#4).
+
 ## [1.2.0] - 2026-10-01
 
 First release as **MiraBar** (`fabogit.mirabar`): settings and commands `mirabar.*`, commands grouped under the *MiraBar* category ([ADR-0015](docs/adr/0015-name-and-settings-namespace.md)). It includes the work of roadmap Phases 1.1 and 1.2.
