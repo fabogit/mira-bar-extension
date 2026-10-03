@@ -8,8 +8,8 @@ import type { BatteryInfo } from '../../types.js';
 interface BatteryPath {
   /** Path to the integer percentage capacity file (e.g. `.../capacity`). */
   capacityPath: string;
-  /** Path to the string charging state file (e.g. `.../status`). */
-  statusPath: string;
+  /** Path to the string charging state file (e.g. `.../status`), if present. */
+  statusPath?: string;
   /** Path to energy_now or charge_now (if present for weighted capacity). */
   energyNowPath?: string;
   /** Path to energy_full or charge_full (if present for weighted capacity). */
@@ -20,6 +20,51 @@ interface BatteryPath {
   cycleCountPath?: string;
   /** Unit indicator ('mAh' for charge_*, 'mWh' for energy_*). */
   unit?: 'mAh' | 'mWh';
+  /** Path to power_now (µW, with energy_*) or current_now (µA, with charge_*), matching `unit`. */
+  ratePath?: string;
+  /** Path to time_to_empty_now (seconds), if the driver estimates it. */
+  timeToEmptyPath?: string;
+  /** Path to time_to_full_now (seconds), if the driver estimates it. */
+  timeToFullPath?: string;
+}
+
+/** Estimates above this are discarded: the rate is too low to mean anything (e.g. right after unplugging). */
+const MAX_ESTIMATE_MINUTES = 48 * 60;
+
+/**
+ * Combined state of several batteries: the highest ranked one wins (one charging battery means the
+ * system is charging; one discharging battery means it runs on battery). Other states rank 0.
+ */
+const STATUS_RANK: Record<string, number> = {
+  Charging: 4,
+  Discharging: 3,
+  'Not charging': 2,
+  Full: 1,
+};
+
+/**
+ * Reads an integer sysfs attribute.
+ *
+ * @returns The value, or `NaN` if the file is unreadable (some drivers fail reads with ENODATA) or not a number.
+ */
+function readInt(file: string): number {
+  try {
+    return parseInt(fs.readFileSync(file, 'utf8'), 10);
+  } catch {
+    return NaN;
+  }
+}
+
+/**
+ * Validates an estimate in minutes.
+ *
+ * @returns Whole minutes (at least 1), or `null` if not positive or above `MAX_ESTIMATE_MINUTES`.
+ */
+function plausibleMinutes(minutes: number): number | null {
+  if (!(minutes > 0) || minutes > MAX_ESTIMATE_MINUTES) {
+    return null;
+  }
+  return Math.max(1, Math.round(minutes));
 }
 
 /**
@@ -32,6 +77,10 @@ interface BatteryPath {
  *   disables itself on startup, resulting in zero polling calls and zero CPU overhead.
  * - On laptops with multiple batteries, it calculates weighted capacity using
  *   energy or charge nodes to prevent asymmetric battery calculation errors.
+ * - Which files exist is decided once at discovery; samples only read them.
+ *
+ * Time remaining, in order: the driver's `time_to_empty_now` / `time_to_full_now` (single battery),
+ * else remaining energy over `power_now` or remaining charge over `current_now` (summed over batteries).
  */
 export class BatteryProvider {
   private batteries: BatteryPath[] = [];
@@ -44,8 +93,10 @@ export class BatteryProvider {
 
   /**
    * Initializes the provider and checks for power supply hardware.
+   *
+   * @param sysRoot - Root of the sysfs tree (tests pass a mocked tree).
    */
-  constructor() {
+  constructor(private readonly sysRoot = '/sys') {
     this.discoverBatteries();
   }
 
@@ -54,7 +105,7 @@ export class BatteryProvider {
    */
   private discoverBatteries(): void {
     this.discoveryAttempted = true;
-    const basePath = '/sys/class/power_supply';
+    const basePath = path.join(this.sysRoot, 'class', 'power_supply');
 
     try {
       if (!fs.existsSync(basePath)) {
@@ -72,13 +123,19 @@ export class BatteryProvider {
           const statusPath = path.join(batDir, 'status');
 
           if (fs.existsSync(capacityPath)) {
-            const bat: BatteryPath = { capacityPath, statusPath };
+            const bat: BatteryPath = { capacityPath };
+            if (fs.existsSync(statusPath)) {
+              bat.statusPath = statusPath;
+            }
             if (fs.existsSync(path.join(batDir, 'energy_now')) && fs.existsSync(path.join(batDir, 'energy_full'))) {
               bat.energyNowPath = path.join(batDir, 'energy_now');
               bat.energyFullPath = path.join(batDir, 'energy_full');
               bat.unit = 'mWh';
               if (fs.existsSync(path.join(batDir, 'energy_full_design'))) {
                 bat.energyDesignPath = path.join(batDir, 'energy_full_design');
+              }
+              if (fs.existsSync(path.join(batDir, 'power_now'))) {
+                bat.ratePath = path.join(batDir, 'power_now');
               }
             } else if (fs.existsSync(path.join(batDir, 'charge_now')) && fs.existsSync(path.join(batDir, 'charge_full'))) {
               bat.energyNowPath = path.join(batDir, 'charge_now');
@@ -87,9 +144,18 @@ export class BatteryProvider {
               if (fs.existsSync(path.join(batDir, 'charge_full_design'))) {
                 bat.energyDesignPath = path.join(batDir, 'charge_full_design');
               }
+              if (fs.existsSync(path.join(batDir, 'current_now'))) {
+                bat.ratePath = path.join(batDir, 'current_now');
+              }
             }
             if (fs.existsSync(path.join(batDir, 'cycle_count'))) {
               bat.cycleCountPath = path.join(batDir, 'cycle_count');
+            }
+            if (fs.existsSync(path.join(batDir, 'time_to_empty_now'))) {
+              bat.timeToEmptyPath = path.join(batDir, 'time_to_empty_now');
+            }
+            if (fs.existsSync(path.join(batDir, 'time_to_full_now'))) {
+              bat.timeToFullPath = path.join(batDir, 'time_to_full_now');
             }
             found.push(bat);
           }
@@ -129,7 +195,7 @@ export class BatteryProvider {
 
       let fallbackPercentSum = 0;
       let fallbackCount = 0;
-      let combinedStatus = 'Discharging';
+      let combinedStatus = '';
 
       for (const bat of this.batteries) {
         try {
@@ -167,12 +233,10 @@ export class BatteryProvider {
             fallbackCount++;
           }
 
-          if (fs.existsSync(bat.statusPath)) {
+          if (bat.statusPath) {
             const rawStatus = fs.readFileSync(bat.statusPath, 'utf8').trim();
-            if (rawStatus === 'Charging') {
-              combinedStatus = 'Charging';
-            } else if (rawStatus === 'Full' && combinedStatus !== 'Charging') {
-              combinedStatus = 'Full';
+            if (combinedStatus === '' || (STATUS_RANK[rawStatus] ?? 0) > (STATUS_RANK[combinedStatus] ?? 0)) {
+              combinedStatus = rawStatus;
             }
           }
         } catch {
@@ -189,12 +253,25 @@ export class BatteryProvider {
         return null;
       }
 
+      if (combinedStatus === '') {
+        combinedStatus = 'Unknown';
+      }
       const isCharging = combinedStatus === 'Charging';
       const result: BatteryInfo = {
         percent,
         status: combinedStatus,
         isCharging,
       };
+
+      // Full, Not charging, Unknown: no time. Discharging without an estimate: -1 (as macOS, "Estimating...").
+      if (isCharging || combinedStatus === 'Discharging') {
+        const minutes = this.timeRemaining(isCharging, hasEnergyData, totalEnergyNow, totalEnergyFull);
+        if (minutes !== null) {
+          result.timeRemainingMinutes = minutes;
+        } else if (!isCharging) {
+          result.timeRemainingMinutes = -1;
+        }
+      }
 
       if (hasEnergyData && totalEnergyFull > 0) {
         // Sysfs values are in µAh or µWh, convert to mAh or mWh
@@ -216,5 +293,45 @@ export class BatteryProvider {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Estimates minutes until empty (discharging) or full (charging).
+   *
+   * The driver's own estimate is used with a single battery only: with several, per-battery times
+   * cannot be combined (they may discharge one after the other or together).
+   *
+   * @param charging - Direction of the estimate.
+   * @param hasEnergyData - Whether `energyNow` and `energyFull` were read (µWh or µAh, summed).
+   * @returns Whole minutes, or `null` without a usable source (no rate, rate 0, implausible result).
+   */
+  private timeRemaining(charging: boolean, hasEnergyData: boolean, energyNow: number, energyFull: number): number | null {
+    const single = this.batteries.length === 1 ? this.batteries[0] : undefined;
+    const timePath = charging ? single?.timeToFullPath : single?.timeToEmptyPath;
+    if (timePath) {
+      const minutes = plausibleMinutes(readInt(timePath) / 60);
+      if (minutes !== null) {
+        return minutes;
+      }
+    }
+
+    if (!hasEnergyData) {
+      return null;
+    }
+    let rate = 0;
+    for (const bat of this.batteries) {
+      if (bat.ratePath) {
+        // Some drivers sign current_now (negative while discharging); the direction comes from status.
+        const value = readInt(bat.ratePath);
+        if (!isNaN(value)) {
+          rate += Math.abs(value);
+        }
+      }
+    }
+    if (rate <= 0) {
+      return null;
+    }
+    // µWh / µW or µAh / µA: hours.
+    return plausibleMinutes(((charging ? energyFull - energyNow : energyNow) / rate) * 60);
   }
 }

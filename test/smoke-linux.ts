@@ -108,7 +108,16 @@ async function run(): Promise<void> {
       designCapacity: `${batt.designCapacity ?? 'N/A'} ${batt.capacityUnit ?? ''}`,
       healthPercent: batt.healthPercent ? `${batt.healthPercent.toFixed(1)}%` : 'N/A',
       cycleCount: batt.cycleCount ?? 'N/A',
+      timeRemainingMinutes: batt.timeRemainingMinutes ?? 'none',
     });
+    // No time (idle states), -1 (discharging, no estimate yet) or a plausible estimate (at most 48 h).
+    const t = batt.timeRemainingMinutes;
+    assert.ok(t === undefined || t === -1 || (Number.isInteger(t) && t > 0 && t <= 48 * 60), `battery time implausible: ${t}`);
+    if (batt.status === 'Charging' || batt.status === 'Discharging') {
+      assert.ok(t !== undefined || batt.isCharging, 'discharging always carries a time or -1');
+    } else {
+      assert.equal(t, undefined, `no time while ${batt.status}`);
+    }
   } else {
     console.log('Battery: Desktop workstation / server without battery device (zero overhead).');
   }
