@@ -1,6 +1,6 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { CpuFreqInfo } from '../../types.js';
+import { attribute, listDir, type SysfsAttribute } from './sysfs.js';
 
 /** Interval between core scans (only cores exposing cpufreq are read on each tick). */
 const REDISCOVERY_INTERVAL_MS = 60_000;
@@ -13,14 +13,20 @@ const REDISCOVERY_INTERVAL_MS = 60_000;
  * Handles core parking and hotplugging by ignoring offline cores dynamically without sparse holes.
  */
 export class CpuFreqProvider {
-  private freqPaths: { coreIndex: number; filePath: string }[] = [];
+  private cores: { coreIndex: number; freq: SysfsAttribute }[] = [];
   /** Last discovery time: cores are rescanned once a minute (hotplug; no cpufreq on VMs and containers). */
   private lastDiscoveryAt = 0;
 
   /**
    * Initializes the provider and performs initial core discovery.
+   *
+   * @param sysRoot - Root of the sysfs tree (tests pass a mocked tree).
+   * @param now - Clock (ms since epoch).
    */
-  constructor() {
+  constructor(
+    private readonly sysRoot = '/sys',
+    private readonly now: () => number = Date.now,
+  ) {
     this.discoverCores();
   }
 
@@ -28,34 +34,23 @@ export class CpuFreqProvider {
    * Scans sysfs to identify logical CPU directories and their frequency control endpoints.
    */
   private discoverCores(): void {
-    const basePath = '/sys/devices/system/cpu';
-    this.lastDiscoveryAt = Date.now();
-    try {
-      if (!fs.existsSync(basePath)) {
-        return;
-      }
-
-      const entries = fs.readdirSync(basePath);
-      const coreEntries: { coreIndex: number; filePath: string }[] = [];
-
-      for (const entry of entries) {
-        const match = /^cpu(\d+)$/.exec(entry);
-        if (match && match[1]) {
-          const coreIndex = parseInt(match[1], 10);
-          const freqPath = path.join(basePath, entry, 'cpufreq', 'scaling_cur_freq');
-          // Only cores that expose cpufreq: otherwise every tick would pay a failing read per core.
-          if (fs.existsSync(freqPath)) {
-            coreEntries.push({ coreIndex, filePath: freqPath });
-          }
+    const basePath = path.join(this.sysRoot, 'devices', 'system', 'cpu');
+    this.lastDiscoveryAt = this.now();
+    const cores: { coreIndex: number; freq: SysfsAttribute }[] = [];
+    for (const entry of listDir(basePath)) {
+      const match = /^cpu(\d+)$/.exec(entry);
+      if (match && match[1]) {
+        // Only cores that expose cpufreq: otherwise every tick would pay a failing read per core.
+        const freq = attribute(path.join(basePath, entry, 'cpufreq'), 'scaling_cur_freq');
+        if (freq) {
+          cores.push({ coreIndex: parseInt(match[1], 10), freq });
         }
       }
-
-      // Sort by core index ascending
-      coreEntries.sort((a, b) => a.coreIndex - b.coreIndex);
-      this.freqPaths = coreEntries;
-    } catch {
-      this.freqPaths = [];
     }
+
+    // Sort by core index ascending
+    cores.sort((a, b) => a.coreIndex - b.coreIndex);
+    this.cores = cores;
   }
 
   /**
@@ -64,10 +59,10 @@ export class CpuFreqProvider {
    * @returns Average, maximum, and per-core clock frequencies in Hertz, or `null` if no cores could be sampled.
    */
   public sample(): CpuFreqInfo | null {
-    if (Date.now() - this.lastDiscoveryAt >= REDISCOVERY_INTERVAL_MS) {
+    if (this.now() - this.lastDiscoveryAt >= REDISCOVERY_INTERVAL_MS) {
       this.discoverCores(); // picks up cores brought online since the last scan
     }
-    if (this.freqPaths.length === 0) {
+    if (this.cores.length === 0) {
       return null;
     }
 
@@ -77,25 +72,20 @@ export class CpuFreqProvider {
     let activeCoreCount = 0;
     let maxCoreIndex = -1;
 
-    for (const { coreIndex, filePath } of this.freqPaths) {
+    for (const { coreIndex, freq } of this.cores) {
       if (coreIndex > maxCoreIndex) {
         maxCoreIndex = coreIndex;
       }
-      try {
-        const raw = fs.readFileSync(filePath, 'utf8').trim();
-        const khz = parseInt(raw, 10);
-
-        if (!isNaN(khz) && khz > 0) {
-          const hz = khz * 1000;
-          perCoreHz[coreIndex] = hz;
-          sumHz += hz;
-          if (hz > maxHz) {
-            maxHz = hz;
-          }
-          activeCoreCount++;
+      // NaN when the core is offline, sleeping, or parked (ENOENT): ignored for this tick
+      const khz = freq.readInt();
+      if (!isNaN(khz) && khz > 0) {
+        const hz = khz * 1000;
+        perCoreHz[coreIndex] = hz;
+        sumHz += hz;
+        if (hz > maxHz) {
+          maxHz = hz;
         }
-      } catch {
-        // Core might be offline, sleeping, or parked (ENOENT); ignore for this tick
+        activeCoreCount++;
       }
     }
 

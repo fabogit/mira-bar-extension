@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { MemoryInfo } from '../../types.js';
 
 /**
@@ -10,6 +11,15 @@ import type { MemoryInfo } from '../../types.js';
  * accounted for in `MemAvailable`).
  */
 export class MemoryProvider {
+  private readonly meminfoPath: string;
+
+  /**
+   * @param procRoot - Root of the procfs tree (tests pass a mocked tree).
+   */
+  constructor(procRoot = '/proc') {
+    this.meminfoPath = path.join(procRoot, 'meminfo');
+  }
+
   /**
    * Samples `/proc/meminfo` and computes memory and swap utilization metrics.
    *
@@ -17,23 +27,32 @@ export class MemoryProvider {
    */
   public sample(): MemoryInfo | null {
     try {
-      const content = fs.readFileSync('/proc/meminfo', 'utf8');
+      const content = fs.readFileSync(this.meminfoPath, 'utf8');
 
       let memTotalKb = 0;
       let memAvailableKb = 0;
       let swapTotalKb = 0;
       let swapFreeKb = 0;
 
-      const lines = content.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('MemTotal:')) {
-          memTotalKb = parseInt(line.slice(9), 10) || 0;
-        } else if (line.startsWith('MemAvailable:')) {
-          memAvailableKb = parseInt(line.slice(13), 10) || 0;
-        } else if (line.startsWith('SwapTotal:')) {
-          swapTotalKb = parseInt(line.slice(10), 10) || 0;
-        } else if (line.startsWith('SwapFree:')) {
-          swapFreeKb = parseInt(line.slice(9), 10) || 0;
+      // Lines are `Key:   value kB`: the value starts after the colon, whatever the key's length.
+      for (const line of content.split('\n')) {
+        const colon = line.indexOf(':');
+        if (colon < 0) {
+          continue;
+        }
+        switch (line.slice(0, colon)) {
+          case 'MemTotal':
+            memTotalKb = parseInt(line.slice(colon + 1), 10) || 0;
+            break;
+          case 'MemAvailable':
+            memAvailableKb = parseInt(line.slice(colon + 1), 10) || 0;
+            break;
+          case 'SwapTotal':
+            swapTotalKb = parseInt(line.slice(colon + 1), 10) || 0;
+            break;
+          case 'SwapFree':
+            swapFreeKb = parseInt(line.slice(colon + 1), 10) || 0;
+            break;
         }
       }
 

@@ -1,14 +1,19 @@
-import * as fs from 'node:fs';
-import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import type { ComponentSensorsMode, TempSensorReading } from '../../types.js';
+import {
+  existsAsync,
+  isSystemBatteryAsync,
+  listDirAsync,
+  plausibleCelsius,
+  plausibleLimit,
+  readNumberAsync,
+  readText,
+  readTextAsync,
+  realpathAsync,
+} from './sysfs.js';
 
 /** Interval between two scans of hwmon and power_supply (hotplug, driver reloads). */
 const RESCAN_MS = 60_000;
-
-/** Readings outside this range (°C) are treated as invalid. */
-const MIN_VALID_CELSIUS = -40;
-const MAX_VALID_CELSIUS = 150;
 
 type ComponentKind = 'ssd' | 'ram' | 'wifi' | 'battery';
 
@@ -62,7 +67,7 @@ export interface ComponentReadings {
  * its row is reported asleep (`celsius: null`) until a pass finds the device active again.
  */
 export class ComponentTempProvider {
-  private sensors: ComponentSensor[] = [];
+  private sensors: readonly ComponentSensor[] = [];
   private scannedAt = 0;
   private inFlight: Promise<void> | null = null;
   private last: ComponentReadings | null = null;
@@ -152,12 +157,12 @@ export class ComponentTempProvider {
       if (!s.limitsRead) {
         await readLimits(s);
       }
-      const value = await readNumber(s.inputPath);
+      const value = await readNumberAsync(s.inputPath);
       if (value === null) {
         continue; // device gone or busy: skipped until the next pass (or rescan)
       }
       const celsius = value / s.divisor;
-      if (celsius <= MIN_VALID_CELSIUS || celsius > MAX_VALID_CELSIUS) {
+      if (!plausibleCelsius(celsius)) {
         continue;
       }
       sensors.push({ label: s.label, celsius, maxCelsius: s.maxCelsius, critCelsius: s.critCelsius });
@@ -174,7 +179,7 @@ export class ComponentTempProvider {
    */
   private async scan(skipAsleep: boolean): Promise<ComponentSensor[]> {
     const found: Array<Omit<ComponentSensor, 'label'> & { id: string }> = [];
-    const devicesRoot = await realpathSafe(path.join(this.sysRoot, 'devices'));
+    const devicesRoot = await realpathAsync(path.join(this.sysRoot, 'devices'));
     const previous = new Map(this.sensors.map((s) => [s.inputPath, s]));
 
     const add = async (
@@ -183,7 +188,7 @@ export class ComponentTempProvider {
     ): Promise<void> => {
       const entry = { ...sensor, limitsRead: false, pmStatusFiles: await runtimePmFiles(device, devicesRoot) };
       if (skipAsleep && isAsleep(entry.pmStatusFiles)) {
-        if (!(await exists(entry.inputPath))) {
+        if (!(await existsAsync(entry.inputPath))) {
           return;
         }
         const before = previous.get(entry.inputPath);
@@ -191,7 +196,7 @@ export class ComponentTempProvider {
           Object.assign(entry, { limitsRead: true, maxCelsius: before.maxCelsius, critCelsius: before.critCelsius });
         }
       } else {
-        if ((await readNumber(entry.inputPath)) === null) {
+        if ((await readNumberAsync(entry.inputPath)) === null) {
           return;
         }
         await readLimits(entry);
@@ -200,13 +205,13 @@ export class ComponentTempProvider {
     };
 
     const hwmonBase = path.join(this.sysRoot, 'class', 'hwmon');
-    for (const dir of await readDirSafe(hwmonBase)) {
+    for (const dir of await listDirSorted(hwmonBase)) {
       const dirPath = path.join(hwmonBase, dir);
-      const name = (await readText(path.join(dirPath, 'name')))?.toLowerCase();
+      const name = (await readTextAsync(path.join(dirPath, 'name')))?.toLowerCase();
       if (!name) {
         continue;
       }
-      const device = await realpathSafe(path.join(dirPath, 'device'));
+      const device = await realpathAsync(path.join(dirPath, 'device'));
       let kind: ComponentKind | null = null;
       if (name === 'nvme') {
         kind = 'ssd';
@@ -220,19 +225,19 @@ export class ComponentTempProvider {
       }
       await add(
         { kind, id: device !== null ? path.basename(device) : dir, inputPath: path.join(dirPath, 'temp1_input'), divisor: 1000, limitsDir: dirPath },
-        device ?? (await realpathSafe(dirPath)),
+        device ?? (await realpathAsync(dirPath)),
       );
     }
 
     const psBase = path.join(this.sysRoot, 'class', 'power_supply');
-    for (const dir of await readDirSafe(psBase)) {
+    for (const dir of await listDirSorted(psBase)) {
       const dirPath = path.join(psBase, dir);
-      if ((await readText(path.join(dirPath, 'type'))) !== 'Battery') {
-        continue;
+      if (!(await isSystemBatteryAsync(dirPath))) {
+        continue; // system batteries only, as the battery section (no mouse or keyboard battery)
       }
       // Same rule as the other sensors: an ACPI battery has no runtime PM in its chain (always read), a
       // fuel gauge on I2C/SMBus (sbs-battery, bq27xxx) sits behind a controller that can be suspended.
-      await add({ kind: 'battery', id: dir, inputPath: path.join(dirPath, 'temp'), divisor: 10, limitsDir: null }, await realpathSafe(dirPath));
+      await add({ kind: 'battery', id: dir, inputPath: path.join(dirPath, 'temp'), divisor: 10, limitsDir: null }, await realpathAsync(dirPath));
     }
 
     const order = Object.keys(KINDS) as ComponentKind[];
@@ -264,7 +269,7 @@ async function runtimePmFiles(device: string | null, devicesRoot: string | null)
   }
   for (let dir = device; dir.startsWith(devicesRoot + path.sep); dir = path.dirname(dir)) {
     const file = path.join(dir, 'power', 'runtime_status');
-    const status = await readText(file);
+    const status = await readTextAsync(file);
     if (status !== null && status !== 'unsupported') {
       files.push(file);
     }
@@ -280,12 +285,8 @@ async function runtimePmFiles(device: string | null, devicesRoot: string | null)
  */
 function isAsleep(statusFiles: readonly string[]): boolean {
   for (const file of statusFiles) {
-    let status: string;
-    try {
-      status = fs.readFileSync(file, 'utf8').trim();
-    } catch {
-      continue; // device gone: its sensor read fails and the next scan drops it
-    }
+    // null when the device is gone: its sensor read fails and the next scan drops it
+    const status = readText(file);
     if (status === 'suspended' || status === 'suspending') {
       return true;
     }
@@ -296,60 +297,13 @@ function isAsleep(statusFiles: readonly string[]): boolean {
 /** Reads a sensor's `temp1_max` / `temp1_crit` (for NVMe, `temp1_max` is a command to the drive). */
 async function readLimits(s: Omit<ComponentSensor, 'label'>): Promise<void> {
   if (s.limitsDir !== null) {
-    s.maxCelsius = validLimit(await readNumber(path.join(s.limitsDir, 'temp1_max')), 1000);
-    s.critCelsius = validLimit(await readNumber(path.join(s.limitsDir, 'temp1_crit')), 1000);
+    s.maxCelsius = plausibleLimit(await readNumberAsync(path.join(s.limitsDir, 'temp1_max')), 1000);
+    s.critCelsius = plausibleLimit(await readNumberAsync(path.join(s.limitsDir, 'temp1_crit')), 1000);
   }
   s.limitsRead = true;
 }
 
-/** Whether a file exists: a stat, which neither reads the attribute nor reaches the device. */
-async function exists(file: string): Promise<boolean> {
-  try {
-    await fsp.access(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function readDirSafe(dir: string): Promise<string[]> {
-  try {
-    return (await fsp.readdir(dir)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
-  } catch {
-    return [];
-  }
-}
-
-async function realpathSafe(p: string): Promise<string | null> {
-  try {
-    return await fsp.realpath(p);
-  } catch {
-    return null;
-  }
-}
-
-async function readText(file: string): Promise<string | null> {
-  try {
-    return (await fsp.readFile(file, 'utf8')).trim();
-  } catch {
-    return null;
-  }
-}
-
-async function readNumber(file: string): Promise<number | null> {
-  const text = await readText(file);
-  if (text === null || text === '') {
-    return null;
-  }
-  const value = Number(text);
-  return Number.isFinite(value) ? value : null;
-}
-
-/** A limit in °C, or undefined when missing or implausible (some drivers report 0 or garbage). */
-function validLimit(raw: number | null, divisor: number): number | undefined {
-  if (raw === null) {
-    return undefined;
-  }
-  const celsius = raw / divisor;
-  return celsius > 0 && celsius <= MAX_VALID_CELSIUS + 50 ? celsius : undefined;
+/** A directory's entries in natural order (hwmon2 before hwmon10), or `[]` if it is missing. */
+async function listDirSorted(dir: string): Promise<string[]> {
+  return (await listDirAsync(dir)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 }
