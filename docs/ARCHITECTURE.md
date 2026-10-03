@@ -110,7 +110,7 @@ There is no global tick. `ResourceMonitor` (`src/monitor.ts`) keeps, per section
 
 ### Refresh Floors
 
-The measured minimums (`MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts`) follow one rule:
+The measured minimums (`MEASURED_MIN_STATUS_BAR_MS` in `src/config.ts`, one set per platform) follow one rule:
 
 > The minimum status bar interval of a section is the interval at which **its reads alone would use the whole project budget**: 0.5% of one core (docs/ROADMAP.md). The default intervals keep the whole extension within that budget.
 
@@ -118,9 +118,12 @@ $$\text{minimum}_s = \max\left(200\ \text{ms},\ \frac{\text{source CPU per read}
 
 The budget is not split six ways because the costs are very uneven: temperature costs about 90 times more per read than any other section, so an equal split would push its minimum to ~50 s while leaving the others' shares unused. With the whole budget as the cap, no single section can exceed it, and the defaults (temperature 10 s, the others 2-10 s) add up to less than the budget.
 
-- *Source CPU per read* counts the whole machine: the calling thread plus the macOS services that answer the request (powerd for the battery, the HID event server for temperature). `test/bench-darwin.mjs` measures it from host CPU ticks (busy ticks while reading in a loop, minus the idle baseline); for temperature it is one background pass over all sensors.
+- *Source CPU per read* counts the whole machine: the calling thread plus the system services that answer the request (on macOS powerd for the battery, the HID event server for temperature; on Linux the kernel). `test/bench-darwin.mjs` and `test/bench-linux.mjs` measure it from host CPU ticks (busy ticks while reading in a loop, minus the idle baseline); for temperature it includes the background pass over the sensors.
 - *Extension CPU per read* is the extension host's work for one read: waking up, sampling through the provider, rendering the text and, in the worst case (Live mode), the tooltip. `test/bench-extension.mjs` measures it with one section visible at a time.
 - The result is rounded up to the next 100 ms. The renderer-side cost of a status bar update in VS Code is not included (it cannot be measured outside VS Code).
+- The minimums are per platform, because the sources are different (`measuredMinimums()` in `src/config.ts`). A platform not measured yet (Windows) takes the higher of the measured values, section by section. The settings panel, the gear tooltip and the setting descriptions show the minimums of the host platform.
+
+#### macOS
 
 Measured on an Apple M4 (macOS, Node 24), 30 September 2026:
 
@@ -139,6 +142,28 @@ Measured on an Apple M4 (macOS, Node 24), 30 September 2026:
 - **Cost at the defaults**: 0.49% of one core with all six sections shown (0.42% temperature, 0.07% the other five together), within the 0.5% budget; disk is hidden by default. The renderer-side cost of status bar updates in VS Code comes on top and cannot be measured outside VS Code.
 
 The same bench measures how often the sources refresh (temperature sensors, battery driver `UpdateTime`): reading faster than that only returns the same values, so the defaults are set at or above those periods. `mirabar.allowFastRefresh` lowers every minimum to 200 ms; values set below a minimum are kept in the settings and apply whenever it is on.
+
+#### Linux
+
+Measured on an AMD Ryzen 7 7840U laptop (16 threads; `k10temp`, NVMe, two `spd5118` DIMM sensors, `mt7921` Wi-Fi, ACPI battery `BAT1`, `amd-pstate-epp` cpufreq; Arch Linux, kernel 7.2, Node 24), 3 October 2026. Three runs of `bench:extension` and `bench:linux`; ranges are across the runs, and each minimum comes from the run with the highest cost:
+
+| Section | Source | Thread, per read (median / p95 at 200 ms) | Source CPU per read | Extension CPU per read | Exact | Minimum | Default |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CPU usage | `/proc/stat` | 270-286 / 344-415 µs | 351-416 µs | 563-583 µs | 187-196 ms | 200 ms | 2 s |
+| CPU frequency | 16 × `cpufreq/scaling_cur_freq` | 533-539 / 668-755 µs | 674-705 µs | 984-994 µs | 332-340 ms | **400 ms** | 2 s |
+| Temperature | CPU `hwmon` (sync) + component pass (async) | 48-52 / 68-84 µs | 0.06 + 2.3-2.6 ms | 0.7-1.6 ms | 662-803 ms | **900 ms** | 10 s |
+| Memory | `/proc/meminfo` | 67-69 / 92-123 µs | 84-108 µs | 398-418 µs | 97-101 ms | 200 ms | 2 s |
+| Battery | `power_supply/BAT1` (ACPI) | 264-270 / 731-810 µs | 504-743 µs | 649-668 µs | 230-282 ms | **300 ms** | 10 s |
+| Disk | `statfs` (async) | off the thread | 176-210 µs | 372-485 µs | 116-137 ms | 200 ms | 10 s |
+
+- **Source CPU is process CPU**, the largest of three regimes: reads back to back, every 200 ms and every 2 s (kernel caches expired, slower clock between reads). It holds the kernel's work inside our syscalls (55-80% of it: generating `/proc/stat`, the cpufreq reads, the ACPI battery method, the I2C and NVMe commands of the component pass). The system-wide figure from `/proc/stat` was within the noise of the idle windows on this desktop (load average 1.7-5.9, a file indexer running): ±15-400 µs per synchronous read, ±7-20 ms per component pass. Work outside the process (interrupts, kworkers) is therefore not resolved; for the device reads it is the interrupt that completes a transfer, small next to the syscall time that is counted.
+- **Temperature** is a CPU sensor read on the extension host thread (~35 µs back to back, ~50 µs at 200 ms) plus the component pass (ADR-0016): four files read one after the other on the libuv pool, 6.6-6.9 ms of wall time back to back and 10-14 ms every 2 s (NVMe 0.8-1.3 ms, each DIMM 1.5-1.8 ms over I2C, Wi-Fi 2.3-2.4 ms through the firmware; up to 41-141 ms when the SSD leaves a low power state). That wall time is mostly the devices working, not CPU, so it does not count against the CPU budget. The pass costs 1.8-2.0 ms of CPU back to back and 2.3-2.6 ms every 2 s. `bench:extension` measures the pass inside the extension host process (2.6-3.6 ms per read with it), so the pass is subtracted from the extension figure and counted once, in the source figure. Total: 3.3-4.0 ms per read, 900 ms minimum. The 10 s default stays: the pass sends a command to the SSD at every read and can wake it from a low power state, so a short interval costs energy beyond the CPU figure.
+- **Rescan**: every 60 s the component sensors are found again (hwmon and power_supply, limits): 16-19 ms of CPU and 122-162 ms of wall time, ~0.03% of one core, whatever the interval. It is not per read. Counting it against the budget (4.0 ms / (0.5% − 0.03%)) still gives 900 ms.
+- **CPU frequency** reads one file per core: 16 reads, each one handled by the cpufreq driver. **Battery**: the ACPI battery driver caches its readings for 1 s (`battery.cache_time`), after which a read runs the ACPI method through the embedded controller (~0.7 ms instead of ~0.2 ms). At 200 ms one read in five does that, and at the defaults every read does.
+- **Thread latency (issue #5, 250 µs target at 200 ms polling)**: memory, CPU temperature and load stay below it (p95 ≤ 123 µs). `/proc/stat` (p95 344-415 µs, mostly the kernel generating the file), cpufreq (668-755 µs, 16 files) and the battery (p95 731-810 µs, when the cache has expired) exceed it. Disk and the component sensors never block the thread.
+- **V8 heap**: bytes allocated per read are 15 KB for `/proc/stat`, 3-5 KB for cpufreq, memory and disk, 1.4-2 KB for the battery, 0.3 KB for the CPU sensor and 45 KB per component pass. With every source read every 200 ms: 33 KB per tick, 10-12 scavenges per minute, 3-4.3 ms of GC pause per minute (0.005-0.007% of one core), heap between 6.0 and 6.8 MB. After a full GC, a window of reads back to back leaves the heap within ±40 KB of its start and 30 s of paced reads 46-74 KB above it: code compiled once for the read paths (the first 20,000 reads of a path retain 40-100 KB, each further 20,000 reads 0-4 KB), not growth. Every 2 s with the component pass: 1.5 scavenges per minute, 0.5-0.75 ms of GC pause per minute. In the extension, `test:extension` measures 64 KB of heap growth over 15 s with every section at 200 ms Live.
+- **Extension CPU per read** is larger than on the M4 (0.4-1 ms against 0.34-0.47 ms), on a slower core with the same code: the minimums of CPU usage, memory and disk stay at 200 ms, CPU frequency and the battery go above it.
+- **Cost at the defaults**: ~0.24% of one core with all six sections shown (rescan included), half of the macOS figure.
 
 ---
 

@@ -77,7 +77,7 @@ export class SettingsPanel implements vscode.Disposable {
     private readonly platform: NodeJS.Platform
   ) {
     const nonce = randomBytes(16).toString('base64');
-    panel.webview.html = renderSettingsHtml(nonce, panel.webview.cspSource);
+    panel.webview.html = renderSettingsHtml(nonce, panel.webview.cspSource, platform);
     this.disposables.push(
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((msg: unknown) => {

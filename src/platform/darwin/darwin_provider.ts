@@ -29,7 +29,7 @@ const MIN_TICKS_PER_CORE = 5;
 /**
  * Default age of a temperature reading when no age is given. A full HID pass costs ~16 ms of IPC on an M4
  * and runs on a native background thread; the minimum interval is set in config.ts
- * (MEASURED_MIN_STATUS_BAR_MS).
+ * (MEASURED_MIN_STATUS_BAR_MS.darwin).
  */
 const TEMP_MAX_AGE_MS = 10_000;
 

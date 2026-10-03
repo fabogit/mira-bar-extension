@@ -35,26 +35,66 @@ export function readWidgetOrder(raw: unknown): TooltipSection[] {
 export const MIN_INTERVAL_MS = 200;
 export const MAX_INTERVAL_MS = 3_600_000;
 
+/** Platforms whose minimums have been measured. */
+export type MeasuredPlatform = 'darwin' | 'linux';
+
 /**
- * Measured minimum status bar interval per section, in milliseconds: the interval at which the section's
- * reads alone would use the whole project budget (0.5% of one core, docs/ROADMAP.md), rounded up to
- * 100 ms. Reads happen only at the status bar interval, so the minimum applies there; tooltips reuse the
- * latest reading. The defaults keep the whole extension within the budget.
- *
- * Measured on an Apple M4 on 2026-09-30 with test/bench-darwin.mjs and test/bench-extension.mjs
- * (docs/ARCHITECTURE.md, "Refresh Floors"). Temperature: one sensor pass costs 40.4 ms of CPU across the
- * system (HID server and our worker thread) plus 1.1 ms in the extension host, so 41.6 ms / 0.5% =
- * 8314 ms -> 8400 ms. The other sections cost 0.35-0.47 ms per read (70-95 ms by the rule), so the UI
- * minimum applies.
+ * Measured minimum status bar interval per platform and section, in milliseconds: the interval at which
+ * the section's reads alone would use the whole project budget (0.5% of one core, docs/ROADMAP.md),
+ * rounded up to 100 ms. Reads happen only at the status bar interval, so the minimum applies there;
+ * tooltips reuse the latest reading. The defaults keep the whole extension within the budget.
+ * The rule and the measurements: docs/ARCHITECTURE.md, "Refresh Floors" (ADR-0010).
  */
-export const MEASURED_MIN_STATUS_BAR_MS: Readonly<Record<TooltipSection, number>> = {
-  cpu: MIN_INTERVAL_MS,
-  freq: MIN_INTERVAL_MS,
-  temp: 8400,
-  mem: MIN_INTERVAL_MS,
-  battery: MIN_INTERVAL_MS,
-  disk: MIN_INTERVAL_MS,
+export const MEASURED_MIN_STATUS_BAR_MS: Readonly<Record<MeasuredPlatform, Readonly<Record<TooltipSection, number>>>> = {
+  /**
+   * Apple M4, 2026-09-30, test/bench-darwin.mjs and test/bench-extension.mjs. Temperature: one sensor
+   * pass costs 40.4 ms of CPU across the system (HID server and our worker thread) plus 1.1 ms in the
+   * extension host, so 41.6 ms / 0.5% = 8314 ms -> 8400 ms. The other sections cost 0.35-0.47 ms per
+   * read (70-95 ms by the rule), so the UI minimum applies.
+   */
+  darwin: {
+    cpu: MIN_INTERVAL_MS,
+    freq: MIN_INTERVAL_MS,
+    temp: 8400,
+    mem: MIN_INTERVAL_MS,
+    battery: MIN_INTERVAL_MS,
+    disk: MIN_INTERVAL_MS,
+  },
+  /**
+   * AMD Ryzen 7 7840U laptop (16 threads), 2026-10-03, test/bench-linux.mjs and test/bench-extension.mjs,
+   * three runs, highest result. Costs are process CPU, kernel time in our syscalls included (the
+   * system-wide figure was within the noise of a busy desktop). Temperature: CPU hwmon read 0.06 ms,
+   * component pass 2.3-2.6 ms (async, libuv pool; the device time of the SSD, RAM and Wi-Fi sensors is not
+   * CPU) and 0.7-1.6 ms in the extension host: up to 4.0 ms / 0.5% = 803 ms -> 900 ms. CPU frequency
+   * reads 16 cpufreq files (1.7 ms with the extension, 340 ms by the rule), the battery answers through
+   * the ACPI embedded controller once its 1 s cache expires (1.4 ms, 282 ms). The others: 200 ms.
+   */
+  linux: {
+    cpu: MIN_INTERVAL_MS,
+    freq: 400,
+    temp: 900,
+    mem: MIN_INTERVAL_MS,
+    battery: 300,
+    disk: MIN_INTERVAL_MS,
+  },
 };
+
+/**
+ * Measured minimums of a platform. A platform not measured yet (Windows) takes, per section, the highest
+ * measured minimum: no section can cost more than the budget on a platform we know less about.
+ *
+ * @param platform - Host platform (default: this process).
+ */
+export function measuredMinimums(platform: NodeJS.Platform = process.platform): Readonly<Record<TooltipSection, number>> {
+  if (platform === 'darwin' || platform === 'linux') {
+    return MEASURED_MIN_STATUS_BAR_MS[platform];
+  }
+  const highest = {} as Record<TooltipSection, number>;
+  for (const section of TOOLTIP_SECTIONS) {
+    highest[section] = Math.max(...Object.values(MEASURED_MIN_STATUS_BAR_MS).map((m) => m[section]));
+  }
+  return highest;
+}
 
 /** Default status bar interval per section: how often it reads its source and updates its text. */
 export const DEFAULT_STATUS_BAR_MS: Readonly<Record<TooltipSection, number>> = {
@@ -85,9 +125,10 @@ export const MAX_PRIORITY = 10_000;
  *
  * @param section - Status bar section.
  * @param allowFast - mirabar.allowFastRefresh: lowers every minimum to MIN_INTERVAL_MS.
+ * @param platform - Host platform whose measurements apply (default: this process).
  */
-export function minStatusBarMs(section: TooltipSection, allowFast: boolean): number {
-  return allowFast ? MIN_INTERVAL_MS : Math.max(MIN_INTERVAL_MS, MEASURED_MIN_STATUS_BAR_MS[section]);
+export function minStatusBarMs(section: TooltipSection, allowFast: boolean, platform: NodeJS.Platform = process.platform): number {
+  return allowFast ? MIN_INTERVAL_MS : Math.max(MIN_INTERVAL_MS, measuredMinimums(platform)[section]);
 }
 
 /**
