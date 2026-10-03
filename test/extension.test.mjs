@@ -140,6 +140,9 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
     const widths = [400e6, 1.2e9, 4.5e9, 9.9e9].map((hz) => text(hz).length);
     assert.ok(widths.every((w) => w === widths[0]), `${unit} text width stable: ${widths}`);
   }
+  const battery = sections.renderBattery({ percent: 80, status: 'Discharging', cycleCount: 120 },
+    { config: base, updatedAt: '00:00:00' }, true).tooltip;
+  assert.ok(battery.includes('120 cycles') && !battery.includes('Condition'), 'no battery condition no platform reports');
   cleanupSections();
 
   const { module: page, cleanup: cleanupPage } = loadModule('src/settings/panel_html.ts', 'test-panel-html');
@@ -368,6 +371,23 @@ await sleep(500);
   }
   await setCfg({ 'disk.format': undefined, 'mem.unit': undefined, 'freq.unit': undefined, 'disk.drives': undefined, priority: undefined }, 300);
   step('invalid settings in the running extension');
+}
+
+// Panel message queue: a message whose handling fails does not block the ones after it.
+{
+  const panel = s.panels[0];
+  const postMessage = panel.webview.postMessage;
+  panel.webview.postMessage = () => {
+    throw new Error('Webview is disposed'); // VS Code throws synchronously once the webview is gone
+  };
+  panel.receive({ type: 'update', key: 'show.mem', value: 'yes' }); // its error report throws too: the handler rejects
+  await sleep(10);
+  panel.webview.postMessage = postMessage;
+  panel.receive({ type: 'update', key: 'tooltip.cpuLayout', value: 'List' });
+  await sleep(30);
+  assert.equal(s.cfg['tooltip.cpuLayout'], 'List', 'later message applied');
+  await setCfg({ 'tooltip.cpuLayout': undefined });
+  step('panel queue survives a failed message');
 }
 
 // Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload. Machines

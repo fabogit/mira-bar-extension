@@ -81,7 +81,8 @@ export class SettingsPanel implements vscode.Disposable {
     this.disposables.push(
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((msg: unknown) => {
-        this.queue = this.queue.then(() => this.onMessage(msg));
+        // A failed message must not reject the queue: every later message would be dropped.
+        this.queue = this.queue.then(() => this.onMessage(msg)).catch(() => {});
       })
     );
   }

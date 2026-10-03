@@ -383,7 +383,7 @@ export function renderBattery(bat: BatteryInfo, ctx: RenderContext, withTooltip:
   rows.push(['Power State', bat.status, timeStr]);
 
   if (bat.cycleCount !== undefined && bat.cycleCount >= 0) {
-    rows.push(['Cycle Count', `${bat.cycleCount} cycles`, 'Condition: Normal']);
+    rows.push(['Cycle Count', `${bat.cycleCount} cycles`, '']); // no platform reports a condition: none shown
   }
   const tooltip = ['### Battery Status & Health', '', ...renderDynamicAsciiTable(cols, rows), ...tooltipFooter(ctx.updatedAt)].join('\n');
   return { text, tooltip };
