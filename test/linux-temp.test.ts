@@ -1,5 +1,6 @@
 // Linux temperature sensors against a mocked sysfs tree: CPU limits (#4), NVMe (#33), RAM (#34),
-// Wi-Fi (#35), battery (#36), labels, invalid values, rescan, and the tooltip rows (ADR-0016).
+// Wi-Fi (#35), battery (#36), labels, invalid values, rescan (components and CPU, #45), the CPU cache,
+// and the tooltip rows (ADR-0016).
 //
 // Usage (any OS):  pnpm run test:linux-temp (bundled with the vscode mock: sections.ts imports config.ts)
 import assert from 'node:assert/strict';
@@ -57,9 +58,10 @@ async function run(): Promise<void> {
   hwmon(4, 'spd5118', 'devices/i2c-21/21-0050', { temp1_input: 56500, temp1_max: 55000, temp1_crit: 85000 });
   hwmon(5, 'mt7921_phy0', 'devices/pci0000:00/0000:03:00.0/ieee80211/phy0', { temp1_input: 44000 });
   hwmon(6, 'amdgpu', 'devices/pci0000:00/0000:c1:00.0', { temp1_input: 45000 });
-  // Battery with temp in tenths of °C; mains supply ignored.
+  // Battery with temp in tenths of °C; mains supply and a peripheral's battery (scope Device) ignored.
   write('class/power_supply/BAT1', { type: 'Battery', temp: 312 });
   write('class/power_supply/ACAD', { type: 'Mains' });
+  write('class/power_supply/hidpp_battery_0', { type: 'Battery', scope: 'Device', temp: 250 });
 
   const cpu = new CpuTempProvider(root).sample();
   assert.equal(cpu?.sensorName, 'coretemp');
@@ -137,6 +139,35 @@ async function run(): Promise<void> {
   assert.match(renderTemp(noLimit, { config, updatedAt: '12:00:00' }, true).tooltip!, /48\.0 °C │ 100 °C/);
   fs.rmSync(zoneRoot, { recursive: true, force: true });
   step('thermal zone critical trip point, 100 °C fallback');
+
+  // No sensor at activation (driver loaded later): rescanned at most once a minute until one is found.
+  const lateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mirabar-sysfs-'));
+  let clock = 2_000_000;
+  const late = new CpuTempProvider(lateRoot, () => clock);
+  assert.equal(late.sample(), null);
+  hwmon(0, 'k10temp', 'devices/pci0000:00/0000:00:18.3', { temp1_input: 61250, temp1_label: 'Tctl' }, lateRoot);
+  clock += 59_999;
+  assert.equal(late.sample(), null, 'no rescan before 60 s');
+  clock += 1;
+  assert.deepEqual([late.sample()?.sensorName, late.sample()?.sensorLabel, late.sample()?.tempCelsius], ['k10temp', 'Tctl', 61.25]);
+  fs.rmSync(lateRoot, { recursive: true, force: true });
+  step('CPU sensor appearing after activation found by the rescan (#45)');
+
+  // The cache: a reading younger than maxAgeMs is served with its age, a new reading gets the next seq.
+  const cachedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mirabar-sysfs-'));
+  hwmon(0, 'k10temp', 'devices/pci0000:00/0000:00:18.3', { temp1_input: 50000 }, cachedRoot);
+  const cachedTemp = new CpuTempProvider(cachedRoot, () => clock);
+  const firstRead = cachedTemp.cached(1000)!;
+  assert.equal(firstRead.ageMs, undefined);
+  write('class/hwmon/hwmon0', { temp1_input: 55000 }, cachedRoot);
+  clock += 400;
+  const fromCache = cachedTemp.cached(1000)!;
+  assert.deepEqual([fromCache.tempCelsius, fromCache.sampleSeq, fromCache.ageMs], [50, firstRead.sampleSeq, 400]);
+  clock += 600;
+  const reread = cachedTemp.cached(1000)!;
+  assert.deepEqual([reread.tempCelsius, reread.sampleSeq, reread.ageMs], [55, firstRead.sampleSeq! + 1, undefined]);
+  fs.rmSync(cachedRoot, { recursive: true, force: true });
+  step('CPU reading cached for maxAgeMs, with its age and sequence');
 
   await runtimePmModes(config);
 
