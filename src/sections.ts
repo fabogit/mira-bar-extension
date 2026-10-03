@@ -153,7 +153,8 @@ export function renderFreqOrLoad(info: FreqOrLoadInfo, ctx: RenderContext, withT
   const config = ctx.config;
   if (info.kind === 'load') {
     const load = info.data;
-    const pct = (v: number): number => Math.min(100, Math.max(0, (v / load.totalCores) * 100));
+    // No core count (the os.cpus() fallback can be empty): 0% rather than NaN.
+    const pct = (v: number): number => (load.totalCores > 0 ? Math.min(100, Math.max(0, (v / load.totalCores) * 100)) : 0);
     const pct1 = pct(load.load1);
     const text =
       config.loadFormat === 'Percent' ? `$(dashboard) ${padNum(pct1.toFixed(1), 5)}% L` : `$(dashboard) ${padNum(load.load1.toFixed(2), 4)} L`;
