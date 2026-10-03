@@ -2,6 +2,26 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/). Decisions behind the changes: [docs/adr/](docs/adr/README.md).
 
+## [Unreleased]
+
+### Added
+
+- Linux: NVMe SSD, RAM module (`spd5118`, `jc42`), Wi-Fi adapter and battery cell temperatures in the temperature tooltip, with the limits the drivers report and a note for readings above the operating maximum (#33, #34, #35, #36). They are read asynchronously, off the extension host thread ([ADR-0016](docs/adr/0016-linux-component-temperatures-async.md)).
+- `mirabar.temperature.componentSensors` (Linux): `awake` (default) does not read component sensors whose device is runtime-suspended and shows them as *asleep*, so a sleeping drive is not woken; `always` reads them every interval; `off` shows the CPU temperature only. Applied without a reload, also in the settings panel. The check reads the kernel's runtime PM state from sysfs without touching the device (~25 µs); it does not keep an awake NVMe drive in its deepest idle state (APST): choose `off` if that matters on battery.
+- Linux: battery time remaining, from the driver's `time_to_empty_now` / `time_to_full_now`, else computed from `power_now` / `current_now` (signed currents handled); *Estimating...* while discharging without a rate, nothing when full, not charging or unknown (#3).
+- Development: `test:linux-temp` and `test:linux-battery` (mocked sysfs trees), `bench:linux` (cost per read of every Linux source, latency at 200 ms polling, V8 heap and GC) (#5).
+
+### Changed
+
+- Linux: the CPU temperature limit comes from the kernel (`temp*_crit` / `temp*_max`, thermal zone `critical` trip point) instead of a fixed 100 °C, which remains the fallback (#4).
+- Refresh minimums per platform. Linux, measured on a Ryzen 7 7840U: temperature 600 ms (was the macOS 8400 ms), the rest 200 ms; macOS unchanged; platforms not measured yet use the highest value per section. The settings panel and the setting descriptions show the host's minimums ([ADR-0010](docs/adr/0010-refresh-minimums-from-measurements.md)) (#5).
+- Linux: the CPU counters are primed when the provider is created, so the first CPU tooltip shows every core instead of an empty table, and the second read comes 500 ms after activation instead of a whole interval; reads less than ~50 ms apart keep the previous result, as on macOS (#1).
+
+### Fixed
+
+- Linux: the battery state is the kernel's (*Not charging*, *Unknown*) instead of *Discharging*, so a laptop held at its charge limit on AC shows the plug icon.
+- The temperature defaults were declared as 5 s in `package.json` and the README; the extension has applied 10 s since 1.2.0.
+
 ## [1.2.0] - 2026-10-01
 
 First release as **MiraBar** (`fabogit.mirabar`): settings and commands `mirabar.*`, commands grouped under the *MiraBar* category ([ADR-0015](docs/adr/0015-name-and-settings-namespace.md)). It includes the work of roadmap Phases 1.1 and 1.2.

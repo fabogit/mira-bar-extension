@@ -1,6 +1,6 @@
-# Linux v1.1.0 Implementation Plan: Architectural Parity & Release Pipeline
+# Linux Implementation Plan (Phase 2, v1.3.0): Architectural Parity & Release Pipeline
 
-This document establishes the formal engineering specification and execution roadmap for bringing **Linux (`linux-x64`)** support in **MiraBar** to complete feature, visual, and performance parity with **v1.1.0** on macOS Apple Silicon (`darwin-arm64`).
+This document establishes the formal engineering specification and execution roadmap for bringing **Linux (`linux-x64`)** support in **MiraBar** to complete feature, visual, and performance parity with the macOS Apple Silicon (`darwin-arm64`) work of v1.1.0 and v1.2.0. Milestone: [v1.3.0](https://github.com/fabogit/mira-bar-extension/milestone/3); status at a glance: [ROADMAP.md](ROADMAP.md) §5.
 
 ---
 
@@ -11,7 +11,7 @@ Phases 1.1 and 1.2 focused on macOS, but most of the extension is shared. On Lin
 | Area | Change | Where | Tested on Linux |
 | :--- | :--- | :--- | :--- |
 | Refresh model | Per-section status bar and tooltip intervals, one timer at the earliest deadline, hidden sections never read (ADR-0009) | `src/monitor.ts`, `src/config.ts` | VM only |
-| Minimums | Measured on macOS and applied everywhere: temperature 8400 ms, the rest 200 ms (ADR-0010). Likely too conservative for sysfs temperature | `src/config.ts` | — |
+| Minimums | Measured on macOS and applied everywhere: temperature 8400 ms, the rest 200 ms (ADR-0010). Since 2026-10-03 per platform: Linux temperature 600 ms, the rest 200 ms | `src/config.ts` | Linux laptop |
 | Settings | Gear widget with tables, webview settings panel, widget order (ADR-0007, ADR-0008) | `src/settings/`, `src/monitor.ts` | VM + Chromium |
 | Rendering | Tooltips moved from `extension.ts` into renderers per section | `src/sections.ts`, `src/format.ts` | VM only |
 | Disk | `statfs` off the event loop, capped requests in flight (ADR-0011) | `src/monitor.ts` | VM (simulated hang) |
@@ -19,7 +19,7 @@ Phases 1.1 and 1.2 focused on macOS, but most of the extension is shared. On Lin
 | Temperature | Cached for half the status bar interval; readings carry `sampleSeq` and `ageMs` | `src/platform/linux/linux_provider.ts` | VM without hwmon |
 | Tests | `pnpm run test:extension` (behaviour, cross-platform), `pnpm run bench:extension` (cost) | `test/` | VM |
 
-"VM only" means a cloud machine without temperature sensors, battery or cpufreq: those paths have never run on real hardware. Checking them is the first step of Phase 2 and blocks pushing `develop` (see §5, Phase 1).
+"VM only" was the state while Phases 1.1 and 1.2 were developed: a cloud machine without temperature sensors, battery or cpufreq. Before the 1.2.0 release these paths were checked on a Linux laptop with real sensors (AMD, `k10temp`, `nvme`, cpufreq on 16 threads, battery; §5, Phase 1). Still unchecked: a desktop without battery.
 
 ---
 
@@ -92,6 +92,7 @@ The goal of this phase is to align the Linux implementation with the architectur
   * In [`CpuTempProvider`](../src/platform/linux/cputemp.ts#L103-L136), check for `temp1_crit` or `temp1_max` adjacent to `temp1_input`.
   * If found, expose `critCelsius` in `CpuTempInfo` (e.g. 95 °C for AMD Ryzen, 105 °C for Intel Core).
   * Pass this dynamic value to the `renderDynamicAsciiTable` Limit column, falling back to 100 °C if no trip point is defined in kernel sysfs.
+* **Done (2026-10-01)**: as above, plus the thermal zone `critical` trip point; component sensors (NVMe, RAM, Wi-Fi, battery) were added at the same time and are read asynchronously because their reads take milliseconds ([ADR-0016](adr/0016-linux-component-temperatures-async.md)).
 
 ---
 
@@ -171,21 +172,22 @@ graph TD
 When testing and developing on the Linux PC, execute the following steps in sequence:
 
 ### Phase 1: Environment & Baseline Verification
-- [ ] Pull git branch on the Linux machine.
-- [ ] Run `pnpm install --frozen-lockfile`.
-- [ ] Verify Node version (`node -v` >= 20.x) and pnpm version.
-- [ ] Run `pnpm run typecheck` and `pnpm run build`.
-- [ ] Run `pnpm run test:linux`, `pnpm run test:integration` and `pnpm run test:extension`.
-- [ ] Install the `linux-x64` VSIX and check the status bar, the gear tooltip, the settings panel and Static/Live tooltips (§0).
-- [ ] On hardware with cpufreq and hwmon, and on a laptop: check CPU frequency, temperature and battery (the paths changed in §0).
-- [ ] If all good: push `develop` (Phases 1.1 and 1.2).
+- [x] Pull git branch on the Linux machine.
+- [x] Run `pnpm install --frozen-lockfile`.
+- [x] Verify Node version (`node -v` >= 20.x) and pnpm version.
+- [x] Run `pnpm run typecheck` and `pnpm run build`.
+- [x] Run `pnpm run test:linux`, `pnpm run test:integration` and `pnpm run test:extension`.
+- [x] Install the `linux-x64` VSIX and check the status bar, the gear tooltip, the settings panel and Static/Live tooltips (§0).
+- [x] On hardware with cpufreq and hwmon, and on a laptop: check CPU frequency, temperature and battery (the paths changed in §0).
+- [x] If all good: push `develop` (Phases 1.1 and 1.2). Done: released as 1.2.0 on 2026-10-01.
 
 ### Phase 2: Implementation of Linux Parity
-- [ ] **CPU Cold-Start**: Edit [`src/platform/linux/cpu.ts`](../src/platform/linux/cpu.ts) to pre-sample in constructor.
-- [ ] **Frequency Monospace Table**: Edit `renderFreqOrLoad` in [`src/sections.ts`](../src/sections.ts) to replace bullet list with monospace ASCII table for `freqOrLoad.kind === 'freq'`.
-- [ ] **Linux refresh minimums**: measure the read cost of each Linux source (procfs, sysfs, hwmon, power_supply) and `pnpm run bench:extension` on Linux, then make `MEASURED_MIN_STATUS_BAR_MS` per platform with the ADR-0010 rule.
-- [ ] **Battery Time Remaining**: Edit [`src/platform/linux/battery.ts`](../src/platform/linux/battery.ts) to parse `power_now`/`current_now`/`time_to_empty_now`.
-- [ ] **Thermal Limits**: Edit [`src/platform/linux/cputemp.ts`](../src/platform/linux/cputemp.ts) to parse `temp1_crit`/`temp1_max`.
+- [x] **CPU Cold-Start** (#1): [`src/platform/linux/cpu.ts`](../src/platform/linux/cpu.ts) primes in the constructor; second read 500 ms after activation (`src/monitor.ts`).
+- [x] **Frequency Monospace Table** (#2, shipped in 1.2.0): Average/Peak table and per-core table in `renderFreqOrLoad` ([`src/sections.ts`](../src/sections.ts)).
+- [x] **Linux refresh minimums** (#5): `pnpm run bench:linux` and `bench:extension`; `MEASURED_MIN_STATUS_BAR_MS` per platform (Linux: temperature 600 ms, the rest 200 ms; ADR-0010).
+- [x] **Battery Time Remaining** (#3): [`src/platform/linux/battery.ts`](../src/platform/linux/battery.ts), `test:linux-battery`; a real discharge is still to be checked on the laptop.
+- [x] **Thermal Limits**: [`src/platform/linux/cputemp.ts`](../src/platform/linux/cputemp.ts) reads `temp*_crit`/`temp*_max` and the thermal zone `critical` trip point.
+- [x] **Component temperatures** (NVMe, RAM, Wi-Fi, battery): [`src/platform/linux/components.ts`](../src/platform/linux/components.ts), read asynchronously (ADR-0016); `mirabar.temperature.componentSensors` avoids waking runtime-suspended devices.
 
 ### Phase 3: Test Suite & Local Verification
 - [x] Create `test/smoke-linux.ts` asserting all providers.
@@ -193,9 +195,9 @@ When testing and developing on the Linux PC, execute the following steps in sequ
 - [x] Decouple `DiskProvider` in [`src/disk/disk_provider.ts`](../src/disk/disk_provider.ts) and remove obsolete `src/providers/`.
 - [x] Make [`test/integration.ts`](../test/integration.ts) platform-agnostic using `createPlatformProvider()`.
 - [ ] Run `pnpm run test:linux` on Linux machine:
-  - Desktop Linux (verify battery gracefully disabled, hwmon temp detected).
-  - Laptop Linux (verify battery percentage, health, cycles, and time remaining).
-- [ ] Run extension in VS Code / Antigravity-IDE debug host (`F5`) on Linux to verify:
+  - Desktop Linux (verify battery gracefully disabled, hwmon temp detected). Not done yet.
+  - [x] Laptop Linux (verify battery percentage, health, cycles); time remaining waits for #3.
+- [x] Run extension in VS Code / Antigravity-IDE debug host (`F5`) on Linux to verify:
   - Status bar widget rendering without horizontal jitter.
   - Tooltip hover stability (no flickering in Static mode).
   - Monospace ASCII table alignment for CPU frequency and load.
@@ -206,4 +208,4 @@ When testing and developing on the Linux PC, execute the following steps in sequ
 - [x] Test the packaging scripts:
   - `pnpm run package:linux-x64`
   - `pnpm run package:darwin-arm64`
-- [ ] Verify generated VSIX can be installed via `code --install-extension`.
+- [x] Verify generated VSIX can be installed via `code --install-extension` (Linux laptop, 1.2.0).

@@ -8,7 +8,7 @@
 
 - **CPU Usage (`$(pulse)`)**: Instant overall and per-core utilization parsed directly from `/proc/stat` (Linux) or Mach host APIs (macOS Apple Silicon). Pre-samples on startup (Tick 0) to eliminate empty hover tables.
 - **CPU Frequency / System Load (`$(dashboard)`)**: Dynamic clock speeds read directly from `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq` on Linux, and normalized capacity System Load Average on macOS Apple Silicon.
-- **CPU & SoC Temperature (`$(flame)`)**: Native discovery for AMD Ryzen (`k10temp`, `zenpower`) and Intel (`coretemp`) on Linux; 24-sensor SoC die average/peak, NAND SSD, and battery cell temperature on macOS Apple Silicon via unprivileged `IOHIDEventSystemClient`, read on a native background thread so the extension host never waits for the sensors.
+- **CPU & SoC Temperature (`$(flame)`)**: Native discovery for AMD Ryzen (`k10temp`, `zenpower`) and Intel (`coretemp`) on Linux, with the kernel's critical limit, plus NVMe SSD, RAM modules, Wi-Fi adapter and battery where hwmon exposes them (read asynchronously, without waking a sleeping device: `mirabar.temperature.componentSensors`); 24-sensor SoC die average/peak, NAND SSD, and battery cell temperature on macOS Apple Silicon via unprivileged `IOHIDEventSystemClient`, read on a native background thread so the extension host never waits for the sensors.
 - **Memory & Swap (`$(ellipsis)`)**: Live physical RAM and swap statistics parsed from `/proc/meminfo` on Linux; 64-bit Mach VM stats (active, wired, compressed), `vm.swapusage` and the kernel memory pressure level on macOS.
 - **Battery Health & Telemetry (`$(zap)` / `🔋` / `$(plug)`)**: Real-time charging state, design, nominal and full-charge capacity (mAh), remaining charge (mAh), cycle count and health ratio via `/sys/class/power_supply` (Linux) and `IOPowerSources` + `AppleSmartBattery` (macOS, shown as *Nominal vs Design*). Auto-disabled on desktop systems.
 - **Storage & Multi-Disk (`$(database)`)**: Non-blocking `statfs` monitoring with smart path truncation (preserving directory boundaries like `.../antigravity/kind-newton`). Supports multi-disk aggregation modes (`All` vs `MostFull`).
@@ -82,13 +82,14 @@ Configure these settings from the settings panel or directly in your VS Code / A
 | `mirabar.show.cpuusage` | `boolean` | `true` | Toggle CPU usage percentage |
 | `mirabar.show.cpufreq` | `boolean` | `true` | Toggle CPU clock frequency (Linux) or System Load (Darwin) |
 | `mirabar.show.cputemp` | `boolean` | `true` | Toggle CPU temperature |
+| `mirabar.temperature.componentSensors` | `string` | `"awake"` | Linux only: NVMe, RAM, Wi-Fi and battery temperatures in the tooltip. `"awake"`: a runtime-suspended device is not read (that read would wake it) and its row shows *asleep*; `"always"`: every sensor at each reading; `"off"`: CPU temperature only. An awake NVMe drive is still briefly brought out of its deepest idle state (APST) by each reading: use `"off"` if that matters on battery |
 | `mirabar.show.mem` | `boolean` | `true` | Toggle memory consumption |
 | `mirabar.show.battery` | `boolean` | `true` | Toggle battery percentage (auto-hidden on desktops) |
 | `mirabar.show.disk` | `boolean` | `false` | Toggle disk space information |
 | `mirabar.show.settings` | `boolean` | `true` | Show the settings (gear) widget after the metrics |
 | `mirabar.order` | `string[]` | `["cpu","freq","temp","mem","battery","disk"]` | Left-to-right widget order; missing entries keep their default position |
-| `mirabar.statusBarMs` | `object` | `{cpu:2000, freq:2000, temp:5000, mem:2000, battery:10000, disk:10000}` | Status bar interval per section (ms, 200 ms to 1 h): how often the section reads its data and updates its text. Never below the section's measured minimum unless `mirabar.allowFastRefresh` is on (see [Refresh intervals](#refresh-intervals)) |
-| `mirabar.tooltipMs` | `object` | `{cpu:5000, freq:5000, temp:5000, mem:5000, battery:10000, disk:10000}` | Tooltip interval per section (ms, 200 ms to 1 h), Static mode with auto-refresh: how often the tooltip is rebuilt from the latest reading. Never faster than the section's status bar interval |
+| `mirabar.statusBarMs` | `object` | `{cpu:2000, freq:2000, temp:10000, mem:2000, battery:10000, disk:10000}` | Status bar interval per section (ms, 200 ms to 1 h): how often the section reads its data and updates its text. Never below the section's measured minimum unless `mirabar.allowFastRefresh` is on (see [Refresh intervals](#refresh-intervals)) |
+| `mirabar.tooltipMs` | `object` | `{cpu:5000, freq:5000, temp:10000, mem:5000, battery:10000, disk:10000}` | Tooltip interval per section (ms, 200 ms to 1 h), Static mode with auto-refresh: how often the tooltip is rebuilt from the latest reading. Never faster than the section's status bar interval |
 | `mirabar.allowFastRefresh` | `boolean` | `false` | **Performance impact:** allows status bar intervals below the measured minimums, down to 200 ms |
 | `mirabar.freq.unit` | `string` | `"GHz"` | Unit for CPU frequency (`GHz`, `MHz`, `KHz`, `Hz`) |
 | `mirabar.mem.unit` | `string` | `"GB"` | Unit for memory display (`GB`, `MB`, `KB`, `B`) |
@@ -115,14 +116,16 @@ Each section has two intervals. They control different things:
 
 A click on any widget reads every visible section and rebuilds every tooltip.
 
-**Measured minimums.** The minimum status bar interval of a section is the interval at which its reads use its share of the extension's CPU budget: 0.5% of one core for all six sections together, so 0.083% each. The cost of a read includes the macOS services that answer it and the extension's own work to show it; both are measured on an Apple M4 with `pnpm run bench:darwin` and `pnpm run bench:extension`:
+**Measured minimums.** The minimum status bar interval of a section is the interval at which its reads alone would use the extension's whole CPU budget, 0.5% of one core. The cost of a read includes the system's work to answer it and the extension's own work to show it. The minimums depend on the platform. They were measured on an Apple M4 with `pnpm run bench:darwin` and on an AMD Ryzen 7 7840U laptop with `pnpm run bench:linux`, plus `pnpm run bench:extension` on both:
 
-| Section | Cost per read (M4) | Minimum | Default |
-| :--- | ---: | ---: | ---: |
-| CPU usage, system load, memory, battery, disk | under 30 µs to read, plus 0.34-0.47 ms to show | 200 ms | 2 s (battery and disk 10 s) |
-| Temperature | ~42 ms of CPU across the system (26 sensors through the HID server) | 8400 ms | 10 s |
+| Section | Cost per read, macOS (M4) | Minimum | Cost per read, Linux (7840U) | Minimum | Default |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| CPU usage, memory, disk | under 30 µs to read, plus 0.34-0.47 ms to show | 200 ms | 0.03-0.14 ms to read, plus 0.17-0.27 ms to show | 200 ms | 2 s (disk 10 s) |
+| System load / CPU frequency | 0.5 µs, plus 0.45 ms | 200 ms | 0.25 ms (16 cpufreq files), plus 0.44 ms | 200 ms | 2 s |
+| Battery | 20 µs, plus 0.44 ms | 200 ms | up to 0.29 ms (ACPI embedded controller), plus 0.29 ms | 200 ms | 10 s |
+| Temperature | ~42 ms of CPU across the system (26 sensors through the HID server) | 8400 ms | ~2.5 ms (CPU sensor, then SSD, RAM and Wi-Fi sensors off the main thread) | 600 ms | 10 s |
 
-Temperature is the only expensive source: at the old 5 s default it alone cost ~0.8% of one core. At the defaults the whole extension uses ~0.49% of one core with all six sections shown. The battery driver publishes new data every 60 s, so a shorter battery interval only shows power adapter changes sooner.
+On macOS temperature is the only expensive source: at the old 5 s default it alone cost ~0.8% of one core. At the defaults the whole extension uses ~0.49% of one core on macOS and ~0.05-0.1% on Linux, with all six sections shown. Platforms not measured yet use the higher of the two minimums. The battery driver publishes new data every 60 s, so a shorter battery interval only shows power adapter changes sooner.
 
 `mirabar.allowFastRefresh` lowers every minimum to 200 ms, at the cost of exceeding that budget. The derivation is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#refresh-floors).
 
@@ -177,9 +180,10 @@ pnpm run test:extension
 # Native leak & cost probe (on macOS): µs per call, RSS growth, Mach host port refs
 node --expose-gc test/leak-darwin.mjs
 
-# Measurements behind the refresh minimums (on macOS):
-pnpm run bench:darwin      # cost per read of each source, sensor and battery refresh periods
+# Measurements behind the refresh minimums (bench:extension first, on the same machine):
 pnpm run bench:extension   # extension CPU per read, per section and per configuration
+pnpm run bench:darwin      # macOS: cost per read of each source, sensor and battery refresh periods
+pnpm run bench:linux       # Linux: cost per read (thread, process, system), latency at 200 ms, V8 heap and GC
 
 # AddressSanitizer build of the native addon (on macOS):
 DEBUG=1 pnpm run compile:native

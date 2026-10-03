@@ -56,6 +56,9 @@ export function tooltipFooter(updatedAt: string): string[] {
   ];
 }
 
+/** Limit of the CPU row when the kernel exposes no trip point, and bar scale of sensors without limits. */
+const DEFAULT_TEMP_LIMIT_C = 100;
+
 /** Bar plus right-aligned percentage, as used in every tooltip table. */
 function barCell(pct: number): string {
   return `${renderBar(pct, 6, false)}  ${pct.toFixed(1).padStart(5, ' ')}%`;
@@ -222,7 +225,7 @@ export function renderFreqOrLoad(info: FreqOrLoadInfo, ctx: RenderContext, withT
   return { text, tooltip: lines.join('\n') };
 }
 
-/** Temperature: SoC die average/peak, NAND and battery cell on macOS; CPU package on Linux. */
+/** Temperature: SoC die average/peak, NAND and battery cell on macOS; CPU package and component sensors on Linux. */
 export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: boolean): Rendered {
   const text = `$(flame) ${padNum(temp.tempCelsius.toFixed(2), 5)} C`;
   if (!withTooltip) {
@@ -234,13 +237,16 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
     { header: 'Temp', align: 'right' },
     { header: 'Limit', align: 'right' },
   ];
-  const row = (label: string, celsius: number, limit: number): string[] => [
+  // Without a limit the bar is drawn against 100 °C and the Limit column shows a dash.
+  const row = (label: string, celsius: number, limit: number | undefined): string[] => [
     label,
-    barCell(Math.min(100, Math.max(0, (celsius / limit) * 100))),
+    barCell(Math.min(100, Math.max(0, (celsius / (limit ?? DEFAULT_TEMP_LIMIT_C)) * 100))),
     `${celsius.toFixed(1)} °C`,
-    `${limit} °C`,
+    limit !== undefined ? `${Math.round(limit)} °C` : '—',
   ];
   const rows: string[][] = [];
+  const aboveMax: string[] = [];
+  const asleep: string[] = [];
   if (temp.peakCelsius !== undefined) {
     rows.push(row('SoC Die Peak', temp.peakCelsius, 100), row('SoC Die Average', temp.tempCelsius, 100));
     if (temp.nandCelsius !== undefined && temp.nandCelsius > 0) {
@@ -250,9 +256,30 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
       rows.push(row('Battery Cell', temp.batteryCelsius, 45));
     }
   } else {
-    rows.push(row('CPU Package', temp.tempCelsius, 100));
+    rows.push(row('CPU Package', temp.tempCelsius, temp.critCelsius ?? DEFAULT_TEMP_LIMIT_C));
+    for (const s of temp.sensors ?? []) {
+      const limit = s.critCelsius ?? s.maxCelsius;
+      if (s.celsius === null) {
+        // Not read so as not to wake the device: no value rather than an old one shown as current.
+        rows.push([s.label, '', 'asleep', limit !== undefined ? `${Math.round(limit)} °C` : '—']);
+        asleep.push(s.label);
+        continue;
+      }
+      rows.push(row(s.label, s.celsius, limit));
+      if (s.maxCelsius !== undefined && s.celsius >= s.maxCelsius) {
+        aboveMax.push(`${s.label} (max ${Math.round(s.maxCelsius)} °C)`);
+      }
+    }
   }
-  const tooltip = ['### CPU & System Temperature', '', ...renderDynamicAsciiTable(columns, rows), ...tooltipFooter(ctx.updatedAt)].join('\n');
+  const lines = ['### Temperature', '', ...renderDynamicAsciiTable(columns, rows)];
+  if (aboveMax.length > 0) {
+    lines.push('', `*Above the operating maximum: ${aboveMax.join(', ')}.*`);
+  }
+  if (asleep.length > 0) {
+    const it = asleep.length === 1 ? 'it' : 'them';
+    lines.push('', `*Asleep (runtime-suspended), not read so as not to wake ${it}: ${asleep.join(', ')}.*`);
+  }
+  const tooltip = [...lines, ...tooltipFooter(ctx.updatedAt)].join('\n');
   return { text, tooltip };
 }
 

@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { LinuxTelemetryProvider } from '../src/platform/linux/linux_provider.js';
 import { DiskProvider } from '../src/disk/disk_provider.js';
 
@@ -15,7 +16,19 @@ async function run(): Promise<void> {
 
   console.log('\n--- 1. CPU Usage Sampling (/proc/stat) ---');
   const cpu1 = provider.sampleCpu();
-  console.log('Sample 1 (Tick 0):', cpu1);
+  console.log('Sample 1 (Tick 0):', cpu1 ? { overallPercent: cpu1.overallPercent, coresSampled: cpu1.perCorePercent.length } : null);
+  const isLinux = process.platform === 'linux';
+  /** Valid percentages, one per core: no NaN, no holes, within 0-100. */
+  const checkCpu = (cpu: typeof cpu1, label: string): void => {
+    assert.ok(cpu, `${label}: /proc/stat readable`);
+    assert.ok(cpu.perCorePercent.length > 0, `${label}: per-core array not empty (counters primed in the constructor)`);
+    for (const p of [cpu.overallPercent, ...cpu.perCorePercent]) {
+      assert.ok(Number.isFinite(p) && p >= 0 && p <= 100, `${label}: percentage out of range: ${p}`);
+    }
+  };
+  if (isLinux) {
+    checkCpu(cpu1, 'Tick 0');
+  }
 
   await new Promise((r) => setTimeout(r, 500));
 
@@ -24,6 +37,10 @@ async function run(): Promise<void> {
     overallPercent: cpu2 ? `${cpu2.overallPercent.toFixed(2)}%` : 'null',
     coresSampled: cpu2?.perCorePercent.length ?? 0,
   });
+  if (isLinux) {
+    checkCpu(cpu2, 'Sample 2');
+    assert.equal(cpu2!.perCorePercent.length, cpu1!.perCorePercent.length, 'same core count at Tick 0 and after');
+  }
   if (cpu2 && cpu2.perCorePercent.length > 0) {
     console.log('First 4 Cores:', cpu2.perCorePercent.slice(0, 4).map((p, i) => `C${i}: ${p.toFixed(1)}%`).join(' '));
   }
@@ -56,13 +73,27 @@ async function run(): Promise<void> {
   }
 
   console.log('\n--- 4. Hardware Thermal Sensors (/sys/class/hwmon) ---');
+  // Component sensors (SSD, RAM, Wi-Fi, battery) are read asynchronously: request a pass, then read.
+  provider.requestTempRefresh();
+  await new Promise((r) => setTimeout(r, 200));
   const temp = provider.sampleTemp();
   if (temp) {
     console.log({
       tempCelsius: `${temp.tempCelsius.toFixed(1)} °C`,
       sensorName: temp.sensorName,
       sensorLabel: temp.sensorLabel,
+      critCelsius: temp.critCelsius !== undefined ? `${temp.critCelsius} °C` : 'not exposed (100 °C shown)',
     });
+    for (const s of temp.sensors ?? []) {
+      const limits = [s.maxCelsius !== undefined ? `max ${s.maxCelsius} °C` : '', s.critCelsius !== undefined ? `crit ${s.critCelsius} °C` : '']
+        .filter(Boolean)
+        .join(', ');
+      const value = s.celsius !== null ? `${s.celsius.toFixed(1)} °C` : 'asleep (runtime-suspended, not read)';
+      console.log(`  - ${s.label}: ${value}${limits ? ` (${limits})` : ''}`);
+    }
+    if (!temp.sensors?.length) {
+      console.log('  No component sensors (NVMe, RAM, Wi-Fi, battery) exposed.');
+    }
   } else {
     console.log('Temperature: No supported hwmon sensors found (expected on non-Linux OS).');
   }
@@ -78,7 +109,16 @@ async function run(): Promise<void> {
       designCapacity: `${batt.designCapacity ?? 'N/A'} ${batt.capacityUnit ?? ''}`,
       healthPercent: batt.healthPercent ? `${batt.healthPercent.toFixed(1)}%` : 'N/A',
       cycleCount: batt.cycleCount ?? 'N/A',
+      timeRemainingMinutes: batt.timeRemainingMinutes ?? 'none',
     });
+    // No time (idle states), -1 (discharging, no estimate yet) or a plausible estimate (at most 48 h).
+    const t = batt.timeRemainingMinutes;
+    assert.ok(t === undefined || t === -1 || (Number.isInteger(t) && t > 0 && t <= 48 * 60), `battery time implausible: ${t}`);
+    if (batt.status === 'Charging' || batt.status === 'Discharging') {
+      assert.ok(t !== undefined || batt.isCharging, 'discharging always carries a time or -1');
+    } else {
+      assert.equal(t, undefined, `no time while ${batt.status}`);
+    }
   } else {
     console.log('Battery: Desktop workstation / server without battery device (zero overhead).');
   }

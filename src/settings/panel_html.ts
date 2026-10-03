@@ -1,27 +1,58 @@
-import { MAX_INTERVAL_MS, MAX_PRIORITY, MEASURED_MIN_STATUS_BAR_MS, MIN_INTERVAL_MS, MIN_PRIORITY } from '../config.js';
+import {
+  MAX_INTERVAL_MS,
+  MAX_PRIORITY,
+  measuredMinimums,
+  MIN_INTERVAL_MS,
+  MIN_PRIORITY,
+  TOOLTIP_SECTIONS,
+  type TooltipSection,
+} from '../config.js';
 
 /** Limits shared with config.ts (single source), injected into the panel script and texts. */
-const LIMITS = {
-  intervalMin: MIN_INTERVAL_MS,
-  intervalMax: MAX_INTERVAL_MS,
-  measuredMin: MEASURED_MIN_STATUS_BAR_MS,
-  priorityMin: MIN_PRIORITY,
-  priorityMax: MAX_PRIORITY,
-} as const;
+function limits(platform: NodeJS.Platform) {
+  return {
+    intervalMin: MIN_INTERVAL_MS,
+    intervalMax: MAX_INTERVAL_MS,
+    measuredMin: measuredMinimums(platform),
+    priorityMin: MIN_PRIORITY,
+    priorityMax: MAX_PRIORITY,
+  } as const;
+}
 
-/** Sections whose measured minimum is above the absolute one (the only ones the unlock affects). */
-const LOCKED_SECTIONS = (Object.keys(MEASURED_MIN_STATUS_BAR_MS) as (keyof typeof MEASURED_MIN_STATUS_BAR_MS)[])
-  .filter((s) => MEASURED_MIN_STATUS_BAR_MS[s] > MIN_INTERVAL_MS);
+/** Section names for the explanatory texts. */
+function textNames(platform: NodeJS.Platform): Record<TooltipSection, string> {
+  return {
+    cpu: 'CPU usage',
+    freq: platform === 'darwin' ? 'system load' : platform === 'linux' ? 'CPU frequency' : 'system load / CPU frequency',
+    temp: 'temperature',
+    mem: 'memory',
+    battery: 'battery',
+    disk: 'disk',
+  };
+}
 
-/** Section names for the explanatory texts (the panel script relabels 'freq' per platform). */
-const TEXT_NAMES: Record<string, string> = {
-  cpu: 'CPU usage', freq: 'system load / CPU frequency', temp: 'temperature', mem: 'memory', battery: 'battery', disk: 'disk',
-};
-
-/** 'temperature 2000 ms, battery 2000 ms and disk 2000 ms' for the texts. */
-function lockedList(): string {
-  const parts = LOCKED_SECTIONS.map((s) => `${TEXT_NAMES[s]} ${MEASURED_MIN_STATUS_BAR_MS[s]} ms`);
+/**
+ * 'temperature 1000 ms, battery 300 ms and CPU frequency 400 ms' for the texts: the sections whose
+ * measured minimum is above the absolute one (the only ones the unlock affects).
+ */
+function lockedList(platform: NodeJS.Platform): string {
+  const min = measuredMinimums(platform);
+  const names = textNames(platform);
+  const parts = TOOLTIP_SECTIONS.filter((s) => min[s] > MIN_INTERVAL_MS).map((s) => `${names[s]} ${min[s]} ms`);
   return parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** Where the minimums of a platform come from, and what makes the most expensive one expensive. */
+function measuredOn(platform: NodeJS.Platform): string {
+  switch (platform) {
+    case 'darwin':
+      return 'measured on an Apple M4: a temperature reading costs about 42 ms of CPU across the system';
+    case 'linux':
+      return 'measured on an AMD Ryzen 7 7840U laptop: a temperature reading (CPU sensor, then the SSD, RAM and ' +
+        'Wi-Fi sensors off the main thread) costs about 2.5 ms of CPU';
+    default:
+      return 'not measured on this platform yet, so the highest values measured on macOS and Linux apply';
+  }
 }
 
 /** '3600000' -> '1 h', '2000' -> '2000 ms': compact labels for the explanatory texts. */
@@ -36,8 +67,12 @@ function label(ms: number): string {
  *
  * The embedded script never builds HTML from data: labels are static and values are applied
  * through DOM properties.
+ *
+ * @param platform - Host platform: its measured minimums are shown and enforced in the panel.
  */
-export function renderSettingsHtml(nonce: string, cspSource: string): string {
+export function renderSettingsHtml(nonce: string, cspSource: string, platform: NodeJS.Platform): string {
+  const LIMITS = limits(platform);
+  const locked = lockedList(platform);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -220,8 +255,9 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     </table>
     <ul class="explain">
       <li><b>Status bar</b>: how often the section reads its data and updates its text (${label(LIMITS.intervalMin)} to ${label(LIMITS.intervalMax)};
-        the slider has preset steps, type any value in the field). Each read has a cost, so some sections have a measured
-        minimum: ${lockedList()}.</li>
+        the slider has preset steps, type any value in the field). ${locked
+          ? `Each read has a cost, so some sections have a measured minimum on this platform: ${locked}.`
+          : 'Each read has a cost; on this platform every section can go down to the absolute minimum.'}</li>
       <li><b>Tooltip</b>: in Static mode with auto-refresh, how often the tooltip is rebuilt from the latest reading. It never
         refreshes faster than its status bar, because there is no newer reading to show. In Live mode tooltips follow the
         status bar; with auto-refresh off they refresh on click.</li>
@@ -230,12 +266,31 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     </ul>
     <div class="fast">
       <label class="switch"><input type="checkbox" id="allowFast"> Allow status bar intervals below the measured minimums<span class="warn">*</span></label>
-      <p class="warn-note"><span class="warn">* Performance impact.</span> The minimums (${lockedList()}) are the intervals at which one
-        section's reads alone would use the extension's whole CPU budget (0.5% of one core), measured on an Apple M4: a
-        temperature reading costs about 42 ms of CPU across the system. Below them, that section alone costs more CPU time and
+      <p class="warn-note"><span class="warn">* Performance impact.</span> The minimums (${locked || 'none here'}) are the intervals at which one
+        section's reads alone would use the extension's whole CPU budget (0.5% of one core), ${measuredOn(platform)}. Below them, that section alone costs more CPU time and
         energy than the whole extension should. With this on, every status bar interval can go down to ${label(LIMITS.intervalMin)}.
         Values set below a minimum are kept and apply whenever this is on.</p>
     </div>
+  </section>
+
+  <section aria-labelledby="h-temp" data-platform="linux">
+    <h2 id="h-temp">Temperature</h2>
+    <div class="row">
+      <div class="label">Component sensors<span class="hint">SSD, RAM, Wi-Fi and battery rows of the tooltip</span></div>
+      <div class="control">
+        <div class="segmented" role="group" aria-label="Component temperature sensors" data-setting="temperature.componentSensors">
+          <button type="button" data-value="awake">Awake only</button>
+          <button type="button" data-value="always">Always</button>
+          <button type="button" data-value="off">Off</button>
+        </div>
+      </div>
+    </div>
+    <ul class="explain">
+      <li><b>Awake only</b>: a device that the kernel has put to sleep (runtime suspend) is not read, because the read
+        would wake it; its row shows "asleep". It does not keep an awake NVMe drive in its deepest idle state: each
+        reading is a command that briefly brings it out of it.</li>
+      <li><b>Always</b>: every sensor at each temperature reading. <b>Off</b>: CPU temperature only.</li>
+    </ul>
   </section>
 
   <section aria-labelledby="h-display">

@@ -19,5 +19,6 @@ Why MiraBar is built the way it is. Format and conventions: [ADR-0001](0001-reco
 | [0013](0013-packaging-and-workflow.md) | Packaging hygiene and development workflow | Accepted | 1.1 |
 | [0014](0014-verification-strategy.md) | Verification without a Mac in the loop, measurements on the Mac | Accepted | 1.1, 1.2 |
 | [0015](0015-name-and-settings-namespace.md) | Name MiraBar (`fabogit.mirabar`), `mirabar.*` namespace, beta settings removed, version 1.2.0 | Accepted | 1.3 |
+| [0016](0016-linux-component-temperatures-async.md) | Linux component temperatures (SSD, RAM, Wi-Fi, battery) read asynchronously, sleeping devices not woken, CPU limit from the kernel | Accepted | 2 |
 
 Open questions recorded in ADRs: macOS 11 support end (0006); fewer temperature sensors per pass (0003); per-platform minimums for Linux and Windows (0010).

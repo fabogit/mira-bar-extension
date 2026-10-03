@@ -12,12 +12,21 @@ interface CoreStat {
 }
 
 /**
+ * Minimum jiffies per core between two samples (~50 ms at USER_HZ 100), as on darwin.
+ * Closer samples (activation right after priming, forced refresh right after a tick) would read
+ * 0% or 100% per core, so they return the previous result and keep the baseline instead.
+ */
+const MIN_TICKS_PER_CORE = 5;
+
+/**
  * High-performance, zero-subprocess Linux CPU usage provider.
  *
  * Reads cumulative jiffies directly from `/proc/stat` and calculates the delta
  * between successive samples. Handles edge cases including:
  * - `iowait` inclusion in idle time to prevent artificial 100% spikes during I/O.
- * - Clock skew or identical timestamps ($\Delta \text{total} \le 0$).
+ * - Cold start: the constructor primes the counters, so the first sample already has a delta.
+ * - Samples too close together (fewer than `MIN_TICKS_PER_CORE` jiffies per core) or counters
+ *   going backwards.
  * - Per-core logical breakdown for multi-threading profiling.
  * - Sparse array hole protection against CPU core parking / hotplugging.
  */
@@ -27,17 +36,27 @@ export class CpuProvider {
   private lastResult: CpuUsageInfo = { overallPercent: 0, perCorePercent: [] };
 
   /**
+   * Primes the tick baseline so the first sample after activation already has a delta, and the
+   * result before that delta carries the core count (all cores at 0%) rather than an empty array.
+   *
+   * @param statPath - Path of the kernel CPU statistics file (tests pass a mocked file).
+   */
+  constructor(private readonly statPath = '/proc/stat') {
+    this.sample();
+  }
+
+  /**
    * Samples `/proc/stat` and calculates active utilization percentages since the previous sample.
    *
    * @returns Current overall and per-core CPU usage percentages, or `null` if the virtual file is unreadable.
    */
   public sample(): CpuUsageInfo | null {
     try {
-      const content = fs.readFileSync('/proc/stat', 'utf8');
+      const content = fs.readFileSync(this.statPath, 'utf8');
       const lines = content.split('\n');
 
-      let overallPercent = this.lastResult.overallPercent;
-      const perCorePercent: number[] = [];
+      let overall: CoreStat | null = null;
+      const cores: CoreStat[] = [];
       let maxCoreIndex = -1;
 
       for (const line of lines) {
@@ -61,51 +80,60 @@ export class CpuProvider {
         const softirq = Number(parts[7]) || 0;
         const steal = Number(parts[8]) || 0;
 
-        const total = user + nice + system + idle + iowait + irq + softirq + steal;
-        const idleAll = idle + iowait;
+        const stat: CoreStat = {
+          total: user + nice + system + idle + iowait + irq + softirq + steal,
+          idle: idle + iowait,
+        };
 
         if (name === 'cpu') {
-          if (this.prevOverall !== null) {
-            const totalDelta = total - this.prevOverall.total;
-            const idleDelta = idleAll - this.prevOverall.idle;
-
-            if (totalDelta > 0) {
-              const activeDelta = totalDelta - idleDelta;
-              overallPercent = Math.max(0, Math.min(100, (activeDelta / totalDelta) * 100));
-            }
-          }
-          this.prevOverall = { total, idle: idleAll };
+          overall = stat;
         } else {
           // Individual core (cpu0, cpu1, ...)
           const coreIndex = parseInt(name.slice(3), 10);
           if (!isNaN(coreIndex)) {
+            cores[coreIndex] = stat;
             if (coreIndex > maxCoreIndex) {
               maxCoreIndex = coreIndex;
             }
-            const prevCore = this.prevCores.get(coreIndex);
-            let coreUsage = 0;
-
-            if (prevCore) {
-              const totalDelta = total - prevCore.total;
-              const idleDelta = idleAll - prevCore.idle;
-
-              if (totalDelta > 0) {
-                const activeDelta = totalDelta - idleDelta;
-                coreUsage = Math.max(0, Math.min(100, (activeDelta / totalDelta) * 100));
-              }
-            }
-
-            perCorePercent[coreIndex] = coreUsage;
-            this.prevCores.set(coreIndex, { total, idle: idleAll });
           }
         }
       }
 
-      // Densify array to prevent sparse holes / undefined indexing when cores are parked
-      for (let i = 0; i <= maxCoreIndex; i++) {
-        if (perCorePercent[i] === undefined) {
-          perCorePercent[i] = 0;
+      if (!overall) {
+        return null;
+      }
+
+      let overallPercent = this.lastResult.overallPercent;
+      if (this.prevOverall !== null) {
+        // The aggregate line sums every core, so the minimum scales with the core count.
+        const totalDelta = overall.total - this.prevOverall.total;
+        if (totalDelta >= 0 && totalDelta < Math.max(1, maxCoreIndex + 1) * MIN_TICKS_PER_CORE) {
+          // Too close to the previous sample: keep the baseline (counters going backwards reset it below).
+          return this.lastResult;
         }
+        if (totalDelta > 0) {
+          const activeDelta = totalDelta - (overall.idle - this.prevOverall.idle);
+          overallPercent = Math.max(0, Math.min(100, (activeDelta / totalDelta) * 100));
+        }
+      }
+      this.prevOverall = overall;
+
+      // Dense array (no holes when cores are parked); a core without a baseline (priming, hotplug) reads 0%.
+      const perCorePercent = new Array<number>(maxCoreIndex + 1).fill(0);
+      for (let i = 0; i <= maxCoreIndex; i++) {
+        const cur = cores[i];
+        if (cur === undefined) {
+          continue;
+        }
+        const prevCore = this.prevCores.get(i);
+        if (prevCore) {
+          const totalDelta = cur.total - prevCore.total;
+          if (totalDelta > 0) {
+            const activeDelta = totalDelta - (cur.idle - prevCore.idle);
+            perCorePercent[i] = Math.max(0, Math.min(100, (activeDelta / totalDelta) * 100));
+          }
+        }
+        this.prevCores.set(i, cur);
       }
 
       this.lastResult = { overallPercent, perCorePercent };

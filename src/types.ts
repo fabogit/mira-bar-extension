@@ -14,6 +14,13 @@ export type MemUnit = 'GB' | 'MB' | 'KB' | 'B';
 export type DiskSpaceFormat = 'PercentRemaining' | 'PercentUsed' | 'Remaining' | 'UsedOutOfTotal';
 
 /**
+ * Which component temperature sensors (SSD, RAM, Wi-Fi, battery) are read on Linux
+ * (mirabar.temperature.componentSensors): 'awake' skips a device that is runtime-suspended,
+ * 'always' reads every sensor at each pass, 'off' reads none (CPU only).
+ */
+export type ComponentSensorsMode = 'awake' | 'always' | 'off';
+
+/**
  * Represents CPU usage percentage statistics across the entire processor and individual cores.
  */
 export interface CpuUsageInfo {
@@ -82,6 +89,26 @@ export type FreqOrLoadInfo =
 
 
 /**
+ * Temperature of a component other than the CPU, with the limits its driver reports.
+ */
+export interface TempSensorReading {
+  /** Row label in the tooltip (e.g. 'SSD nvme0', 'RAM DIMM 1', 'Wi-Fi', 'Battery Cell'). */
+  label: string;
+
+  /**
+   * Temperature in °C, or `null` when the device was asleep (runtime-suspended) and not read, so as not
+   * to wake it (mirabar.temperature.componentSensors 'awake').
+   */
+  celsius: number | null;
+
+  /** Upper operating threshold in °C (hwmon `temp*_max`), if exposed. */
+  maxCelsius?: number;
+
+  /** Critical threshold in °C (hwmon `temp*_crit`), if exposed. */
+  critCelsius?: number;
+}
+
+/**
  * Represents CPU temperature measurements and hardware sensor identification.
  */
 export interface CpuTempInfo {
@@ -114,6 +141,12 @@ export interface CpuTempInfo {
 
   /** Temperature of the battery cell in °C (if available). */
   batteryCelsius?: number;
+
+  /** Critical trip point of the CPU sensor in °C, when the kernel exposes one (Linux `temp*_crit`). */
+  critCelsius?: number;
+
+  /** Other components with their own sensor (Linux hwmon and power_supply: SSD, RAM, Wi-Fi, battery). */
+  sensors?: TempSensorReading[];
 
   /** Sequence number of the sensor reading: it changes exactly when a new reading is taken. */
   sampleSeq?: number;
