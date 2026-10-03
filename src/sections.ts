@@ -3,14 +3,16 @@
  * Markdown. Pure functions (no VS Code API, no sampling), so every section renders the same way
  * whatever schedule triggered it.
  */
-import { UNIT_DIVISORS, type MiraBarConfig, type TooltipSection } from './config.js';
+import type { MiraBarConfig, TooltipSection } from './config.js';
 import {
+  FREQ_TEXT_WIDTH,
   formatBytes,
   formatMinutes,
   padNum,
   renderBar,
   renderDynamicAsciiTable,
   renderMonospaceTable,
+  UNIT_DIVISORS,
   type ColumnDef,
 } from './format.js';
 import type { BatteryInfo, CpuTempInfo, CpuUsageInfo, DiskDriveInfo, FreqOrLoadInfo, MemoryInfo } from './types.js';
@@ -179,8 +181,8 @@ export function renderFreqOrLoad(info: FreqOrLoadInfo, ctx: RenderContext, withT
   }
 
   const freq = info.data;
-  const divisor = UNIT_DIVISORS[config.freqUnit] || UNIT_DIVISORS['GHz']!;
-  const text = `$(dashboard) ${padNum((freq.avgHz / divisor).toFixed(2), config.freqUnit === 'MHz' ? 7 : 4)} ${config.freqUnit}`;
+  const divisor = UNIT_DIVISORS[config.freqUnit];
+  const text = `$(dashboard) ${padNum((freq.avgHz / divisor).toFixed(2), FREQ_TEXT_WIDTH[config.freqUnit])} ${config.freqUnit}`;
   if (!withTooltip) {
     return { text, tooltip: null };
   }
@@ -286,7 +288,7 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
 /** Memory and swap, with memory pressure and RAM breakdown on macOS. */
 export function renderMemory(mem: MemoryInfo, ctx: RenderContext, withTooltip: boolean): Rendered {
   const config = ctx.config;
-  const divisor = UNIT_DIVISORS[config.memUnit] || UNIT_DIVISORS['GB']!;
+  const divisor = UNIT_DIVISORS[config.memUnit];
   const used = padNum((mem.usedBytes / divisor).toFixed(2), 5);
   const total = padNum((mem.totalBytes / divisor).toFixed(2), 5);
   const text = `$(ellipsis) ${used}/${total} ${config.memUnit}`;

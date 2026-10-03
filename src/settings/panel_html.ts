@@ -7,6 +7,21 @@ import {
   TOOLTIP_SECTIONS,
   type TooltipSection,
 } from '../config.js';
+import { SECTION_LABELS } from '../sections.js';
+import {
+  ALIGNMENTS,
+  COMPONENT_SENSORS_MODES,
+  CPU_LAYOUTS,
+  DISK_MULTI_DISPLAY_NAMES,
+  DISK_MULTI_DISPLAYS,
+  DISK_SPACE_FORMATS,
+  FREQ_UNITS,
+  LOAD_FORMATS,
+  MEM_UNITS,
+  TOOLTIP_MODES,
+  type ComponentSensorsMode,
+  type DiskSpaceFormat,
+} from '../types.js';
 
 /** Limits shared with config.ts (single source), injected into the panel script and texts. */
 function limits(platform: NodeJS.Platform) {
@@ -19,16 +34,49 @@ function limits(platform: NodeJS.Platform) {
   } as const;
 }
 
-/** Section names for the explanatory texts. */
+/** Section names of this platform, as in the status bar and the gear tooltip (sections.ts). */
+function sectionNames(platform: NodeJS.Platform): Record<TooltipSection, string> {
+  const names = {} as Record<TooltipSection, string>;
+  for (const section of TOOLTIP_SECTIONS) {
+    names[section] = SECTION_LABELS[section](platform === 'darwin');
+  }
+  return names;
+}
+
+/** Section names inside a sentence: 'Temperature' -> 'temperature', 'CPU usage' unchanged. */
 function textNames(platform: NodeJS.Platform): Record<TooltipSection, string> {
-  return {
-    cpu: 'CPU usage',
-    freq: platform === 'darwin' ? 'system load' : platform === 'linux' ? 'CPU frequency' : 'system load / CPU frequency',
-    temp: 'temperature',
-    mem: 'memory',
-    battery: 'battery',
-    disk: 'disk',
-  };
+  const names = sectionNames(platform);
+  for (const section of TOOLTIP_SECTIONS) {
+    const name = names[section];
+    if (/^[A-Z][a-z]/.test(name)) {
+      names[section] = name[0]!.toLowerCase() + name.slice(1);
+    }
+  }
+  return names;
+}
+
+/** Display names of the options whose value is not shown as is. */
+const COMPONENT_SENSORS_NAMES: Readonly<Record<ComponentSensorsMode, string>> = { awake: 'Awake only', always: 'Always', off: 'Off' };
+const DISK_FORMAT_NAMES: Readonly<Record<DiskSpaceFormat, string>> = {
+  PercentRemaining: 'Percent free',
+  PercentUsed: 'Percent used',
+  Remaining: 'Free space',
+  UsedOutOfTotal: 'Used / total',
+};
+
+/** Buttons of a segmented control, one per option (option lists: types.ts). */
+function buttons<T extends string>(options: readonly T[], names?: Readonly<Record<T, string>>): string {
+  return options.map((o) => `<button type="button" data-value="${o}">${names?.[o] ?? o}</button>`).join('');
+}
+
+/** Options of a select, one per option (option lists: types.ts). */
+function selectOptions<T extends string>(options: readonly T[], names?: Readonly<Record<T, string>>): string {
+  return options.map((o) => `<option value="${o}">${names?.[o] ?? o}</option>`).join('');
+}
+
+/** Marks a row or section for one platform: hidden on the others. */
+function onlyOn(target: NodeJS.Platform, platform: NodeJS.Platform): string {
+  return platform === target ? `data-platform="${target}"` : `data-platform="${target}" hidden`;
 }
 
 /**
@@ -68,7 +116,8 @@ function label(ms: number): string {
  * The embedded script never builds HTML from data: labels are static and values are applied
  * through DOM properties.
  *
- * @param platform - Host platform: its measured minimums are shown and enforced in the panel.
+ * @param platform - Host platform: its measured minimums are shown and enforced in the panel, its section
+ *   names are used and the rows of the other platforms are hidden.
  */
 export function renderSettingsHtml(nonce: string, cspSource: string, platform: NodeJS.Platform): string {
   const LIMITS = limits(platform);
@@ -204,10 +253,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
     <div class="row">
       <div class="label">Tooltip mode<span class="hint">Static: at its own interval; Live: with every status bar update</span></div>
       <div class="control">
-        <div class="segmented" role="group" aria-label="Tooltip refresh mode" data-setting="tooltip.mode">
-          <button type="button" data-value="Static">Static</button>
-          <button type="button" data-value="Live">Live</button>
-        </div>
+        <div class="segmented" role="group" aria-label="Tooltip refresh mode" data-setting="tooltip.mode">${buttons(TOOLTIP_MODES)}</div>
       </div>
     </div>
     <div class="row" id="row-autorefresh">
@@ -223,10 +269,7 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
     <div class="row">
       <div class="label">Position</div>
       <div class="control">
-        <div class="segmented" role="group" aria-label="Status bar side" data-setting="alignment">
-          <button type="button" data-value="Left">Left</button>
-          <button type="button" data-value="Right">Right</button>
-        </div>
+        <div class="segmented" role="group" aria-label="Status bar side" data-setting="alignment">${buttons(ALIGNMENTS)}</div>
         <label>Priority <input type="number" id="priority" min="${LIMITS.priorityMin}" max="${LIMITS.priorityMax}" step="1" aria-label="Status bar priority"></label>
       </div>
     </div>
@@ -273,16 +316,13 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
     </div>
   </section>
 
-  <section aria-labelledby="h-temp" data-platform="linux">
+  <section aria-labelledby="h-temp" ${onlyOn('linux', platform)}>
     <h2 id="h-temp">Temperature</h2>
     <div class="row">
       <div class="label">Component sensors<span class="hint">SSD, RAM, Wi-Fi and battery rows of the tooltip</span></div>
       <div class="control">
-        <div class="segmented" role="group" aria-label="Component temperature sensors" data-setting="temperature.componentSensors">
-          <button type="button" data-value="awake">Awake only</button>
-          <button type="button" data-value="always">Always</button>
-          <button type="button" data-value="off">Off</button>
-        </div>
+        <div class="segmented" role="group" aria-label="Component temperature sensors" data-setting="temperature.componentSensors">${
+          buttons(COMPONENT_SENSORS_MODES, COMPONENT_SENSORS_NAMES)}</div>
       </div>
     </div>
     <ul class="explain">
@@ -298,49 +338,33 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
     <div class="row">
       <div class="label">CPU cores</div>
       <div class="control">
-        <div class="segmented" role="group" aria-label="CPU core layout" data-setting="tooltip.cpuLayout">
-          <button type="button" data-value="Table">Table</button>
-          <button type="button" data-value="List">List</button>
-        </div>
+        <div class="segmented" role="group" aria-label="CPU core layout" data-setting="tooltip.cpuLayout">${buttons(CPU_LAYOUTS)}</div>
       </div>
     </div>
-    <div class="row" data-platform="darwin">
+    <div class="row" ${onlyOn('darwin', platform)}>
       <div class="label">System load</div>
       <div class="control">
-        <div class="segmented" role="group" aria-label="System load format" data-setting="loadFormat">
-          <button type="button" data-value="Percent">Percent</button>
-          <button type="button" data-value="Value">Value</button>
-        </div>
+        <div class="segmented" role="group" aria-label="System load format" data-setting="loadFormat">${buttons(LOAD_FORMATS)}</div>
       </div>
     </div>
-    <div class="row" data-platform="linux">
+    <div class="row" ${onlyOn('linux', platform)}>
       <div class="label">Frequency unit</div>
-      <div class="control"><select id="freqUnit" data-select="freq.unit" aria-label="Frequency unit">
-        <option>GHz</option><option>MHz</option><option>KHz</option><option>Hz</option>
-      </select></div>
+      <div class="control"><select id="freqUnit" data-select="freq.unit" aria-label="Frequency unit">${selectOptions(FREQ_UNITS)}</select></div>
     </div>
     <div class="row">
       <div class="label">Memory unit</div>
-      <div class="control"><select id="memUnit" data-select="mem.unit" aria-label="Memory unit">
-        <option>GB</option><option>MB</option><option>KB</option><option>B</option>
-      </select></div>
+      <div class="control"><select id="memUnit" data-select="mem.unit" aria-label="Memory unit">${selectOptions(MEM_UNITS)}</select></div>
     </div>
     <div class="row">
       <div class="label">Disk value</div>
-      <div class="control"><select id="diskFormat" data-select="disk.format" aria-label="Disk value format">
-        <option value="PercentRemaining">Percent free</option>
-        <option value="PercentUsed">Percent used</option>
-        <option value="Remaining">Free space</option>
-        <option value="UsedOutOfTotal">Used / total</option>
-      </select></div>
+      <div class="control"><select id="diskFormat" data-select="disk.format" aria-label="Disk value format">${
+        selectOptions(DISK_SPACE_FORMATS, DISK_FORMAT_NAMES)}</select></div>
     </div>
     <div class="row">
       <div class="label">Several disks</div>
       <div class="control">
-        <div class="segmented" role="group" aria-label="Multiple disk display" data-setting="disk.multiDisplay">
-          <button type="button" data-value="All">All</button>
-          <button type="button" data-value="MostFull">Most full</button>
-        </div>
+        <div class="segmented" role="group" aria-label="Multiple disk display" data-setting="disk.multiDisplay">${
+          buttons(DISK_MULTI_DISPLAYS, DISK_MULTI_DISPLAY_NAMES)}</div>
       </div>
     </div>
     <div class="row">
@@ -358,13 +382,15 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
 <script nonce="${nonce}">
 (function () {
   const vscode = acquireVsCodeApi();
+  // Section names of this platform (sections.ts), injected.
+  const LABELS = ${JSON.stringify(sectionNames(platform))};
   const SECTIONS = {
-    cpu: { label: 'CPU usage', show: 'show.cpuusage' },
-    freq: { label: 'System load', show: 'show.cpufreq' },
-    temp: { label: 'Temperature', show: 'show.cputemp' },
-    mem: { label: 'Memory', show: 'show.mem' },
-    battery: { label: 'Battery', show: 'show.battery' },
-    disk: { label: 'Disk', show: 'show.disk' }
+    cpu: { label: LABELS.cpu, show: 'show.cpuusage' },
+    freq: { label: LABELS.freq, show: 'show.cpufreq' },
+    temp: { label: LABELS.temp, show: 'show.cputemp' },
+    mem: { label: LABELS.mem, show: 'show.mem' },
+    battery: { label: LABELS.battery, show: 'show.battery' },
+    disk: { label: LABELS.disk, show: 'show.disk' }
   };
   // Slider presets (ms): denser at the low end, where precision matters; the number fields take any value.
   const STOPS = [200, 250, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 15000, 20000, 30000,
@@ -381,7 +407,6 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
     return best;
   }
   let values = null;
-  let platform = 'darwin';
   let dragId = null;
   let statusTimer = null;
 
@@ -678,11 +703,6 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
   }
 
   function render() {
-    SECTIONS.freq.label = platform === 'darwin' ? 'System load' : 'CPU frequency';
-    document.querySelectorAll('[data-platform]').forEach(function (el) {
-      el.hidden = el.dataset.platform !== (platform === 'darwin' ? 'darwin' : 'linux');
-    });
-
     document.querySelectorAll('.segmented[data-setting]').forEach(function (group) {
       const current = values[group.dataset.setting];
       group.querySelectorAll('button[data-value]').forEach(function (btn) {
@@ -713,7 +733,6 @@ export function renderSettingsHtml(nonce: string, cspSource: string, platform: N
     if (!msg || typeof msg !== 'object') { return; }
     if (msg.type === 'state') {
       values = msg.values;
-      platform = msg.platform;
       render();
     } else if (msg.type === 'saved') {
       showStatus('Saved', false);

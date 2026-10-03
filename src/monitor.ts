@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readStoredIntervals, TOOLTIP_SECTIONS, type MiraBarConfig, type TooltipSection } from './config.js';
+import { otherOption, readStoredIntervals, TOOLTIP_SECTIONS, type MiraBarConfig, type TooltipSection } from './config.js';
 import { formatClock, formatDuration, renderDynamicAsciiTable } from './format.js';
 import {
   renderBattery,
@@ -14,6 +14,7 @@ import {
 } from './sections.js';
 import type { TelemetryPlatformProvider } from './platform/interface.js';
 import type { DiskProvider } from './disk/disk_provider.js';
+import { CPU_LAYOUTS, DISK_MULTI_DISPLAY_NAMES, DISK_MULTI_DISPLAYS, LOAD_FORMATS, TOOLTIP_MODES } from './types.js';
 
 /**
  * Sections due within this margin of a wake-up are read in it: timers never fire exactly on time, and
@@ -465,20 +466,20 @@ export function buildSettingsTooltip(config: MiraBarConfig): string {
   const options = [
     '| Option | Current | |',
     '| :--- | :--- | :--- |',
-    option('Tooltip mode', mode, `switch to ${mode === 'Static' ? 'Live' : 'Static'}`, 'mirabar.toggleTooltipMode'),
+    option('Tooltip mode', mode, `switch to ${otherOption(TOOLTIP_MODES, mode)}`, 'mirabar.toggleTooltipMode'),
   ];
   if (mode === 'Static') {
     options.push(option('Auto-refresh', config.tooltipAutoRefresh ? 'on' : 'off',
       `turn ${config.tooltipAutoRefresh ? 'off' : 'on'}`, 'mirabar.toggleTooltipAutoRefresh'));
   }
   options.push(option('CPU cores', config.cpuTooltipLayout,
-    `switch to ${config.cpuTooltipLayout === 'Table' ? 'List' : 'Table'}`, 'mirabar.toggleCpuLayout'));
+    `switch to ${otherOption(CPU_LAYOUTS, config.cpuTooltipLayout)}`, 'mirabar.toggleCpuLayout'));
   if (isDarwin) {
     options.push(option('System load', config.loadFormat,
-      `switch to ${config.loadFormat === 'Percent' ? 'Value' : 'Percent'}`, 'mirabar.toggleLoadFormat'));
+      `switch to ${otherOption(LOAD_FORMATS, config.loadFormat)}`, 'mirabar.toggleLoadFormat'));
   }
-  options.push(option('Several disks', config.diskMultiDisplay === 'All' ? 'All' : 'Most full',
-    `switch to ${config.diskMultiDisplay === 'All' ? 'Most full' : 'All'}`, 'mirabar.toggleDiskMultiDisplay'));
+  options.push(option('Several disks', DISK_MULTI_DISPLAY_NAMES[config.diskMultiDisplay],
+    `switch to ${DISK_MULTI_DISPLAY_NAMES[otherOption(DISK_MULTI_DISPLAYS, config.diskMultiDisplay)]}`, 'mirabar.toggleDiskMultiDisplay'));
 
   return [
     '### MiraBar Settings',

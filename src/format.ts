@@ -1,6 +1,32 @@
 /**
  * Pure formatting helpers for status bar texts and tooltip Markdown (no VS Code dependency).
  */
+import type { FreqUnit, MemUnit } from './types.js';
+
+/**
+ * Conversion divisors for the frequency (decimal) and memory (binary) display units.
+ */
+export const UNIT_DIVISORS: Readonly<Record<FreqUnit | MemUnit, number>> = {
+  GHz: 1_000_000_000,
+  MHz: 1_000_000,
+  KHz: 1_000,
+  Hz: 1,
+  GB: 1024 * 1024 * 1024,
+  MB: 1024 * 1024,
+  KB: 1024,
+  B: 1,
+};
+
+/**
+ * Characters of a CPU frequency in the status bar, per unit, with two decimals: a frequency below 10 GHz
+ * (e.g. '4.50' GHz, '4500.00' MHz), so the text keeps its width as the clock changes.
+ */
+export const FREQ_TEXT_WIDTH: Readonly<Record<FreqUnit, number>> = {
+  GHz: 4,
+  MHz: 7,
+  KHz: 10,
+  Hz: 13,
+};
 
 /**
  * Formats a raw byte count into a human-readable string with dynamic unit scaling (B, KB, MB, GB, TB).

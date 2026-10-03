@@ -46,7 +46,7 @@ export class SettingsPanel implements vscode.Disposable {
   /**
    * Opens the panel, or reveals it if it is already open.
    *
-   * @param platform - Host platform, used to label platform-specific sections.
+   * @param platform - Host platform: its section names, rows and measured minimums (injected into the page).
    */
   public static show(platform: NodeJS.Platform): void {
     if (SettingsPanel.current) {
@@ -74,7 +74,7 @@ export class SettingsPanel implements vscode.Disposable {
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly platform: NodeJS.Platform
+    platform: NodeJS.Platform
   ) {
     const nonce = randomBytes(16).toString('base64');
     panel.webview.html = renderSettingsHtml(nonce, panel.webview.cspSource, platform);
@@ -131,7 +131,6 @@ export class SettingsPanel implements vscode.Disposable {
     }
     void this.panel.webview.postMessage({
       type: 'state',
-      platform: this.platform,
       values: readSettingsSnapshot(),
     });
   }
