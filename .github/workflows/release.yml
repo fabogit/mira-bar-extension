@@ -64,6 +64,7 @@ jobs:
           pnpm run test:darwin
           pnpm run test:linux-temp
           pnpm run test:linux-battery
+          pnpm run test:linux-sysfs
           pnpm run test:integration
           pnpm run test:extension
 
@@ -115,6 +116,7 @@ jobs:
           pnpm run test:linux
           pnpm run test:linux-temp
           pnpm run test:linux-battery
+          pnpm run test:linux-sysfs
           pnpm run test:integration
           pnpm run test:extension
 
