@@ -107,7 +107,8 @@ if (perSection.length) {
     'µs per read (text + tooltip)': r.readsPerS > 0 ? (((r.cpuMsPerS - idle) * 1000) / r.readsPerS).toFixed(0) : 'n/a (not available here)',
   })));
 }
-// Saved for test/bench-darwin.mjs, which combines it with the native costs into the proposed minimums.
+// Saved for test/bench-darwin.mjs and test/bench-linux.mjs, which combine it with the source costs into the
+// proposed minimums.
 const perReadUs = Object.fromEntries(perSection.filter((r) => r.readsPerS > 0).map((r) => [r.section, ((r.cpuMsPerS - idle) * 1000) / r.readsPerS]));
 fs.writeFileSync(path.join(root, 'dist', 'bench-extension.json'), JSON.stringify({ platform: process.platform, arch: process.arch, perReadUs }, null, 2));
 if (s.errors.length) {

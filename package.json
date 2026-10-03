@@ -159,7 +159,7 @@
           "default": {
             "cpu": 2000,
             "freq": 2000,
-            "temp": 5000,
+            "temp": 10000,
             "mem": 2000,
             "battery": 10000,
             "disk": 10000
@@ -176,13 +176,13 @@
               "type": "number",
               "minimum": 200,
               "maximum": 3600000,
-              "description": "System load (macOS) or CPU frequency (Linux): status bar interval: how often it is read and its text updated (ms)."
+              "description": "System load (macOS) or CPU frequency (Linux): status bar interval: how often it is read and its text updated (ms). Measured minimum on Linux 400 ms."
             },
             "temp": {
               "type": "number",
               "minimum": 200,
               "maximum": 3600000,
-              "description": "Temperature: status bar interval: how often it is read and its text updated (ms). Measured minimum 8400 ms."
+              "description": "Temperature: status bar interval: how often it is read and its text updated (ms). Measured minimum 8400 ms on macOS, 900 ms on Linux."
             },
             "mem": {
               "type": "number",
@@ -194,7 +194,7 @@
               "type": "number",
               "minimum": 200,
               "maximum": 3600000,
-              "description": "Battery: status bar interval: how often it is read and its text updated (ms)."
+              "description": "Battery: status bar interval: how often it is read and its text updated (ms). Measured minimum on Linux 300 ms."
             },
             "disk": {
               "type": "number",
@@ -203,14 +203,14 @@
               "description": "Disk space: status bar interval: how often it is read and its text updated (ms)."
             }
           },
-          "markdownDescription": "**Status bar interval per section, in milliseconds**: how often each section reads its data and updates its text. Every read has a cost, so these intervals set the extension's CPU use.\n\n- Range 200 ms to 1 h. Measured minimum: temperature 8400 ms; below it, that section alone would use more than the extension's whole CPU budget (see `#mirabar.allowFastRefresh#`); CPU usage, system load / CPU frequency, memory, battery and disk can go down to 200 ms.\n- Sections: `cpu` CPU usage, `freq` system load (macOS) or CPU frequency (Linux), `temp` temperature, `mem` memory, `battery`, `disk`.\n- A section left out uses its default.\n- Live tooltips follow these intervals; Static tooltips use `#mirabar.tooltipMs#`."
+          "markdownDescription": "**Status bar interval per section, in milliseconds**: how often each section reads its data and updates its text. Every read has a cost, so these intervals set the extension's CPU use.\n\n- Range 200 ms to 1 h. Measured minimums, per platform; below one, that section alone would use more than the extension's whole CPU budget (see `#mirabar.allowFastRefresh#`). macOS: temperature 8400 ms. Linux: temperature 900 ms, CPU frequency 400 ms, battery 300 ms. Every other section 200 ms; other platforms use the higher of the two.\n- Sections: `cpu` CPU usage, `freq` system load (macOS) or CPU frequency (Linux), `temp` temperature, `mem` memory, `battery`, `disk`.\n- A section left out uses its default.\n- Live tooltips follow these intervals; Static tooltips use `#mirabar.tooltipMs#`."
         },
         "mirabar.tooltipMs": {
           "type": "object",
           "default": {
             "cpu": 5000,
             "freq": 5000,
-            "temp": 5000,
+            "temp": 10000,
             "mem": 5000,
             "battery": 10000,
             "disk": 10000
@@ -259,7 +259,7 @@
         "mirabar.allowFastRefresh": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "**Performance impact.** Allows status bar intervals below the measured minimum (temperature 8400 ms), down to 200 ms. The minimums are the intervals at which one section's reads alone would use the extension's whole CPU budget (0.5% of one core), measured on an Apple M4 (a temperature reading costs about 42 ms of CPU across the system); below them that section costs more CPU time and energy than the whole extension should. Values set below a minimum are kept and apply whenever this is on."
+          "markdownDescription": "**Performance impact.** Allows status bar intervals below the measured minimums (macOS: temperature 8400 ms; Linux: temperature 900 ms, CPU frequency 400 ms, battery 300 ms), down to 200 ms. The minimums are the intervals at which one section's reads alone would use the extension's whole CPU budget (0.5% of one core), measured on an Apple M4 (a temperature reading costs about 42 ms of CPU across the system) and on an AMD Ryzen 7 7840U laptop (about 4 ms); below them that section costs more CPU time and energy than the whole extension should. Values set below a minimum are kept and apply whenever this is on."
         },
         "mirabar.freq.unit": {
           "type": "string",
