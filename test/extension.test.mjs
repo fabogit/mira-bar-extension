@@ -238,8 +238,11 @@ await sleep(500);
   step('settings panel');
 }
 
-// Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload.
-if (process.platform === 'linux') {
+// Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload. Machines
+// without a temperature sensor (CI VMs) have no temperature widget: the modes are covered by test:linux-temp.
+if (process.platform === 'linux' && !item('Temperature')?.tooltip) {
+  step('component sensors applied live: skipped, no temperature sensor here');
+} else if (process.platform === 'linux') {
   const componentRows = () => item('Temperature').tooltip.value.split('\n')
     .filter((l) => /^(NVMe|RAM DIMM|Wi-Fi|Battery)/.test(l)).length;
   const readTwice = async () => {
