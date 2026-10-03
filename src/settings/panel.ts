@@ -28,8 +28,8 @@ function isPanelMessage(msg: unknown): msg is PanelMessage {
 
 /**
  * Singleton settings panel (editor tab). It is a front-end for the regular VS Code settings:
- * every change is validated against EDITABLE_SETTINGS and written to the user settings, and the
- * panel re-renders from the effective configuration on every change (including edits made in
+ * every change is validated against EDITABLE_SETTINGS and written to the scope that sets the value
+ * (workspace folder, workspace or user settings: the one that takes effect), and the panel re-renders from the effective configuration on every change (including edits made in
  * settings.json), so there is a single source of truth.
  */
 export class SettingsPanel implements vscode.Disposable {
@@ -46,7 +46,7 @@ export class SettingsPanel implements vscode.Disposable {
   /**
    * Opens the panel, or reveals it if it is already open.
    *
-   * @param platform - Host platform, used to label platform-specific sections.
+   * @param platform - Host platform: its section names, rows and measured minimums (injected into the page).
    */
   public static show(platform: NodeJS.Platform): void {
     if (SettingsPanel.current) {
@@ -74,14 +74,15 @@ export class SettingsPanel implements vscode.Disposable {
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly platform: NodeJS.Platform
+    platform: NodeJS.Platform
   ) {
     const nonce = randomBytes(16).toString('base64');
     panel.webview.html = renderSettingsHtml(nonce, panel.webview.cspSource, platform);
     this.disposables.push(
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((msg: unknown) => {
-        this.queue = this.queue.then(() => this.onMessage(msg));
+        // A failed message must not reject the queue: every later message would be dropped.
+        this.queue = this.queue.then(() => this.onMessage(msg)).catch(() => {});
       })
     );
   }
@@ -106,10 +107,15 @@ export class SettingsPanel implements vscode.Disposable {
           void this.panel.webview.postMessage({ type: 'saved' });
           break;
         }
-        case 'reset':
-          await resetSettings();
-          void this.panel.webview.postMessage({ type: 'saved' });
+        case 'reset': {
+          const remaining = await resetSettings();
+          void this.panel.webview.postMessage(
+            remaining.length === 0
+              ? { type: 'saved' }
+              : { type: 'error', message: `Defaults restored, except values VS Code did not let MiraBar remove: ${remaining.join(', ')}` }
+          );
           break;
+        }
         case 'openJson':
           await vscode.commands.executeCommand('workbench.action.openSettings', 'mirabar.');
           break;
@@ -126,7 +132,6 @@ export class SettingsPanel implements vscode.Disposable {
     }
     void this.panel.webview.postMessage({
       type: 'state',
-      platform: this.platform,
       values: readSettingsSnapshot(),
     });
   }

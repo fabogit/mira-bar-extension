@@ -1,24 +1,47 @@
-/**
- * Supported CPU frequency units for display.
- */
-export type FreqUnit = 'GHz' | 'MHz' | 'KHz' | 'Hz';
+// Option lists of the enum settings, defined once: the types below, the validation on read (config.ts),
+// the panel whitelist (settings/schema.ts) and the panel controls (settings/panel_html.ts) derive from them.
 
-/**
- * Supported memory units for display.
- */
-export type MemUnit = 'GB' | 'MB' | 'KB' | 'B';
+/** Supported CPU frequency units for display (mirabar.freq.unit). */
+export const FREQ_UNITS = ['GHz', 'MHz', 'KHz', 'Hz'] as const;
+export type FreqUnit = (typeof FREQ_UNITS)[number];
 
-/**
- * Supported formatting styles for disk space reporting.
- */
-export type DiskSpaceFormat = 'PercentRemaining' | 'PercentUsed' | 'Remaining' | 'UsedOutOfTotal';
+/** Supported memory units for display (mirabar.mem.unit). */
+export const MEM_UNITS = ['GB', 'MB', 'KB', 'B'] as const;
+export type MemUnit = (typeof MEM_UNITS)[number];
+
+/** Supported formatting styles for disk space reporting (mirabar.disk.format). */
+export const DISK_SPACE_FORMATS = ['PercentRemaining', 'PercentUsed', 'Remaining', 'UsedOutOfTotal'] as const;
+export type DiskSpaceFormat = (typeof DISK_SPACE_FORMATS)[number];
+
+/** Multi-disk status bar display (mirabar.disk.multiDisplay): every disk, or only the most full one. */
+export const DISK_MULTI_DISPLAYS = ['All', 'MostFull'] as const;
+export type DiskMultiDisplay = (typeof DISK_MULTI_DISPLAYS)[number];
+/** Display names of the multi-disk modes (gear tooltip, settings panel). */
+export const DISK_MULTI_DISPLAY_NAMES: Readonly<Record<DiskMultiDisplay, string>> = { All: 'All', MostFull: 'Most full' };
 
 /**
  * Which component temperature sensors (SSD, RAM, Wi-Fi, battery) are read on Linux
  * (mirabar.temperature.componentSensors): 'awake' skips a device that is runtime-suspended,
  * 'always' reads every sensor at each pass, 'off' reads none (CPU only).
  */
-export type ComponentSensorsMode = 'awake' | 'always' | 'off';
+export const COMPONENT_SENSORS_MODES = ['awake', 'always', 'off'] as const;
+export type ComponentSensorsMode = (typeof COMPONENT_SENSORS_MODES)[number];
+
+/** Status bar side (mirabar.alignment). */
+export const ALIGNMENTS = ['Left', 'Right'] as const;
+export type Alignment = (typeof ALIGNMENTS)[number];
+
+/** Tooltip mode (mirabar.tooltip.mode): 'Static' (own interval or on click) or 'Live' (with every read). */
+export const TOOLTIP_MODES = ['Static', 'Live'] as const;
+export type TooltipMode = (typeof TOOLTIP_MODES)[number];
+
+/** CPU per-core tooltip layout (mirabar.tooltip.cpuLayout). */
+export const CPU_LAYOUTS = ['Table', 'List'] as const;
+export type CpuLayout = (typeof CPU_LAYOUTS)[number];
+
+/** System load format on macOS (mirabar.loadFormat). */
+export const LOAD_FORMATS = ['Percent', 'Value'] as const;
+export type LoadFormat = (typeof LOAD_FORMATS)[number];
 
 /**
  * Represents CPU usage percentage statistics across the entire processor and individual cores.

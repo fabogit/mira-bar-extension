@@ -86,6 +86,82 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
   step(`minimums per platform (this host, ${process.platform}: ${config.TOOLTIP_SECTIONS.map((x) => `${x} ${MIN[x]}`).join(', ')})`);
 }
 
+// Settings validated on read: an invalid value falls back to the default and is logged once.
+{
+  const warnings = [];
+  config.setConfigLog({ warn: (m) => warnings.push(m) });
+  s.cfg = { 'disk.format': 'Bogus', 'freq.unit': 'THz', 'mem.unit': 'TB', 'disk.drives': '/home', priority: 'high', 'show.mem': 'yes', alignment: 'Center' };
+  const c = config.getConfig();
+  assert.deepEqual(
+    [c.diskFormat, c.freqUnit, c.memUnit, c.diskDrives, c.priority, c.showMem, c.alignment],
+    ['PercentRemaining', 'GHz', 'GB', [], 100, true, 'Left'],
+    'invalid values fall back to the defaults'
+  );
+  s.cfg = { ...s.cfg, priority: Number.NaN };
+  assert.equal(config.getConfig().priority, 100, 'NaN priority');
+  s.cfg = { 'disk.drives': ['/', 5, null, '/home'], priority: 99999 };
+  assert.deepEqual(config.getConfig().diskDrives, ['/', '/home'], 'non-string paths dropped, the others kept');
+  assert.equal(config.getConfig().priority, config.MAX_PRIORITY, 'priority clamped');
+  for (let i = 0; i < 3; i++) config.getConfig();
+  s.cfg = { 'disk.format': 'Bogus' };
+  config.getConfig();
+  assert.equal(warnings.filter((w) => w.includes('mirabar.disk.format')).length, 1, `logged once: ${warnings.join(' / ')}`);
+  assert.equal(warnings.filter((w) => w.includes('mirabar.disk.drives')).length, 2, 'each invalid value logged once');
+  assert.ok(warnings.some((w) => w === 'Setting mirabar.freq.unit: invalid value "THz", using "GHz"'), warnings.join(' / '));
+  config.setConfigLog(undefined);
+  s.cfg = {};
+  step('settings validated on read');
+}
+
+// Every default in the code equals its package.json default: with an invalid value for every key, each
+// setting falls back to the code's default, and the panel snapshot (every key) must equal package.json.
+{
+  const { module: schema, cleanup: cleanupSchema } = loadModule('src/settings/schema.ts', 'test-schema');
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
+  const defaults = Object.fromEntries(Object.entries(pkg).map(([k, spec]) => [k.replace(/^mirabar\./, ''), spec.default]));
+  s.cfg = Object.fromEntries(Object.keys(defaults).map((k) => [k, 'bogus']));
+  assert.deepEqual(schema.readSettingsSnapshot(), defaults, 'getConfig defaults = package.json defaults');
+  assert.deepEqual(schema.EDITABLE_SETTINGS.map((spec) => spec.key).sort(), Object.keys(defaults).sort(), 'every setting editable in the panel');
+  for (const spec of schema.EDITABLE_SETTINGS.filter((x) => x.kind === 'enum')) {
+    assert.deepEqual(spec.options, pkg[`mirabar.${spec.key}`].enum, `${spec.key} options = package.json enum`);
+  }
+  s.cfg = {};
+  cleanupSchema();
+  step('defaults and options match package.json');
+}
+
+// Renderers and panel page: frequency text width per unit, section names and rows per platform.
+{
+  const { module: sections, cleanup: cleanupSections } = loadModule('src/sections.ts', 'test-sections');
+  const base = config.getConfig();
+  for (const unit of ['GHz', 'MHz', 'KHz', 'Hz']) {
+    const text = (hz) => sections.renderFreqOrLoad({ kind: 'freq', data: { avgHz: hz, maxHz: hz, perCoreHz: [] } },
+      { config: { ...base, freqUnit: unit }, updatedAt: '00:00:00' }, false).text;
+    const widths = [400e6, 1.2e9, 4.5e9, 9.9e9].map((hz) => text(hz).length);
+    assert.ok(widths.every((w) => w === widths[0]), `${unit} text width stable: ${widths}`);
+  }
+  const battery = sections.renderBattery({ percent: 80, status: 'Discharging', cycleCount: 120 },
+    { config: base, updatedAt: '00:00:00' }, true).tooltip;
+  assert.ok(battery.includes('120 cycles') && !battery.includes('Condition'), 'no battery condition no platform reports');
+  cleanupSections();
+
+  const { module: page, cleanup: cleanupPage } = loadModule('src/settings/panel_html.ts', 'test-panel-html');
+  const labels = (html) => JSON.parse(html.match(/const LABELS = (\{.*\});/)[1]);
+  const hiddenRows = (html) => [...html.matchAll(/data-platform="(\w+)"( hidden)?/g)].map((m) => `${m[1]}${m[2] ? ' hidden' : ''}`);
+  const darwin = page.renderSettingsHtml('n', 'csp', 'darwin');
+  const linux = page.renderSettingsHtml('n', 'csp', 'linux');
+  const win32 = page.renderSettingsHtml('n', 'csp', 'win32');
+  assert.equal(labels(darwin).freq, 'System load');
+  assert.equal(labels(linux).freq, 'CPU frequency');
+  assert.deepEqual(hiddenRows(darwin), ['linux hidden', 'darwin', 'linux hidden']);
+  assert.deepEqual(hiddenRows(linux), ['linux', 'darwin hidden', 'linux']);
+  assert.deepEqual(hiddenRows(win32), ['linux hidden', 'darwin hidden', 'linux hidden'], 'win32 shows neither platform\'s rows');
+  assert.ok(!/let platform/.test(linux), 'no hard-coded platform in the page');
+  for (const unit of ['GHz', 'MHz', 'KHz', 'Hz', 'GB', 'MB', 'KB', 'B']) assert.ok(linux.includes(`<option value="${unit}">${unit}</option>`), unit);
+  cleanupPage();
+  step('frequency width per unit, panel per platform');
+}
+
 s.cfg = { 'show.disk': true };
 ext.activate({ subscriptions: [] });
 await sleep(500);
@@ -236,6 +312,82 @@ await sleep(500);
   vscode.__fireConfigChange();
   await sleep(300);
   step('settings panel');
+}
+
+// Settings scopes: toggles, panel edits and "Restore defaults" act on the scope that sets the value
+// (a write to the user settings would not change a value set in the workspace).
+{
+  const panel = s.panels[0];
+  await setCfg({});
+  s.workspaceCfg['tooltip.mode'] = 'Live';
+  s.notifications.length = 0;
+  await s.cmds['mirabar.toggleTooltipMode']();
+  assert.equal(s.workspaceCfg['tooltip.mode'], 'Static', 'toggle writes the workspace value');
+  assert.ok(!('tooltip.mode' in s.cfg), 'toggle leaves the user settings alone');
+  assert.equal(s.notifications.at(-1), 'MiraBar: Tooltip mode set to Static (workspace settings)');
+  await s.cmds['mirabar.toggleCpuLayout']();
+  assert.equal(s.cfg['tooltip.cpuLayout'], 'List', 'a value set nowhere goes to the user settings');
+  assert.equal(s.notifications.at(-1), 'MiraBar: CPU layout set to List');
+
+  s.workspaceCfg.priority = 50;
+  panel.receive({ type: 'update', key: 'priority', value: 60 });
+  await sleep(30);
+  assert.equal(s.workspaceCfg.priority, 60, 'panel edit writes the workspace value');
+  assert.ok(!('priority' in s.cfg), 'panel edit leaves the user settings alone');
+
+  // Reset clears the user and workspace values; a folder value VS Code refuses to remove is reported.
+  s.cfg['show.mem'] = false;
+  s.workspaceCfg['show.mem'] = false;
+  s.folderCfg.alignment = 'Right';
+  s.posted.length = 0;
+  panel.receive({ type: 'reset' });
+  await sleep(400);
+  assert.deepEqual(Object.keys(s.workspaceCfg), [], 'workspace values reset');
+  assert.deepEqual(Object.keys(s.cfg), [], 'user values reset');
+  const error = s.posted.find((m) => m.type === 'error');
+  assert.ok(error && error.message.includes('mirabar.alignment (workspace folder)'), `remaining value reported: ${error?.message}`);
+  assert.ok(!s.posted.some((m) => m.type === 'saved'), 'no "Saved" when a value remains');
+  delete s.folderCfg.alignment;
+  await setCfg({ 'show.disk': true }, 300);
+  step('settings scopes');
+}
+
+// Invalid values in settings.json: widgets and panel keep working with the defaults, each value logged once.
+{
+  const panel = s.panels[0];
+  s.warnings.length = 0;
+  await setCfg({ 'disk.format': 'Bogus', 'mem.unit': 'TB', 'freq.unit': 'THz', 'disk.drives': '/', priority: 'high' }, 400);
+  await setCfg({}, 300); // a second read of the same values
+  assert.ok(!item('Disk').text.includes('undefined'), `disk text: ${item('Disk').text}`);
+  assert.match(item('Memory').text, / GB$/, `memory text: ${item('Memory').text}`);
+  if (item('CPU frequency')?.visible) assert.match(item('CPU frequency').text, / GHz$/);
+  s.posted.length = 0;
+  panel.receive({ type: 'ready' });
+  await sleep(10);
+  const values = s.posted.find((m) => m.type === 'state').values;
+  assert.deepEqual([values['disk.drives'], values['disk.format'], values.priority], [[], 'PercentRemaining', 100], 'panel snapshot valid');
+  for (const key of ['disk.format', 'mem.unit', 'freq.unit', 'disk.drives', 'priority']) {
+    assert.equal(s.warnings.filter((w) => w.includes(`mirabar.${key}:`)).length, 1, `${key} logged once`);
+  }
+  await setCfg({ 'disk.format': undefined, 'mem.unit': undefined, 'freq.unit': undefined, 'disk.drives': undefined, priority: undefined }, 300);
+  step('invalid settings in the running extension');
+}
+
+// Panel message queue: a message whose handling fails does not block the ones after it.
+{
+  const panel = s.panels[0];
+  const postMessage = panel.webview.postMessage;
+  panel.webview.postMessage = () => {
+    throw new Error('Webview is disposed'); // VS Code throws synchronously once the webview is gone
+  };
+  panel.receive({ type: 'update', key: 'show.mem', value: 'yes' }); // its error report throws too: the handler rejects
+  await sleep(10);
+  panel.webview.postMessage = postMessage;
+  panel.receive({ type: 'update', key: 'tooltip.cpuLayout', value: 'List' });
+  await sleep(30);
+  assert.equal(s.cfg['tooltip.cpuLayout'], 'List', 'later message applied');
+  await setCfg({ 'tooltip.cpuLayout': undefined });
+  step('panel queue survives a failed message');
 }
 
 // Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload. Machines

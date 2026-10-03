@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
-import { getConfig } from './config.js';
+import { getConfig, otherOption, setConfigLog } from './config.js';
 import { ResourceMonitor } from './monitor.js';
 import { SettingsPanel } from './settings/panel.js';
+import { writeSetting } from './settings/schema.js';
 import { createPlatformProvider } from './platform/factory.js';
 import { DiskProvider } from './disk/disk_provider.js';
+import { CPU_LAYOUTS, DISK_MULTI_DISPLAYS, LOAD_FORMATS, TOOLTIP_MODES } from './types.js';
 
 // Layout: config.ts reads and validates the settings; monitor.ts owns the widgets and their schedule
 // (per-section status bar and tooltip intervals); sections.ts renders texts and tooltips; format.ts
@@ -24,12 +26,16 @@ export function activate(context: vscode.ExtensionContext): void {
   const log = vscode.window.createOutputChannel('MiraBar', { log: true });
   context.subscriptions.push(log);
   log.info('Activated');
+  setConfigLog(log); // invalid settings are reported once each, then fall back to their default
 
   const current = new ResourceMonitor(createPlatformProvider(log), new DiskProvider(), log, getConfig());
   monitor = current;
   context.subscriptions.push(current, { dispose: () => SettingsPanel.disposeCurrent() });
 
-  /** Registers a command that flips one setting between two values and confirms the change. */
+  /**
+   * Registers a command that flips one setting between two values and confirms the change. The value is
+   * written where it is set (workspace folder, workspace or user settings), so the flip takes effect.
+   */
   const registerToggle = <T extends string | boolean>(
     command: string,
     key: string,
@@ -40,8 +46,8 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       vscode.commands.registerCommand(command, async () => {
         const next = flip(read());
-        await vscode.workspace.getConfiguration('mirabar').update(key, next, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(`MiraBar: ${message(next)}`);
+        const scope = await writeSetting(key, next);
+        vscode.window.showInformationMessage(`MiraBar: ${message(next)}${scope === 'user' ? '' : ` (${scope} settings)`}`);
       })
     );
   };
@@ -53,15 +59,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('mirabar.openSettings', () => SettingsPanel.show(process.platform))
   );
   registerToggle('mirabar.toggleTooltipMode', 'tooltip.mode', () => getConfig().tooltipMode,
-    (v) => (v === 'Static' ? 'Live' : 'Static'), (v) => `Tooltip mode set to ${v}`);
+    (v) => otherOption(TOOLTIP_MODES, v), (v) => `Tooltip mode set to ${v}`);
   registerToggle('mirabar.toggleTooltipAutoRefresh', 'tooltip.autoRefresh', () => getConfig().tooltipAutoRefresh,
     (v) => !v, (v) => `Static tooltip auto-refresh ${v ? 'on' : 'off'}`);
   registerToggle('mirabar.toggleCpuLayout', 'tooltip.cpuLayout', () => getConfig().cpuTooltipLayout,
-    (v) => (v === 'Table' ? 'List' : 'Table'), (v) => `CPU layout set to ${v}`);
+    (v) => otherOption(CPU_LAYOUTS, v), (v) => `CPU layout set to ${v}`);
   registerToggle('mirabar.toggleLoadFormat', 'loadFormat', () => getConfig().loadFormat,
-    (v) => (v === 'Percent' ? 'Value' : 'Percent'), (v) => `Load format set to ${v}`);
+    (v) => otherOption(LOAD_FORMATS, v), (v) => `Load format set to ${v}`);
   registerToggle('mirabar.toggleDiskMultiDisplay', 'disk.multiDisplay', () => getConfig().diskMultiDisplay,
-    (v) => (v === 'All' ? 'MostFull' : 'All'), (v) => `Multi-disk display set to ${v}`);
+    (v) => otherOption(DISK_MULTI_DISPLAYS, v), (v) => `Multi-disk display set to ${v}`);
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -93,4 +99,5 @@ export function deactivate(): void {
   SettingsPanel.disposeCurrent();
   monitor?.dispose();
   monitor = null;
+  setConfigLog(undefined);
 }

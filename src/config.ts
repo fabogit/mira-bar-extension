@@ -1,5 +1,24 @@
 import * as vscode from 'vscode';
-import type { ComponentSensorsMode, DiskSpaceFormat, FreqUnit, MemUnit } from './types.js';
+import {
+  ALIGNMENTS,
+  COMPONENT_SENSORS_MODES,
+  CPU_LAYOUTS,
+  DISK_MULTI_DISPLAYS,
+  DISK_SPACE_FORMATS,
+  FREQ_UNITS,
+  LOAD_FORMATS,
+  MEM_UNITS,
+  TOOLTIP_MODES,
+  type Alignment,
+  type ComponentSensorsMode,
+  type CpuLayout,
+  type DiskMultiDisplay,
+  type DiskSpaceFormat,
+  type FreqUnit,
+  type LoadFormat,
+  type MemUnit,
+  type TooltipMode,
+} from './types.js';
 
 /** Status bar sections that own a tooltip ('freq' is CPU frequency on Linux, system load on macOS). */
 export type TooltipSection = 'cpu' | 'freq' | 'temp' | 'mem' | 'battery' | 'disk';
@@ -204,9 +223,9 @@ export interface MiraBarConfig {
   /** Base priority for status bar positioning. */
   priority: number;
   /** Status bar alignment side ('Left' | 'Right'). */
-  alignment: 'Left' | 'Right';
+  alignment: Alignment;
   /** Tooltip mode: 'Static' (on click, plus optional auto-refresh at tooltipMs) or 'Live' (with every read). */
-  tooltipMode: 'Static' | 'Live';
+  tooltipMode: TooltipMode;
   /** Static mode: whether tooltips refresh automatically at tooltipMs (otherwise only on click). */
   tooltipAutoRefresh: boolean;
   /**
@@ -222,20 +241,96 @@ export interface MiraBarConfig {
   /** Lowers every measured minimum to MIN_INTERVAL_MS (performance impact, see package.json). */
   allowFastRefresh: boolean;
   /** CPU core breakdown layout in tooltip: 'Table' (compact side-by-side grid) or 'List' (vertical clusters). */
-  cpuTooltipLayout: 'Table' | 'List';
+  cpuTooltipLayout: CpuLayout;
   /** Multi-disk status bar display mode: 'All' or 'MostFull'. */
-  diskMultiDisplay: 'All' | 'MostFull';
+  diskMultiDisplay: DiskMultiDisplay;
   /** Format used to display System Load Average on Darwin: 'Percent' or 'Value'. */
-  loadFormat: 'Percent' | 'Value';
+  loadFormat: LoadFormat;
   /** Linux component temperature sensors (SSD, RAM, Wi-Fi, battery): 'awake', 'always' or 'off'. */
   componentSensors: ComponentSensorsMode;
 }
 
-export const COMPONENT_SENSORS_MODES: readonly ComponentSensorsMode[] = ['awake', 'always', 'off'];
+/** Receives the warnings about invalid settings (the extension's output channel), once set. */
+let warn: ((message: string) => void) | undefined;
 
-/** Validates mirabar.temperature.componentSensors: an unknown value falls back to 'awake' (the default). */
-export function readComponentSensors(raw: unknown): ComponentSensorsMode {
-  return (COMPONENT_SENSORS_MODES as readonly unknown[]).includes(raw) ? (raw as ComponentSensorsMode) : 'awake';
+/** Invalid values already reported, as 'key=value': each one is logged once, not at every read. */
+const reported = new Set<string>();
+
+/**
+ * Sets where invalid settings are reported (the output channel; undefined stops reporting). Values read
+ * before it is set are reported at the first read after.
+ */
+export function setConfigLog(log: { warn(message: string): void } | undefined): void {
+  warn = log ? (message) => log.warn(message) : undefined;
+}
+
+/** Reports an invalid setting once per value. */
+function reportInvalid(key: string, raw: unknown, fallback: unknown): void {
+  const id = `${key}=${JSON.stringify(raw)}`;
+  if (!warn || reported.has(id)) {
+    return;
+  }
+  reported.add(id);
+  warn(`Setting mirabar.${key}: invalid value ${JSON.stringify(raw)}, using ${JSON.stringify(fallback)}`);
+}
+
+// Readers of one setting. VS Code does not enforce the package.json schema on settings.json (a wrong type
+// or an unknown option is only underlined), so every value is checked here: an invalid one falls back to
+// the default and is logged.
+
+function readBoolean(config: vscode.WorkspaceConfiguration, key: string, fallback: boolean): boolean {
+  const raw = config.get<unknown>(key);
+  if (raw === undefined || typeof raw === 'boolean') {
+    return raw ?? fallback;
+  }
+  reportInvalid(key, raw, fallback);
+  return fallback;
+}
+
+function readEnum<T extends string>(config: vscode.WorkspaceConfiguration, key: string, options: readonly T[], fallback: T): T {
+  const raw = config.get<unknown>(key);
+  if (raw === undefined) {
+    return fallback;
+  }
+  if ((options as readonly unknown[]).includes(raw)) {
+    return raw as T;
+  }
+  reportInvalid(key, raw, fallback);
+  return fallback;
+}
+
+/** A list of strings: entries that are not strings are dropped (and reported), the others kept. */
+function readStringArray(config: vscode.WorkspaceConfiguration, key: string, fallback: readonly string[]): string[] {
+  const raw = config.get<unknown>(key);
+  if (raw === undefined) {
+    return [...fallback];
+  }
+  if (!Array.isArray(raw)) {
+    reportInvalid(key, raw, fallback);
+    return [...fallback];
+  }
+  const strings = raw.filter((value): value is string => typeof value === 'string');
+  if (strings.length !== raw.length) {
+    reportInvalid(key, raw, strings);
+  }
+  return strings;
+}
+
+/** A finite number, clamped to [min, max]. */
+function readFiniteNumber(config: vscode.WorkspaceConfiguration, key: string, fallback: number, min: number, max: number): number {
+  const raw = config.get<unknown>(key);
+  let value = fallback;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    value = raw;
+  } else if (raw !== undefined) {
+    reportInvalid(key, raw, fallback);
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
+/** The other value of a two-option setting: the quick toggles (commands and gear tooltip links). */
+export function otherOption<T>(options: readonly [T, T], value: T): T {
+  return value === options[0] ? options[1] : options[0];
 }
 
 /**
@@ -245,48 +340,34 @@ export function readComponentSensors(raw: unknown): ComponentSensorsMode {
  */
 export function getConfig(): MiraBarConfig {
   const config = vscode.workspace.getConfiguration('mirabar');
-  const allowFastRefresh = config.get<boolean>('allowFastRefresh', false) === true;
+  const allowFastRefresh = readBoolean(config, 'allowFastRefresh', false);
   const stored = readStoredIntervals(config);
   const statusBarMs = readIntervals(stored.statusBarMs, DEFAULT_STATUS_BAR_MS, (s) => minStatusBarMs(s, allowFastRefresh));
   const tooltipMs = readIntervals(stored.tooltipMs, DEFAULT_TOOLTIP_MS, (s) => statusBarMs[s]);
 
   return {
-    showCpuUsage: config.get<boolean>('show.cpuusage', true),
-    showCpuFreq: config.get<boolean>('show.cpufreq', true),
-    showCpuTemp: config.get<boolean>('show.cputemp', true),
-    showMem: config.get<boolean>('show.mem', true),
-    showBattery: config.get<boolean>('show.battery', true),
-    showDisk: config.get<boolean>('show.disk', false),
-    showSettings: config.get<boolean>('show.settings', true),
+    showCpuUsage: readBoolean(config, 'show.cpuusage', true),
+    showCpuFreq: readBoolean(config, 'show.cpufreq', true),
+    showCpuTemp: readBoolean(config, 'show.cputemp', true),
+    showMem: readBoolean(config, 'show.mem', true),
+    showBattery: readBoolean(config, 'show.battery', true),
+    showDisk: readBoolean(config, 'show.disk', false),
+    showSettings: readBoolean(config, 'show.settings', true),
     order: readWidgetOrder(config.get<unknown>('order')),
-    diskFormat: config.get<DiskSpaceFormat>('disk.format', 'PercentRemaining'),
-    diskDrives: config.get<string[]>('disk.drives', []),
-    diskMultiDisplay: config.get<'All' | 'MostFull'>('disk.multiDisplay', 'All'),
-    freqUnit: config.get<FreqUnit>('freq.unit', 'GHz'),
-    memUnit: config.get<MemUnit>('mem.unit', 'GB'),
-    priority: Math.min(MAX_PRIORITY, Math.max(MIN_PRIORITY, config.get<number>('priority', 100))),
-    alignment: config.get<'Left' | 'Right'>('alignment', 'Left'),
-    tooltipMode: config.get<'Static' | 'Live'>('tooltip.mode', 'Static'),
-    tooltipAutoRefresh: config.get<boolean>('tooltip.autoRefresh', true),
+    diskFormat: readEnum(config, 'disk.format', DISK_SPACE_FORMATS, 'PercentRemaining'),
+    diskDrives: readStringArray(config, 'disk.drives', []),
+    diskMultiDisplay: readEnum(config, 'disk.multiDisplay', DISK_MULTI_DISPLAYS, 'All'),
+    freqUnit: readEnum(config, 'freq.unit', FREQ_UNITS, 'GHz'),
+    memUnit: readEnum(config, 'mem.unit', MEM_UNITS, 'GB'),
+    priority: readFiniteNumber(config, 'priority', 100, MIN_PRIORITY, MAX_PRIORITY),
+    alignment: readEnum(config, 'alignment', ALIGNMENTS, 'Left'),
+    tooltipMode: readEnum(config, 'tooltip.mode', TOOLTIP_MODES, 'Static'),
+    tooltipAutoRefresh: readBoolean(config, 'tooltip.autoRefresh', true),
     statusBarMs,
     tooltipMs,
     allowFastRefresh,
-    cpuTooltipLayout: config.get<'Table' | 'List'>('tooltip.cpuLayout', 'Table'),
-    loadFormat: config.get<'Percent' | 'Value'>('loadFormat', 'Percent'),
-    componentSensors: readComponentSensors(config.get<unknown>('temperature.componentSensors')),
+    cpuTooltipLayout: readEnum(config, 'tooltip.cpuLayout', CPU_LAYOUTS, 'Table'),
+    loadFormat: readEnum(config, 'loadFormat', LOAD_FORMATS, 'Percent'),
+    componentSensors: readEnum(config, 'temperature.componentSensors', COMPONENT_SENSORS_MODES, 'awake'),
   };
 }
-
-/**
- * Conversion divisors for standard frequency and byte binary/decimal units.
- */
-export const UNIT_DIVISORS: Record<string, number> = {
-  GHz: 1_000_000_000,
-  MHz: 1_000_000,
-  KHz: 1_000,
-  Hz: 1,
-  GB: 1024 * 1024 * 1024,
-  MB: 1024 * 1024,
-  KB: 1024,
-  B: 1,
-};

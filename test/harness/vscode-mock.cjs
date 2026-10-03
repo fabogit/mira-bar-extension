@@ -1,6 +1,7 @@
 // Minimal stand-in for the `vscode` module, enough to run the extension outside VS Code
 // (test/extension.test.mjs, test/bench-extension.mjs). It records status bar writes, settings writes
-// and webview messages; it renders nothing, so the renderer-side cost of an update in real VS Code is
+// and webview messages, and keeps settings per scope like VS Code (`cfg` user, `workspaceCfg`,
+// `folderCfg`; the most specific one that sets a key applies); it renders nothing, so the renderer-side cost of an update in real VS Code is
 // not part of any measurement.
 'use strict';
 
@@ -15,7 +16,12 @@ const DEFAULTS = Object.fromEntries(
 
 const state = {
   items: [],
+  /** User (global) settings. */
   cfg: {},
+  /** Workspace settings. */
+  workspaceCfg: {},
+  /** Workspace folder settings. */
+  folderCfg: {},
   listeners: [],
   cmds: {},
   textSets: 0,
@@ -23,6 +29,7 @@ const state = {
   errors: [],
   infos: [],
   warnings: [],
+  notifications: [],
   panels: [],
   posted: [],
   executed: [],
@@ -125,24 +132,47 @@ module.exports = {
   __state: state,
   __fireConfigChange: fireConfigChange,
   StatusBarAlignment: { Left: 1, Right: 2 },
-  ConfigurationTarget: { Global: 1 },
+  ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
   ViewColumn: { Active: -1 },
   MarkdownString,
   window: {
     createStatusBarItem: (alignment, priority) => new Item(alignment, priority),
-    createOutputChannel: () => ({ info: (m) => state.infos.push(m), warn: (m) => state.warnings.push(m), error: (m) => state.errors.push(m), dispose() {} }),
+    createOutputChannel: () => ({
+      info: (m) => state.infos.push(m),
+      warn: (m) => state.warnings.push(m),
+      error: (m) => state.errors.push(m),
+      dispose() {},
+    }),
     createWebviewPanel,
-    showInformationMessage() {},
+    showInformationMessage: (m) => {
+      state.notifications.push(m);
+    },
   },
   workspace: {
     workspaceFolders: undefined,
-    getConfiguration: () => ({
-      get: (k, d) => (k in state.cfg ? state.cfg[k] : k in DEFAULTS ? DEFAULTS[k] : d),
-      inspect: (k) => ({ key: k, defaultValue: DEFAULTS[k], globalValue: state.cfg[k] }),
-      update: async (k, v) => {
-        state.writes.push([k, v]);
-        if (v === undefined) delete state.cfg[k];
-        else state.cfg[k] = v;
+    getConfiguration: (_section, resource) => ({
+      get: (k, d) => {
+        for (const scope of [state.folderCfg, state.workspaceCfg, state.cfg]) {
+          if (k in scope) return scope[k];
+        }
+        return k in DEFAULTS ? DEFAULTS[k] : d;
+      },
+      inspect: (k) => ({
+        key: k,
+        defaultValue: DEFAULTS[k],
+        globalValue: state.cfg[k],
+        workspaceValue: state.workspaceCfg[k],
+        workspaceFolderValue: state.folderCfg[k],
+      }),
+      update: async (k, v, target = 1) => {
+        const scope = { 1: state.cfg, 2: state.workspaceCfg, 3: state.folderCfg }[target === true ? 1 : target === false ? 2 : target];
+        if (target === 3 && !resource) {
+          // Like VS Code: folder settings need a configuration obtained for a resource.
+          throw new Error('Unable to write to Folder Settings because no resource is provided.');
+        }
+        state.writes.push([k, v, target]);
+        if (v === undefined) delete scope[k];
+        else scope[k] = v;
         setTimeout(fireConfigChange, 0); // VS Code notifies listeners asynchronously
       },
     }),

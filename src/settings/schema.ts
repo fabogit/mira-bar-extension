@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import {
-  COMPONENT_SENSORS_MODES,
   DEFAULT_STATUS_BAR_MS,
   DEFAULT_TOOLTIP_MS,
   getConfig,
@@ -10,6 +9,17 @@ import {
   readStoredIntervals,
   readWidgetOrder,
 } from '../config.js';
+import {
+  ALIGNMENTS,
+  COMPONENT_SENSORS_MODES,
+  CPU_LAYOUTS,
+  DISK_MULTI_DISPLAYS,
+  DISK_SPACE_FORMATS,
+  FREQ_UNITS,
+  LOAD_FORMATS,
+  MEM_UNITS,
+  TOOLTIP_MODES,
+} from '../types.js';
 
 /** Kinds of value the settings panel may write, each with its own validation. */
 type SettingKind = 'boolean' | 'number' | 'enum' | 'stringArray' | 'order' | 'intervals';
@@ -28,7 +38,7 @@ interface SettingSpec {
  * and every value is validated/clamped here before it reaches the user's settings.json.
  */
 export const EDITABLE_SETTINGS: readonly SettingSpec[] = [
-  { key: 'tooltip.mode', kind: 'enum', options: ['Static', 'Live'] },
+  { key: 'tooltip.mode', kind: 'enum', options: TOOLTIP_MODES },
   { key: 'tooltip.autoRefresh', kind: 'boolean' },
   { key: 'statusBarMs', kind: 'intervals' },
   { key: 'tooltipMs', kind: 'intervals' },
@@ -42,14 +52,14 @@ export const EDITABLE_SETTINGS: readonly SettingSpec[] = [
   { key: 'show.disk', kind: 'boolean' },
   { key: 'show.settings', kind: 'boolean' },
   { key: 'temperature.componentSensors', kind: 'enum', options: COMPONENT_SENSORS_MODES },
-  { key: 'tooltip.cpuLayout', kind: 'enum', options: ['Table', 'List'] },
-  { key: 'loadFormat', kind: 'enum', options: ['Percent', 'Value'] },
-  { key: 'freq.unit', kind: 'enum', options: ['GHz', 'MHz', 'KHz', 'Hz'] },
-  { key: 'mem.unit', kind: 'enum', options: ['GB', 'MB', 'KB', 'B'] },
-  { key: 'disk.format', kind: 'enum', options: ['PercentRemaining', 'PercentUsed', 'Remaining', 'UsedOutOfTotal'] },
-  { key: 'disk.multiDisplay', kind: 'enum', options: ['All', 'MostFull'] },
+  { key: 'tooltip.cpuLayout', kind: 'enum', options: CPU_LAYOUTS },
+  { key: 'loadFormat', kind: 'enum', options: LOAD_FORMATS },
+  { key: 'freq.unit', kind: 'enum', options: FREQ_UNITS },
+  { key: 'mem.unit', kind: 'enum', options: MEM_UNITS },
+  { key: 'disk.format', kind: 'enum', options: DISK_SPACE_FORMATS },
+  { key: 'disk.multiDisplay', kind: 'enum', options: DISK_MULTI_DISPLAYS },
   { key: 'disk.drives', kind: 'stringArray' },
-  { key: 'alignment', kind: 'enum', options: ['Left', 'Right'] },
+  { key: 'alignment', kind: 'enum', options: ALIGNMENTS },
   { key: 'priority', kind: 'number', min: MIN_PRIORITY, max: MAX_PRIORITY },
 ];
 
@@ -138,19 +148,58 @@ export function readSettingsSnapshot(): Record<string, unknown> {
   };
 }
 
+/** Settings scopes the extension writes, from the most specific (VS Code reads them in this order). */
+const SCOPES = [
+  { name: 'workspace folder', target: vscode.ConfigurationTarget.WorkspaceFolder, value: 'workspaceFolderValue' },
+  { name: 'workspace', target: vscode.ConfigurationTarget.Workspace, value: 'workspaceValue' },
+  { name: 'user', target: vscode.ConfigurationTarget.Global, value: 'globalValue' },
+] as const;
+
+export type SettingScope = (typeof SCOPES)[number]['name'];
+
 /**
- * Writes one validated setting to the user (global) settings.
+ * Most specific scope that sets `key` (the value VS Code applies), or the user settings when none does:
+ * a write anywhere else would leave the effective value unchanged.
  */
-export async function writeSetting(key: string, value: unknown): Promise<void> {
-  await vscode.workspace.getConfiguration('mirabar').update(key, value, vscode.ConfigurationTarget.Global);
+function scopeOf(configuration: vscode.WorkspaceConfiguration, key: string): (typeof SCOPES)[number] {
+  const inspected = configuration.inspect<unknown>(key);
+  return SCOPES.find((scope) => inspected?.[scope.value] !== undefined) ?? SCOPES[SCOPES.length - 1]!;
 }
 
 /**
- * Removes every panel-editable setting from the user settings, restoring the defaults.
+ * Writes one validated setting to the scope that sets it (workspace folder, workspace or user settings),
+ * so the change takes effect.
+ *
+ * @returns The scope written.
  */
-export async function resetSettings(): Promise<void> {
+export async function writeSetting(key: string, value: unknown): Promise<SettingScope> {
   const configuration = vscode.workspace.getConfiguration('mirabar');
+  const scope = scopeOf(configuration, key);
+  await configuration.update(key, value, scope.target);
+  return scope.name;
+}
+
+/**
+ * Removes every panel-editable setting from every scope that sets it (workspace folder, workspace and
+ * user settings), restoring the defaults.
+ *
+ * @returns The values that could not be removed (e.g. 'mirabar.priority (workspace folder)'), if any.
+ */
+export async function resetSettings(): Promise<string[]> {
+  const configuration = vscode.workspace.getConfiguration('mirabar');
+  const remaining: string[] = [];
   for (const spec of EDITABLE_SETTINGS) {
-    await configuration.update(spec.key, undefined, vscode.ConfigurationTarget.Global);
+    const inspected = configuration.inspect<unknown>(spec.key);
+    for (const scope of SCOPES) {
+      if (inspected?.[scope.value] === undefined) {
+        continue;
+      }
+      try {
+        await configuration.update(spec.key, undefined, scope.target);
+      } catch {
+        remaining.push(`mirabar.${spec.key} (${scope.name})`);
+      }
+    }
   }
+  return remaining;
 }
