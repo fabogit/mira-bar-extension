@@ -96,17 +96,17 @@ Likewise the mt7921 firmware power save (mt76 `runtime-pm`) is internal to the d
 
 SATA drives expose a temperature only through the `drivetemp` hwmon driver, which is not loaded by default (it needs `modprobe drivetemp`, as root). A hard disk in standby has its spindle stopped: waking it every temperature interval would spin it up (seconds of motor work, wear, noise, energy), which is the opposite of what MiraBar should do.
 
-Measured on the Garuda desktop (kernel 7.2 zen) on its non-system SATA drives: two Samsung SSD 870 QVO 2 TB (ntfs3) and a Seagate ST8000DM004 8 TB hard disk (exfat). Each read starts from standby (`smartctl -s standby,now`); the state after it comes from `smartctl -n standby` (CHECK POWER MODE, which does not wake the drive). Three trials per read and drive, identical results:
+Measured on the Garuda desktop (kernel 7.2 zen) on its non-system SATA drives: two Samsung SSD 870 QVO 2 TB (ntfs3) and a Seagate ST8000DM004 8 TB hard disk (exfat). Each read starts from standby (`smartctl -s standby,now`); the state after it comes from `smartctl -n standby` (CHECK POWER MODE, which does not wake the drive). Three trials per read and drive, identical results on the two SSDs. All three drives report SCT Status support (`smartctl -c`) and no APM feature (`smartctl -g apm`: unavailable).
 
-| Read, drive in standby | SSD 870 QVO | HDD ST8000DM004 |
+| Read, drive in standby | SSD 870 QVO (×2) | HDD ST8000DM004 |
 | :--- | :--- | :--- |
 | `statfs` on the mounted file system (the disk section) | stays in standby, 1 ms | stays in standby, 1 ms |
-| `drivetemp` `temp1_input` | stays in standby, 2 ms (29 °C) | stays in standby, 2 ms (31 °C) |
-| SMART attributes (`smartctl -A`, SMART READ DATA) | wakes up, 13 ms | spins up, 9.5 s |
+| `drivetemp` `temp1_input` | stays in standby, 2-3 ms (29 °C) | stays in standby, 2 ms (31 °C) |
+| SMART attributes (`smartctl -A`, SMART READ DATA) | wakes up, 13-14 ms | spins up, 9.5 s |
 
 - The file system answers `statfs` from memory: the disk section never wakes a drive.
-- Both drives answer `drivetemp` through SCT Status, served by the drive's controller without leaving standby.
-- Reading the SMART attributes, which `drivetemp` does on drives without SCT Status, wakes both, and spins the hard disk up for 9.5 s.
+- All three answer `drivetemp` through SCT Status, served by the drive's controller without leaving standby.
+- Reading the SMART attributes, which `drivetemp` does on drives without SCT Status, wakes all three, and spins the hard disk up for 9.5 s.
 - `power/runtime_status` of the SCSI devices is `active` while the drives are in standby: ATA standby is not runtime PM, so the `awake` mode of `componentSensors` cannot see it.
 
 ### Decision
