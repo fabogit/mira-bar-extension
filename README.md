@@ -8,7 +8,7 @@
 
 - **CPU Usage (`$(pulse)`)**: Instant overall and per-core utilization parsed directly from `/proc/stat` (Linux) or Mach host APIs (macOS Apple Silicon). Pre-samples on startup (Tick 0) to eliminate empty hover tables.
 - **CPU Frequency / System Load (`$(dashboard)`)**: Dynamic clock speeds read directly from `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq` on Linux, and normalized capacity System Load Average on macOS Apple Silicon.
-- **CPU & SoC Temperature (`$(flame)`)**: Native discovery for AMD Ryzen (`k10temp`, `zenpower`) and Intel (`coretemp`) on Linux, with the kernel's critical limit, plus NVMe SSD, RAM modules, Wi-Fi adapter and battery where hwmon exposes them (read asynchronously); 24-sensor SoC die average/peak, NAND SSD, and battery cell temperature on macOS Apple Silicon via unprivileged `IOHIDEventSystemClient`, read on a native background thread so the extension host never waits for the sensors.
+- **CPU & SoC Temperature (`$(flame)`)**: Native discovery for AMD Ryzen (`k10temp`, `zenpower`) and Intel (`coretemp`) on Linux, with the kernel's critical limit, plus NVMe SSD, RAM modules, Wi-Fi adapter and battery where hwmon exposes them (read asynchronously, without waking a sleeping device: `mirabar.temperature.componentSensors`); 24-sensor SoC die average/peak, NAND SSD, and battery cell temperature on macOS Apple Silicon via unprivileged `IOHIDEventSystemClient`, read on a native background thread so the extension host never waits for the sensors.
 - **Memory & Swap (`$(ellipsis)`)**: Live physical RAM and swap statistics parsed from `/proc/meminfo` on Linux; 64-bit Mach VM stats (active, wired, compressed), `vm.swapusage` and the kernel memory pressure level on macOS.
 - **Battery Health & Telemetry (`$(zap)` / `🔋` / `$(plug)`)**: Real-time charging state, design, nominal and full-charge capacity (mAh), remaining charge (mAh), cycle count and health ratio via `/sys/class/power_supply` (Linux) and `IOPowerSources` + `AppleSmartBattery` (macOS, shown as *Nominal vs Design*). Auto-disabled on desktop systems.
 - **Storage & Multi-Disk (`$(database)`)**: Non-blocking `statfs` monitoring with smart path truncation (preserving directory boundaries like `.../antigravity/kind-newton`). Supports multi-disk aggregation modes (`All` vs `MostFull`).
@@ -82,6 +82,7 @@ Configure these settings from the settings panel or directly in your VS Code / A
 | `mirabar.show.cpuusage` | `boolean` | `true` | Toggle CPU usage percentage |
 | `mirabar.show.cpufreq` | `boolean` | `true` | Toggle CPU clock frequency (Linux) or System Load (Darwin) |
 | `mirabar.show.cputemp` | `boolean` | `true` | Toggle CPU temperature |
+| `mirabar.temperature.componentSensors` | `string` | `"awake"` | Linux only: NVMe, RAM, Wi-Fi and battery temperatures in the tooltip. `"awake"`: a runtime-suspended device is not read (that read would wake it) and its row shows *asleep*; `"always"`: every sensor at each reading; `"off"`: CPU temperature only. An awake NVMe drive is still briefly brought out of its deepest idle state (APST) by each reading: use `"off"` if that matters on battery |
 | `mirabar.show.mem` | `boolean` | `true` | Toggle memory consumption |
 | `mirabar.show.battery` | `boolean` | `true` | Toggle battery percentage (auto-hidden on desktops) |
 | `mirabar.show.disk` | `boolean` | `false` | Toggle disk space information |

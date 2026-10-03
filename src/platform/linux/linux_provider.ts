@@ -1,5 +1,6 @@
 import type {
   BatteryInfo,
+  ComponentSensorsMode,
   CpuTempInfo,
   CpuUsageInfo,
   FreqOrLoadInfo,
@@ -61,6 +62,14 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
    */
   public requestTempRefresh(): void {
     void this.components.refresh();
+  }
+
+  /**
+   * Applies mirabar.temperature.componentSensors: 'awake' skips runtime-suspended devices, 'always'
+   * reads every sensor, 'off' reads none (the CPU sensor only). Takes effect at the next pass.
+   */
+  public setComponentSensors(mode: ComponentSensorsMode): void {
+    this.components.setMode(mode);
   }
 
   /**

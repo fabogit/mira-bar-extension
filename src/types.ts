@@ -14,6 +14,13 @@ export type MemUnit = 'GB' | 'MB' | 'KB' | 'B';
 export type DiskSpaceFormat = 'PercentRemaining' | 'PercentUsed' | 'Remaining' | 'UsedOutOfTotal';
 
 /**
+ * Which component temperature sensors (SSD, RAM, Wi-Fi, battery) are read on Linux
+ * (mirabar.temperature.componentSensors): 'awake' skips a device that is runtime-suspended,
+ * 'always' reads every sensor at each pass, 'off' reads none (CPU only).
+ */
+export type ComponentSensorsMode = 'awake' | 'always' | 'off';
+
+/**
  * Represents CPU usage percentage statistics across the entire processor and individual cores.
  */
 export interface CpuUsageInfo {
@@ -88,8 +95,11 @@ export interface TempSensorReading {
   /** Row label in the tooltip (e.g. 'SSD nvme0', 'RAM DIMM 1', 'Wi-Fi', 'Battery Cell'). */
   label: string;
 
-  /** Temperature in °C. */
-  celsius: number;
+  /**
+   * Temperature in °C, or `null` when the device was asleep (runtime-suspended) and not read, so as not
+   * to wake it (mirabar.temperature.componentSensors 'awake').
+   */
+  celsius: number | null;
 
   /** Upper operating threshold in °C (hwmon `temp*_max`), if exposed. */
   maxCelsius?: number;

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import {
+  COMPONENT_SENSORS_MODES,
   DEFAULT_STATUS_BAR_MS,
   DEFAULT_TOOLTIP_MS,
   getConfig,
@@ -40,6 +41,7 @@ export const EDITABLE_SETTINGS: readonly SettingSpec[] = [
   { key: 'show.battery', kind: 'boolean' },
   { key: 'show.disk', kind: 'boolean' },
   { key: 'show.settings', kind: 'boolean' },
+  { key: 'temperature.componentSensors', kind: 'enum', options: COMPONENT_SENSORS_MODES },
   { key: 'tooltip.cpuLayout', kind: 'enum', options: ['Table', 'List'] },
   { key: 'loadFormat', kind: 'enum', options: ['Percent', 'Value'] },
   { key: 'freq.unit', kind: 'enum', options: ['GHz', 'MHz', 'KHz', 'Hz'] },
@@ -123,6 +125,7 @@ export function readSettingsSnapshot(): Record<string, unknown> {
     'show.battery': c.showBattery,
     'show.disk': c.showDisk,
     'show.settings': c.showSettings,
+    'temperature.componentSensors': c.componentSensors,
     'tooltip.cpuLayout': c.cpuTooltipLayout,
     loadFormat: c.loadFormat,
     'freq.unit': c.freqUnit,

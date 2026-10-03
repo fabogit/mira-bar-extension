@@ -238,6 +238,26 @@ export function renderSettingsHtml(nonce: string, cspSource: string): string {
     </div>
   </section>
 
+  <section aria-labelledby="h-temp" data-platform="linux">
+    <h2 id="h-temp">Temperature</h2>
+    <div class="row">
+      <div class="label">Component sensors<span class="hint">SSD, RAM, Wi-Fi and battery rows of the tooltip</span></div>
+      <div class="control">
+        <div class="segmented" role="group" aria-label="Component temperature sensors" data-setting="temperature.componentSensors">
+          <button type="button" data-value="awake">Awake only</button>
+          <button type="button" data-value="always">Always</button>
+          <button type="button" data-value="off">Off</button>
+        </div>
+      </div>
+    </div>
+    <ul class="explain">
+      <li><b>Awake only</b>: a device that the kernel has put to sleep (runtime suspend) is not read, because the read
+        would wake it; its row shows "asleep". It does not keep an awake NVMe drive in its deepest idle state: each
+        reading is a command that briefly brings it out of it.</li>
+      <li><b>Always</b>: every sensor at each temperature reading. <b>Off</b>: CPU temperature only.</li>
+    </ul>
+  </section>
+
   <section aria-labelledby="h-display">
     <h2 id="h-display">Display</h2>
     <div class="row">

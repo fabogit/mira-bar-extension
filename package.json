@@ -89,6 +89,21 @@
           "default": true,
           "description": "Toggles the display of CPU temperature."
         },
+        "mirabar.temperature.componentSensors": {
+          "type": "string",
+          "enum": [
+            "awake",
+            "always",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Read a component sensor only while its device is awake: a runtime-suspended device is not read (that read would wake it) and its row shows \"asleep\".",
+            "Read every component sensor at each temperature reading, whatever the device's power state.",
+            "No component sensors: no scan, no reads, no rows. The tooltip shows the CPU temperature only."
+          ],
+          "default": "awake",
+          "markdownDescription": "**Linux only** (no effect on macOS): component temperature sensors in the temperature tooltip (NVMe SSD, RAM modules, Wi-Fi, battery). Reading most of them sends a command to the device (an NVMe SMART log command, an I2C transfer for the RAM modules, a firmware command for the Wi-Fi chip).\n\n- `awake`: a device the kernel has put to sleep (runtime suspend, `power/runtime_status`) is not read, and its row shows *asleep*; awake devices are read as with `always`. This avoids waking a sleeping device; it does not keep an awake NVMe drive in its deepest idle state (APST): each reading still brings it out of it briefly. Choose `off` if that matters on battery.\n- `always`: every sensor at each temperature reading.\n- `off`: CPU temperature only."
+        },
         "mirabar.show.mem": {
           "type": "boolean",
           "default": true,

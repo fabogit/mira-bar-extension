@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { DiskSpaceFormat, FreqUnit, MemUnit } from './types.js';
+import type { ComponentSensorsMode, DiskSpaceFormat, FreqUnit, MemUnit } from './types.js';
 
 /** Status bar sections that own a tooltip ('freq' is CPU frequency on Linux, system load on macOS). */
 export type TooltipSection = 'cpu' | 'freq' | 'temp' | 'mem' | 'battery' | 'disk';
@@ -187,6 +187,15 @@ export interface MiraBarConfig {
   diskMultiDisplay: 'All' | 'MostFull';
   /** Format used to display System Load Average on Darwin: 'Percent' or 'Value'. */
   loadFormat: 'Percent' | 'Value';
+  /** Linux component temperature sensors (SSD, RAM, Wi-Fi, battery): 'awake', 'always' or 'off'. */
+  componentSensors: ComponentSensorsMode;
+}
+
+export const COMPONENT_SENSORS_MODES: readonly ComponentSensorsMode[] = ['awake', 'always', 'off'];
+
+/** Validates mirabar.temperature.componentSensors: an unknown value falls back to 'awake' (the default). */
+export function readComponentSensors(raw: unknown): ComponentSensorsMode {
+  return (COMPONENT_SENSORS_MODES as readonly unknown[]).includes(raw) ? (raw as ComponentSensorsMode) : 'awake';
 }
 
 /**
@@ -224,6 +233,7 @@ export function getConfig(): MiraBarConfig {
     allowFastRefresh,
     cpuTooltipLayout: config.get<'Table' | 'List'>('tooltip.cpuLayout', 'Table'),
     loadFormat: config.get<'Percent' | 'Value'>('loadFormat', 'Percent'),
+    componentSensors: readComponentSensors(config.get<unknown>('temperature.componentSensors')),
   };
 }
 
