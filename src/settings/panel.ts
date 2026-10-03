@@ -28,8 +28,8 @@ function isPanelMessage(msg: unknown): msg is PanelMessage {
 
 /**
  * Singleton settings panel (editor tab). It is a front-end for the regular VS Code settings:
- * every change is validated against EDITABLE_SETTINGS and written to the user settings, and the
- * panel re-renders from the effective configuration on every change (including edits made in
+ * every change is validated against EDITABLE_SETTINGS and written to the scope that sets the value
+ * (workspace folder, workspace or user settings: the one that takes effect), and the panel re-renders from the effective configuration on every change (including edits made in
  * settings.json), so there is a single source of truth.
  */
 export class SettingsPanel implements vscode.Disposable {
@@ -106,10 +106,15 @@ export class SettingsPanel implements vscode.Disposable {
           void this.panel.webview.postMessage({ type: 'saved' });
           break;
         }
-        case 'reset':
-          await resetSettings();
-          void this.panel.webview.postMessage({ type: 'saved' });
+        case 'reset': {
+          const remaining = await resetSettings();
+          void this.panel.webview.postMessage(
+            remaining.length === 0
+              ? { type: 'saved' }
+              : { type: 'error', message: `Defaults restored, except values VS Code did not let MiraBar remove: ${remaining.join(', ')}` }
+          );
           break;
+        }
         case 'openJson':
           await vscode.commands.executeCommand('workbench.action.openSettings', 'mirabar.');
           break;

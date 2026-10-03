@@ -138,19 +138,58 @@ export function readSettingsSnapshot(): Record<string, unknown> {
   };
 }
 
+/** Settings scopes the extension writes, from the most specific (VS Code reads them in this order). */
+const SCOPES = [
+  { name: 'workspace folder', target: vscode.ConfigurationTarget.WorkspaceFolder, value: 'workspaceFolderValue' },
+  { name: 'workspace', target: vscode.ConfigurationTarget.Workspace, value: 'workspaceValue' },
+  { name: 'user', target: vscode.ConfigurationTarget.Global, value: 'globalValue' },
+] as const;
+
+export type SettingScope = (typeof SCOPES)[number]['name'];
+
 /**
- * Writes one validated setting to the user (global) settings.
+ * Most specific scope that sets `key` (the value VS Code applies), or the user settings when none does:
+ * a write anywhere else would leave the effective value unchanged.
  */
-export async function writeSetting(key: string, value: unknown): Promise<void> {
-  await vscode.workspace.getConfiguration('mirabar').update(key, value, vscode.ConfigurationTarget.Global);
+function scopeOf(configuration: vscode.WorkspaceConfiguration, key: string): (typeof SCOPES)[number] {
+  const inspected = configuration.inspect<unknown>(key);
+  return SCOPES.find((scope) => inspected?.[scope.value] !== undefined) ?? SCOPES[SCOPES.length - 1]!;
 }
 
 /**
- * Removes every panel-editable setting from the user settings, restoring the defaults.
+ * Writes one validated setting to the scope that sets it (workspace folder, workspace or user settings),
+ * so the change takes effect.
+ *
+ * @returns The scope written.
  */
-export async function resetSettings(): Promise<void> {
+export async function writeSetting(key: string, value: unknown): Promise<SettingScope> {
   const configuration = vscode.workspace.getConfiguration('mirabar');
+  const scope = scopeOf(configuration, key);
+  await configuration.update(key, value, scope.target);
+  return scope.name;
+}
+
+/**
+ * Removes every panel-editable setting from every scope that sets it (workspace folder, workspace and
+ * user settings), restoring the defaults.
+ *
+ * @returns The values that could not be removed (e.g. 'mirabar.priority (workspace folder)'), if any.
+ */
+export async function resetSettings(): Promise<string[]> {
+  const configuration = vscode.workspace.getConfiguration('mirabar');
+  const remaining: string[] = [];
   for (const spec of EDITABLE_SETTINGS) {
-    await configuration.update(spec.key, undefined, vscode.ConfigurationTarget.Global);
+    const inspected = configuration.inspect<unknown>(spec.key);
+    for (const scope of SCOPES) {
+      if (inspected?.[scope.value] === undefined) {
+        continue;
+      }
+      try {
+        await configuration.update(spec.key, undefined, scope.target);
+      } catch {
+        remaining.push(`mirabar.${spec.key} (${scope.name})`);
+      }
+    }
   }
+  return remaining;
 }

@@ -238,6 +238,44 @@ await sleep(500);
   step('settings panel');
 }
 
+// Settings scopes: toggles, panel edits and "Restore defaults" act on the scope that sets the value
+// (a write to the user settings would not change a value set in the workspace).
+{
+  const panel = s.panels[0];
+  await setCfg({});
+  s.workspaceCfg['tooltip.mode'] = 'Live';
+  s.notifications.length = 0;
+  await s.cmds['mirabar.toggleTooltipMode']();
+  assert.equal(s.workspaceCfg['tooltip.mode'], 'Static', 'toggle writes the workspace value');
+  assert.ok(!('tooltip.mode' in s.cfg), 'toggle leaves the user settings alone');
+  assert.equal(s.notifications.at(-1), 'MiraBar: Tooltip mode set to Static (workspace settings)');
+  await s.cmds['mirabar.toggleCpuLayout']();
+  assert.equal(s.cfg['tooltip.cpuLayout'], 'List', 'a value set nowhere goes to the user settings');
+  assert.equal(s.notifications.at(-1), 'MiraBar: CPU layout set to List');
+
+  s.workspaceCfg.priority = 50;
+  panel.receive({ type: 'update', key: 'priority', value: 60 });
+  await sleep(30);
+  assert.equal(s.workspaceCfg.priority, 60, 'panel edit writes the workspace value');
+  assert.ok(!('priority' in s.cfg), 'panel edit leaves the user settings alone');
+
+  // Reset clears the user and workspace values; a folder value VS Code refuses to remove is reported.
+  s.cfg['show.mem'] = false;
+  s.workspaceCfg['show.mem'] = false;
+  s.folderCfg.alignment = 'Right';
+  s.posted.length = 0;
+  panel.receive({ type: 'reset' });
+  await sleep(400);
+  assert.deepEqual(Object.keys(s.workspaceCfg), [], 'workspace values reset');
+  assert.deepEqual(Object.keys(s.cfg), [], 'user values reset');
+  const error = s.posted.find((m) => m.type === 'error');
+  assert.ok(error && error.message.includes('mirabar.alignment (workspace folder)'), `remaining value reported: ${error?.message}`);
+  assert.ok(!s.posted.some((m) => m.type === 'saved'), 'no "Saved" when a value remains');
+  delete s.folderCfg.alignment;
+  await setCfg({ 'show.disk': true }, 300);
+  step('settings scopes');
+}
+
 // Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload. Machines
 // without a temperature sensor (CI VMs) have no temperature widget: the modes are covered by test:linux-temp.
 if (process.platform === 'linux' && !item('Temperature')?.tooltip) {

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { getConfig } from './config.js';
 import { ResourceMonitor } from './monitor.js';
 import { SettingsPanel } from './settings/panel.js';
+import { writeSetting } from './settings/schema.js';
 import { createPlatformProvider } from './platform/factory.js';
 import { DiskProvider } from './disk/disk_provider.js';
 
@@ -29,7 +30,10 @@ export function activate(context: vscode.ExtensionContext): void {
   monitor = current;
   context.subscriptions.push(current, { dispose: () => SettingsPanel.disposeCurrent() });
 
-  /** Registers a command that flips one setting between two values and confirms the change. */
+  /**
+   * Registers a command that flips one setting between two values and confirms the change. The value is
+   * written where it is set (workspace folder, workspace or user settings), so the flip takes effect.
+   */
   const registerToggle = <T extends string | boolean>(
     command: string,
     key: string,
@@ -40,8 +44,8 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       vscode.commands.registerCommand(command, async () => {
         const next = flip(read());
-        await vscode.workspace.getConfiguration('mirabar').update(key, next, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(`MiraBar: ${message(next)}`);
+        const scope = await writeSetting(key, next);
+        vscode.window.showInformationMessage(`MiraBar: ${message(next)}${scope === 'user' ? '' : ` (${scope} settings)`}`);
       })
     );
   };
