@@ -18,21 +18,39 @@ import { MemoryProvider } from './memory.js';
 const COMPONENT_STALE_INTERVALS = 3;
 const COMPONENT_STALE_MIN_MS = 5000;
 
+/** Where the Linux provider reads from (tests pass mocked trees and a driven clock). */
+export interface LinuxProviderOptions {
+  /** Root of the sysfs tree (default `/sys`). */
+  sysRoot?: string;
+  /** Root of the procfs tree (default `/proc`). */
+  procRoot?: string;
+  /** Clock (ms since epoch, default `Date.now`). */
+  now?: () => number;
+}
+
 /**
  * Linux platform telemetry implementation reading from /proc and /sys pseudo-filesystems.
  */
 export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
   public readonly platformName = 'linux' as const;
 
-  private cpu = new CpuProvider();
-  private freq = new CpuFreqProvider();
-  private temp = new CpuTempProvider();
-  private components = new ComponentTempProvider();
-  private lastTemp: CpuTempInfo | null = null;
-  private lastTempAt = 0;
-  private tempSeq = 0;
-  private mem = new MemoryProvider();
-  private batt = new BatteryProvider();
+  private readonly now: () => number;
+  private readonly cpu: CpuProvider;
+  private readonly freq: CpuFreqProvider;
+  private readonly temp: CpuTempProvider;
+  private readonly components: ComponentTempProvider;
+  private readonly mem: MemoryProvider;
+  private readonly batt: BatteryProvider;
+
+  constructor({ sysRoot = '/sys', procRoot = '/proc', now = Date.now }: LinuxProviderOptions = {}) {
+    this.now = now;
+    this.cpu = new CpuProvider(procRoot);
+    this.freq = new CpuFreqProvider(sysRoot, now);
+    this.temp = new CpuTempProvider(sysRoot, now);
+    this.components = new ComponentTempProvider(sysRoot, now);
+    this.mem = new MemoryProvider(procRoot);
+    this.batt = new BatteryProvider(sysRoot, now);
+  }
 
   /**
    * Samples active CPU utilization across overall system and individual logical cores from /proc/stat.
@@ -82,18 +100,10 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
    * @returns CpuTempInfo reading and driver name, or `null` if no hwmon sensors exist.
    */
   public sampleTemp(maxAgeMs = 0): CpuTempInfo | null {
-    const now = Date.now();
-    if (this.lastTempAt === 0 || now - this.lastTempAt >= maxAgeMs) {
-      const reading = this.temp.sample();
-      this.lastTemp = reading ? { ...reading, sampleSeq: ++this.tempSeq } : null;
-      this.lastTempAt = now;
-    }
-    if (!this.lastTemp) {
+    const now = this.now();
+    const result = this.temp.cached(maxAgeMs, now);
+    if (!result) {
       return null;
-    }
-    const result: CpuTempInfo = { ...this.lastTemp };
-    if (now !== this.lastTempAt) {
-      result.ageMs = now - this.lastTempAt;
     }
     const components = this.components.latest();
     if (!this.components.busy && (!components || now - components.at > maxAgeMs)) {
