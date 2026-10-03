@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { PlatformLogger } from '../interface.js';
 
 /**
  * Contract describing native C++ functions exposed by the darwin_telemetry.node N-API module.
@@ -39,7 +40,6 @@ export interface DarwinNativeAddon {
     wiredBytes: number;
     compressedBytes: number;
     inactiveBytes: number;
-    freeBytes: number;
     swapTotalBytes: number;
     swapUsedBytes: number;
     swapFreeBytes: number;
@@ -73,20 +73,21 @@ export interface DarwinNativeAddon {
   /**
    * Returns the latest SoC die, NAND SSD and battery temperatures from IOHIDEventSystemClient.
    *
-   * Sensors are read on a native background thread (~16 ms per pass on an M4), so this call does
-   * not block after the first one: a new pass starts when the latest reading is older than `maxAgeMs`,
-   * and its result is returned by a later call (a value can be up to `maxAgeMs` + one call interval old).
+   * Sensors are read on a native background thread (~16 ms per pass on an M4): a new pass starts when
+   * the latest reading is older than `maxAgeMs`, and its result is returned by a later call (a value can
+   * be up to `maxAgeMs` + one call interval old). Only the first call with a non-zero `maxAgeMs` waits,
+   * up to 250 ms, for the first pass; every other call returns at once (`null` until a pass completes).
    *
-   * @param maxAgeMs - Maximum age of the returned reading before a background refresh is requested (default 5000).
+   * @param maxAgeMs - Maximum age of the returned reading before a background refresh is requested
+   *   (0: request a pass now, never wait).
    * @returns Synthesized thermal metrics in degrees Celsius, or `null` if sensors are inaccessible.
+   * @throws TypeError if `maxAgeMs` is not a number.
    */
-  getDieTemperature(maxAgeMs?: number): {
+  getDieTemperature(maxAgeMs: number): {
     tempCelsius: number;
     peakCelsius: number;
-    peakSensor: string;
+    /** Number of die sensors averaged (smoke test only). */
     dieCount: number;
-    sensorName: string;
-    sensorLabel: string;
     nandCelsius?: number;
     batteryCelsius?: number;
     /** Number of the background pass that produced this reading (1, 2, ...): changes with every new reading. */
@@ -100,42 +101,60 @@ export interface DarwinNativeAddon {
   } | null;
 }
 
+/** Functions the addon must export: a build missing any of them is not used. */
+const ADDON_FUNCTIONS = [
+  'getCpuTicks',
+  'getCpuTopology',
+  'getMemoryStats',
+  'getBatteryStats',
+  'getDieTemperature',
+] as const satisfies readonly (keyof DarwinNativeAddon)[];
+
+/** Whether a loaded module exports every addon function (their signatures cannot be checked). */
+function isDarwinNativeAddon(value: unknown): value is DarwinNativeAddon {
+  return typeof value === 'object' && value !== null &&
+    ADDON_FUNCTIONS.every((name) => typeof (value as Record<string, unknown>)[name] === 'function');
+}
+
 let cachedAddon: DarwinNativeAddon | null = null;
 let loadAttempted = false;
 
 /**
- * Attempts to dynamically load the compiled darwin_telemetry.node N-API addon.
- * Searches typical installation and distribution directories relative to __dirname only
- * (never process.cwd(), which would load a `.node` from whatever workspace is open).
+ * Attempts to dynamically load the compiled darwin_telemetry.node N-API addon from `native/` next to the
+ * bundle (`dist/native/`: __dirname is `dist/`, both in the extension and in the bundled tests), never
+ * from process.cwd(), which would load a `.node` from whatever workspace is open.
+ * Loaded once per process: later calls return the same result.
  *
+ * @param log - Where a missing or unusable addon is reported (the MiraBar output channel).
  * @returns An instance of DarwinNativeAddon if binary is resolved and loaded, otherwise `null`.
  */
-export function loadDarwinNativeAddon(): DarwinNativeAddon | null {
+export function loadDarwinNativeAddon(log: PlatformLogger): DarwinNativeAddon | null {
   if (loadAttempted) {
     return cachedAddon;
   }
   loadAttempted = true;
 
-  const candidatePaths = [
-    path.join(__dirname, 'native/darwin_telemetry.node'),
-    path.join(__dirname, '../native/darwin_telemetry.node'),
-    path.join(__dirname, '../../dist/native/darwin_telemetry.node'),
-    path.join(__dirname, '../../../dist/native/darwin_telemetry.node'),
-  ];
-
-  for (const candidate of candidatePaths) {
-    if (fs.existsSync(candidate)) {
-      try {
-        // Use non-sandboxed require to load compiled .node dynamic library
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        cachedAddon = require(candidate) as DarwinNativeAddon;
-        return cachedAddon;
-      } catch (err) {
-        console.warn(`[MiraBar] Failed to load native addon at ${candidate}:`, err);
-      }
-    }
+  const addonPath = path.join(__dirname, 'native/darwin_telemetry.node');
+  if (!fs.existsSync(addonPath)) {
+    log.warn(`Native addon not found at ${addonPath}; using the Node.js fallback (no temperature, no battery).`);
+    return null;
   }
+  try {
+    // Use non-sandboxed require to load compiled .node dynamic library
+    const addon: unknown = require(addonPath);
+    if (!isDarwinNativeAddon(addon)) {
+      log.warn(`Native addon at ${addonPath} does not export ${ADDON_FUNCTIONS.join(', ')}; using the Node.js fallback.`);
+      return null;
+    }
+    cachedAddon = addon;
+    return cachedAddon;
+  } catch (err) {
+    log.warn(`Failed to load the native addon at ${addonPath}; using the Node.js fallback: ${describeError(err)}`);
+    return null;
+  }
+}
 
-  console.warn('[MiraBar] darwin_telemetry.node not found; using Node.js fallback providers.');
-  return null;
+/** Message of a thrown value, for the log. */
+export function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

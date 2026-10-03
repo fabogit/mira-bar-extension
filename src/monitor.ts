@@ -75,7 +75,8 @@ export class ResourceMonitor implements vscode.Disposable {
   private diskInFlight = 0;
   /** Last error logged per section: each distinct error is logged once in a row. */
   private readonly lastErrors: Partial<Record<TooltipSection, string>> = {};
-  private readonly isDarwin = process.platform === 'darwin';
+  /** The provider reports the system load instead of the CPU frequency (labels, load format option). */
+  private readonly isDarwin: boolean;
 
   constructor(
     private readonly provider: TelemetryPlatformProvider,
@@ -83,6 +84,7 @@ export class ResourceMonitor implements vscode.Disposable {
     private readonly log: vscode.LogOutputChannel,
     private config: MiraBarConfig
   ) {
+    this.isDarwin = provider.platformName === 'darwin';
     this.provider.setComponentSensors?.(config.componentSensors);
     this.items = this.createItems();
     this.run(true);
@@ -115,7 +117,7 @@ export class ResourceMonitor implements vscode.Disposable {
       this.disposeItems();
       this.items = this.createItems();
     } else if (this.settingsItem) {
-      this.settingsItem.tooltip = trustedMarkdown(buildSettingsTooltip(next));
+      this.settingsItem.tooltip = trustedMarkdown(buildSettingsTooltip(next, this.isDarwin));
     }
     this.run(true);
   }
@@ -157,7 +159,7 @@ export class ResourceMonitor implements vscode.Disposable {
       this.settingsItem.text = '$(settings-gear)';
       this.settingsItem.command = 'mirabar.openSettings';
       this.settingsItem.name = 'MiraBar Settings';
-      this.settingsItem.tooltip = trustedMarkdown(buildSettingsTooltip(config));
+      this.settingsItem.tooltip = trustedMarkdown(buildSettingsTooltip(config, this.isDarwin));
       this.settingsItem.show();
     }
     for (const section of TOOLTIP_SECTIONS) {
@@ -419,10 +421,9 @@ function trustedMarkdown(value: string): vscode.MarkdownString {
 /**
  * Tooltip of the settings (gear) widget, as two tables: the sections (shown, status bar and tooltip
  * intervals in effect, in status bar order) and the display options with one-click toggles, plus a
- * link to the full panel.
+ * link to the full panel. `isDarwin`: the provider reports the system load (TelemetryPlatformProvider.platformName).
  */
-export function buildSettingsTooltip(config: MiraBarConfig): string {
-  const isDarwin = process.platform === 'darwin';
+export function buildSettingsTooltip(config: MiraBarConfig, isDarwin: boolean): string {
   const mode = config.tooltipMode;
   const shown: Record<TooltipSection, boolean> = {
     cpu: config.showCpuUsage,
