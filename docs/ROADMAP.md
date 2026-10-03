@@ -23,7 +23,8 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 | 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | — |
 | 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | Per-platform minimums |
 | 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, released in 1.2.0 | Marketplace publishing |
-| 2 – Linux modernization & parity (v1.3.0) | Linux | Done, released in 1.3.0; verified on a Linux laptop | Thread latency of cpufreq and battery (#40); checks on a desktop and on battery |
+| 2 – Linux modernization & parity (v1.3.0) | Linux | Done, released in 1.3.0; verified on a Linux laptop | Checks on battery (real discharge, battery `temp` file); VSIX on the desktop |
+| 2.1 – Codebase polish & Linux read latency (v1.3.1) | All (Linux for #40) | Planned (audits 2026-10-03), milestone [v1.3.1](https://github.com/fabogit/mira-bar-extension/milestone/7) | Fixes and refactors #42–#48 |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
 | Cross-platform backlog | All | Planned, unscheduled | Inactive window first (smallest change, also the base for sharing across windows) |
@@ -255,11 +256,52 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 **Follow-ups (Linux):**
 
-- [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) **Thread latency of cpufreq and battery**: p95 238–256 µs and 304–311 µs at 200 ms (401–421 µs and 359–395 µs every 2 s), above the 250 µs target of #5; options: async reads, one cpufreq file per policy, `pread` on open descriptors.
+- [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) **Thread latency of cpufreq and battery**: p95 238–256 µs and 304–311 µs at 200 ms (401–421 µs and 359–395 µs every 2 s), above the 250 µs target of #5; options: async reads, one cpufreq file per policy, `pread` on open descriptors. Scheduled in v1.3.1 (§5b).
 - [x] **Desktop without battery** (2026-10-03, v1.3.0): the whole suite (`typecheck`, `build`, `test:linux`, `test:linux-temp`, `test:linux-battery`, `test:integration`, `test:extension`) passes on a Ryzen 7 3700X desktop (Garuda Linux, kernel 7.2 zen, Node 24 and 26): no battery (widget hidden), `k10temp` Tctl without a critical limit (100 °C shown), one NVMe component sensor. Multiple disks (`mirabar.disk.drives` with the NVMe btrfs root, two SATA SSDs on ntfs3, an 8 TB SATA HDD on exfat, plus a missing path): every mount read, values as `df`, the missing path skipped, *All* and *MostFull* rendered; `statfs` ~12 µs per mount, no device access. Still open: the VSIX in VS Code on that desktop.
 - [x] **SATA drives in standby** (2026-10-03, Garuda): `statfs` and `drivetemp` (SCT Status) leave SSDs and the hard disk in standby; the SMART attributes, `drivetemp`'s fallback without SCT, wake them (hard disk spin-up 9.5 s). SATA temperatures are therefore not read (ADR-0016).
 - [ ] **Battery time on a real discharge**: compare with `upower -i` on battery (the test laptop was held at its charge limit, *Not charging*).
 - [ ] **Battery `temp` file** (#36) on a laptop that exposes it (verified with the mock only).
+
+---
+
+## 5b. Phase 2.1: Codebase Polish & Linux Read Latency (v1.3.1) [PLANNED]
+
+> Milestone: [**`v1.3.1 - Codebase Polish & Linux Read Latency`**](https://github.com/fabogit/mira-bar-extension/milestone/7) • **Status: Open** (Active Target)
+
+The final polish of the 1.x codebase, built from three read-only audits of `develop` @ 87bc81f (source, tests and tooling, documentation; 2026-10-03). Issues carry file:line references to that commit. Work order: fixes and refactors, then #40 on top of the Linux refactor, then tests, CI and build, then the rename, documentation last.
+
+**1. Fixes and refactors**
+
+- [ ] [#42](https://github.com/fabogit/mira-bar-extension/issues/42) **Settings scope**: toggles, panel edits and reset write to the scope that sets the value (today always Global; a workspace value makes the panel snap back).
+- [ ] [#43](https://github.com/fabogit/mira-bar-extension/issues/43) **Settings validation**: every setting validated on read (invalid enums gave `undefined` / wrong units in the status bar); option lists and section labels defined once.
+- [ ] [#44](https://github.com/fabogit/mira-bar-extension/issues/44) **Small bugs**: battery "Condition: Normal" always shown, darwin first-read wait on every call, native loader paths outside the extension folder, panel message queue.
+- [ ] [#45](https://github.com/fabogit/mira-bar-extension/issues/45) **Linux refactor**: shared sysfs helpers, injectable roots in every provider, 60 s rescan when hwmon or the battery was missing at activation.
+- [ ] [#46](https://github.com/fabogit/mira-bar-extension/issues/46) **Provider contract**: unused fields, `platformName`, required `sampleTemp(maxAgeMs)`, log through the MiraBar channel, darwin constructor that cannot fail activation, injectable addon.
+- [ ] [#47](https://github.com/fabogit/mira-bar-extension/issues/47) **Renderers**: duplicated code, named limits, formatting edge cases.
+- [ ] [#48](https://github.com/fabogit/mira-bar-extension/issues/48) **Native addon**: unused `binding.gyp`, header shared with `hid_bench`.
+
+**2. Linux read latency**
+
+- [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) cpufreq and battery reads under 250 µs of thread time: descriptors kept open and read from offset 0, cpufreq per policy, async only if needed; `bench:linux` before and after at the usual load.
+
+**3. Tests, CI and build**
+
+- [ ] [#50](https://github.com/fabogit/mira-bar-extension/issues/50) `node:test`, one runner for the TypeScript tests, `pnpm test`, stricter `vscode` mock.
+- [ ] [#51](https://github.com/fabogit/mira-bar-extension/issues/51) Unit tests for `format`, `sections`, `config`, settings schema and panel.
+- [ ] [#52](https://github.com/fabogit/mira-bar-extension/issues/52) Linux providers against mocked sysfs (k10temp, cpufreq, memory, disk) and the darwin provider with a fake addon.
+- [ ] [#53](https://github.com/fabogit/mira-bar-extension/issues/53) Monitor tests with a fake clock instead of wall-clock sleeps.
+- [ ] [#54](https://github.com/fabogit/mira-bar-extension/issues/54) CI on push and pull requests; release workflow without duplication; tag/version guard.
+- [ ] [#55](https://github.com/fabogit/mira-bar-extension/issues/55) Node >= 22, pinned pnpm, VSIX file allowlist, stricter tsconfig, Biome, F5 watch task.
+- [ ] [#49](https://github.com/fabogit/mira-bar-extension/issues/49) Rename leftovers (`ResourceMonitor`, `TooltipSection`, `CpuTempInfo`), after the other refactors.
+
+**4. Documentation**
+
+- [ ] [#56](https://github.com/fabogit/mira-bar-extension/issues/56) README for new users (support matrix, troubleshooting), development guide in `CONTRIBUTING.md`.
+- [ ] [#57](https://github.com/fabogit/mira-bar-extension/issues/57) ARCHITECTURE, ROADMAP and ADRs corrected (benchmarks table, stale facts, one budget definition).
+- [ ] [#58](https://github.com/fabogit/mira-bar-extension/issues/58) Linux plan and darwin audit archived in `docs/archive/`; measurements in one place.
+- [ ] [#59](https://github.com/fabogit/mira-bar-extension/issues/59) JSDoc pass, stale comments, setting descriptions, CHANGELOG.
+
+Decisions (2026-10-03): Biome as linter and formatter; Node >= 22; rename in 1.3.1; the Linux plan and the darwin audit archived; automatic disk discovery dropped in favour of the disk picker [#41](https://github.com/fabogit/mira-bar-extension/issues/41) (v1.4.0).
 
 ---
 
@@ -282,6 +324,9 @@ What Phases 1.1–1.2 already provide: the platform-independent monitor, rendere
   - AC line status, discharge state, and percentage via `GetSystemPowerStatus`.
 - [ ] [#11](https://github.com/fabogit/mira-bar-extension/issues/11) **Drive Storage**:
   - Enumerate active logical drives and query storage via `GetDiskFreeSpaceExW`.
+- [ ] [#41](https://github.com/fabogit/mira-bar-extension/issues/41) **Disk picker in the settings panel** (cross-platform; uses the drive enumeration of #11 on Windows and `/proc/self/mountinfo` on Linux):
+  - List the detected mounts in the panel (read when it opens, no cost while running); the checked ones go to `mirabar.disk.drives`. Network and removable file systems marked, btrfs subvolumes grouped.
+  - Automatic discovery in the status bar was evaluated and dropped (2026-10-03): on a four-disk desktop it would show 6-7 mounts (`/boot/efi`, btrfs subvolumes) or need guessing filters, and it would pull in network mounts that can hang `statfs`. Duplicates (two paths on one file system) stay the user's choice.
 - [ ] [#12](https://github.com/fabogit/mira-bar-extension/issues/12) **Thermal Telemetry Pragmatic Strategy**:
   - Evaluate non-blocking fallback to `MSAcpi_ThermalZoneTemperature` (WMI) where supported by OEM BIOS.
 - [ ] [#13](https://github.com/fabogit/mira-bar-extension/issues/13) **Windows Packaging & Distribution**:
@@ -310,9 +355,6 @@ Phase 4 externalizes and translates user-facing strings once the underlying tele
 
 Improvements independent of the platform phases; each one gets a milestone when scheduled.
 
-- [ ] [#41](https://github.com/fabogit/mira-bar-extension/issues/41) **Disk picker in the settings panel**:
-  - List the detected mounts in the panel (read when it opens, no cost while running); the checked ones go to `mirabar.disk.drives`. Network and removable file systems marked, btrfs subvolumes grouped.
-  - Automatic discovery in the status bar was evaluated and dropped (2026-10-03): on a four-disk desktop it would show 6-7 mounts (`/boot/efi`, btrfs subvolumes) or need guessing filters, and it would pull in network mounts that can hang `statfs`. Duplicates (two paths on one file system) stay the user's choice.
 - [ ] **Accessibility**:
   - Every status bar item already has a `name` (*MiraBar: CPU usage*, *MiraBar Settings*: the label of the status bar context menu).
   - Add `accessibilityInformation` to every item: a spoken label with the current value instead of the visible text with icons (e.g. "CPU usage 23 percent", "Memory pressure Warning"), updated together with the text; role `button` for items that run a command on click.
