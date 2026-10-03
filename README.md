@@ -31,25 +31,25 @@ This method ensures the extension is installed into your currently active VS Cod
 3. Click the **`...`** (Views and More Actions) menu in the upper-right corner of the Extensions panel.
 4. Select **Install from VSIX...**.
 5. Select the platform-specific package:
-   - macOS Apple Silicon: `mirabar-darwin-arm64-1.2.0.vsix`
-   - Linux x64: `mirabar-linux-x64-1.2.0.vsix`
+   - macOS Apple Silicon: `mirabar-darwin-arm64-1.3.0.vsix`
+   - Linux x64: `mirabar-linux-x64-1.3.0.vsix`
 6. Reload the window (`Developer: Reload Window`) if prompted.
 
 ### Method 2: Command Line Installation
 
 Install for macOS Apple Silicon:
 ```bash
-code --install-extension mirabar-darwin-arm64-1.2.0.vsix
+code --install-extension mirabar-darwin-arm64-1.3.0.vsix
 ```
 
 Install for Linux x64:
 ```bash
-code --install-extension mirabar-linux-x64-1.2.0.vsix
+code --install-extension mirabar-linux-x64-1.3.0.vsix
 ```
 
 For Antigravity-IDE:
 ```bash
-antigravity --install-extension mirabar-darwin-arm64-1.2.0.vsix
+antigravity --install-extension mirabar-darwin-arm64-1.3.0.vsix
 ```
 
 ## Settings Panel
@@ -141,8 +141,8 @@ To provide actionable telemetry without generating inaccurate estimates, MiraBar
 
 ## Project Status & Documentation
 
-- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums are done and verified on an M4 (unreleased, will ship in 1.2.0, the first MiraBar release).
-- **Linux**: works with the same features; the code shared with macOS changed and still needs a check on real hardware, then Linux parity work (Phase 2).
+- **macOS (Apple Silicon)**: memory-safety fixes, per-section refresh and measured minimums, released in 1.2.0 and verified on an M4.
+- **Linux**: parity with macOS released in 1.3.0 (component temperatures, battery time remaining, minimums measured on Linux), verified on an AMD laptop.
 - **Windows**: not started (Phase 3).
 
 | Document | Content |

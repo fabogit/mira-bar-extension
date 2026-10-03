@@ -2,7 +2,9 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/). Decisions behind the changes: [docs/adr/](docs/adr/README.md).
 
-## [Unreleased]
+## [1.3.0] - 2026-10-03
+
+Linux parity (roadmap Phase 2, milestone [v1.3.0](https://github.com/fabogit/mira-bar-extension/milestone/3)): component temperatures, battery time remaining, CPU cold start and refresh minimums measured on Linux.
 
 ### Added
 

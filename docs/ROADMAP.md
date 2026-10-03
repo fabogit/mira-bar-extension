@@ -23,12 +23,12 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 | 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | — |
 | 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | Per-platform minimums |
 | 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, released in 1.2.0 | Marketplace publishing |
-| 2 – Linux modernization & parity (v1.3.0) | Linux | Implemented locally, in verification (2026-10-03) | Local test of the `linux-x64` VSIX, push, close #1 #3 #4 #5 #33–#36, release 1.3.0 |
+| 2 – Linux modernization & parity (v1.3.0) | Linux | Done, released in 1.3.0; verified on a Linux laptop | Thread latency of cpufreq and battery (#40); checks on a desktop and on battery |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
 | Cross-platform backlog | All | Planned, unscheduled | Inactive window first (smallest change, also the base for sharing across windows) |
 
-Phases 1.1 to 1.3 shipped on 2026-10-01 as **1.2.0**, the first MiraBar release ([v1.2.0](https://github.com/fabogit/mira-bar-extension/releases/tag/v1.2.0), VSIX for `darwin-arm64` and `linux-x64` on GitHub Releases; release notes in [CHANGELOG.md](../CHANGELOG.md)). The shared code was checked on macOS (Apple M4) and on a Linux laptop with real sensors, cpufreq and battery before the tag. The Marketplace is not published yet: publisher `fabogit`, a token, then `vsce publish --packagePath <vsix>` for each platform.
+Phase 2 shipped on 2026-10-03 as **1.3.0** ([v1.3.0](https://github.com/fabogit/mira-bar-extension/releases/tag/v1.3.0)). Phases 1.1 to 1.3 shipped on 2026-10-01 as **1.2.0**, the first MiraBar release ([v1.2.0](https://github.com/fabogit/mira-bar-extension/releases/tag/v1.2.0), VSIX for `darwin-arm64` and `linux-x64` on GitHub Releases; release notes in [CHANGELOG.md](../CHANGELOG.md)). The shared code was checked on macOS (Apple M4) and on a Linux laptop with real sensors, cpufreq and battery before the tag. The Marketplace is not published yet: publisher `fabogit`, a token, then `vsce publish --packagePath <vsix>` for each platform.
 
 The name and the `mirabar.*` namespace are set in [ADR-0015](adr/0015-name-and-settings-namespace.md). The first MiraBar release takes 1.2.0, so the later milestones move one minor up: Linux 1.3.0, Windows 1.4.0, localization 1.5.0 (the GitHub milestones were renamed accordingly). Phases 1.1–1.3 are tracked after the fact in the closed milestone [v1.2.0](https://github.com/fabogit/mira-bar-extension/milestone/6) (#37, #38, #39). Beta interval settings removed in 1.2.0 are named without prefix.
 
@@ -216,9 +216,9 @@ Decisions: ADR-0009 (per-section intervals, scheduler), ADR-0010 (minimums from 
 
 ---
 
-## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.3.0) [IN PROGRESS]
+## 5. Phase 2: Linux Telemetry Modernization & Parity (v1.3.0) [COMPLETED]
 
-> Milestone: [**`v1.3.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/mira-bar-extension/milestone/3) • **Status: Open** (Active Target)
+> Milestone: [**`v1.3.0 - Linux Telemetry Modernization & Parity`**](https://github.com/fabogit/mira-bar-extension/milestone/3) • **Status: Closed** (Tag: [`v1.3.0`](https://github.com/fabogit/mira-bar-extension/releases/tag/v1.3.0))
 
 Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectural standard, establishing empirical performance baselines, and verifying telemetry directly on a native Linux workstation. Details and checklist: [`docs/LINUX_IMPLEMENTATION_PLAN.md`](LINUX_IMPLEMENTATION_PLAN.md).
 
@@ -252,6 +252,13 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
   - [x] `mirabar.temperature.componentSensors`: `awake` (default, runtime-suspended devices are not read and shown as *asleep*), `always`, `off` (ADR-0016). On the test laptop no device is ever runtime-suspended (`control` = `on`), so `awake` reads like `always`; an awake NVMe still leaves its deepest APST state briefly on each read.
 - [x] [#6](https://github.com/fabogit/mira-bar-extension/issues/6) **Cross-Platform Dual-Runner CI/CD**:
   - Configured `.github/workflows/release.yml` with decoupled dual-runner matrix (`macos-14` + `ubuntu-latest`), hardened least-privilege permissions, concurrency controls, and `workflow_dispatch` manual build testing.
+
+**Follow-ups (Linux):**
+
+- [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) **Thread latency of cpufreq and battery**: p95 238–256 µs and 304–311 µs at 200 ms (401–421 µs and 359–395 µs every 2 s), above the 250 µs target of #5; options: async reads, one cpufreq file per policy, `pread` on open descriptors.
+- [ ] **Desktop without battery**: `test:linux` and the VSIX on a desktop (battery hidden, hwmon temperature found).
+- [ ] **Battery time on a real discharge**: compare with `upower -i` on battery (the test laptop was held at its charge limit, *Not charging*).
+- [ ] **Battery `temp` file** (#36) on a laptop that exposes it (verified with the mock only).
 
 ---
 
