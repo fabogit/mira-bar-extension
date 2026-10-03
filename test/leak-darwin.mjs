@@ -1,7 +1,7 @@
 // Leak & cost probe for the native darwin_telemetry.node addon.
 //
 // Calls every exported native function in a tight loop and reports, per function:
-//   - average cost per call (µs)             -> how much each tick blocks the Extension Host thread
+//   - average cost per call (µs)             -> how long each call blocks the Extension Host thread
 //   - RSS growth across batches (after GC)   -> growth in every batch after the warm-up = native leak
 //   - Mach port refs of this process (lsmp)   -> growth of the "host" send right = mach_host_self() leak
 //

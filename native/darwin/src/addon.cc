@@ -34,24 +34,11 @@
 #include <utility>
 #include <vector>
 
-extern "C" {
-typedef struct __IOHIDEvent *IOHIDEventRef;
-typedef struct __IOHIDServiceClient *IOHIDServiceClientRef;
-typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
-
-#define IOHIDEventFieldBase(type) ((type) << 16)
-#define kIOHIDEventTypeTemperature 15
-
-IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(CFAllocatorRef allocator);
-int IOHIDEventSystemClientSetMatching(IOHIDEventSystemClientRef client, CFDictionaryRef match);
-CFArrayRef IOHIDEventSystemClientCopyServices(IOHIDEventSystemClientRef client);
-CFTypeRef IOHIDServiceClientCopyProperty(IOHIDServiceClientRef service, CFStringRef key);
-IOHIDEventRef IOHIDServiceClientCopyEvent(IOHIDServiceClientRef service, int64_t type, int32_t options, int64_t matching);
-double IOHIDEventGetFloatValue(IOHIDEventRef event, int32_t field);
-}
+#include "iohid.h"
 
 namespace {
 
+using mirabar::SensorKind;
 using Clock = std::chrono::steady_clock;
 
 // ---------------------------------------------------------------------------
@@ -272,8 +259,6 @@ class JsObject {
 // Per-env addon state
 // ---------------------------------------------------------------------------
 
-enum class SensorKind { Die, Nand, Battery };
-
 struct Sensor {
   IOHIDServiceClientRef service;  // non-owning: kept alive by ThermalHid::services_
   SensorKind kind;
@@ -344,6 +329,8 @@ class ThermalHid {
         case SensorKind::Battery:
           if (reading.battery_celsius < 0.0) reading.battery_celsius = ReadCelsius(sensor.service);
           break;
+        case SensorKind::Other:  // never stored (see EnsureSensors)
+          break;
       }
     }
 
@@ -410,15 +397,11 @@ class ThermalHid {
       char name[128] = {0};
       if (!GetUtf8(product.get(), name, sizeof(name))) continue;
 
-      // tdev/tcal/als sensors are skipped: they are not SoC die readings (and cost ~1.5 ms each).
-      if (std::strstr(name, "tdie") != nullptr) {
-        sensors_.push_back({service, SensorKind::Die});
-        has_die = true;
-      } else if (std::strstr(name, "NAND") != nullptr || std::strstr(name, "nand") != nullptr) {
-        sensors_.push_back({service, SensorKind::Nand});
-      } else if (std::strstr(name, "gas gauge") != nullptr || std::strstr(name, "battery") != nullptr) {
-        sensors_.push_back({service, SensorKind::Battery});
-      }
+      // tdev/tcal/als sensors (Other) are skipped: they are not SoC die readings (and cost ~1.5 ms each).
+      const SensorKind kind = mirabar::ClassifySensor(name);
+      if (kind == SensorKind::Other) continue;
+      sensors_.push_back({service, kind});
+      has_die = has_die || kind == SensorKind::Die;
     }
 
     if (!has_die) {

@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUT_DIR="${ROOT_DIR}/dist/native"
 mkdir -p "${OUT_DIR}"
 
-NODE_EXEC="$(which node)"
+NODE_EXEC="$(command -v node)"
 NODE_PREFIX="$(dirname "$(dirname "${NODE_EXEC}")")"
 NODE_INCLUDE="${NODE_PREFIX}/include/node"
 

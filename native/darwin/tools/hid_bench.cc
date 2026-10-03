@@ -3,6 +3,7 @@
 // Standalone diagnostic, not part of the addon. Build and run on the Mac:
 //   clang++ -std=c++17 -O2 -framework CoreFoundation -framework IOKit \
 //     native/darwin/tools/hid_bench.cc -o /tmp/hid_bench && /tmp/hid_bench [rounds]
+// (the IOHID declarations and the sensor classification come from ../src/iohid.h, shared with the addon)
 //
 // Reports, per sensor, the min / median / max latency of IOHIDServiceClientCopyEvent, then the
 // cost per category (tdie / NAND / battery / other) of one full pass, and the one-off setup costs
@@ -14,25 +15,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <vector>
 
-extern "C" {
-typedef struct __IOHIDEvent *IOHIDEventRef;
-typedef struct __IOHIDServiceClient *IOHIDServiceClientRef;
-typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
-
-#define IOHIDEventFieldBase(type) ((type) << 16)
-#define kIOHIDEventTypeTemperature 15
-
-IOHIDEventSystemClientRef IOHIDEventSystemClientCreate(CFAllocatorRef allocator);
-int IOHIDEventSystemClientSetMatching(IOHIDEventSystemClientRef client, CFDictionaryRef match);
-CFArrayRef IOHIDEventSystemClientCopyServices(IOHIDEventSystemClientRef client);
-CFTypeRef IOHIDServiceClientCopyProperty(IOHIDServiceClientRef service, CFStringRef key);
-IOHIDEventRef IOHIDServiceClientCopyEvent(IOHIDServiceClientRef service, int64_t type, int32_t options, int64_t matching);
-double IOHIDEventGetFloatValue(IOHIDEventRef event, int32_t field);
-}
+#include "../src/iohid.h"
 
 namespace {
 
@@ -42,7 +28,7 @@ double ElapsedUs(Clock::time_point start) {
   return std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 }
 
-enum class Kind { Die, Nand, Battery, Other };
+using Kind = mirabar::SensorKind;
 
 const char* KindName(Kind kind) {
   switch (kind) {
@@ -52,14 +38,6 @@ const char* KindName(Kind kind) {
     case Kind::Other: return "other";
   }
   return "?";
-}
-
-// Same classification as addon.cc.
-Kind Classify(const char* name) {
-  if (std::strstr(name, "tdie") != nullptr) return Kind::Die;
-  if (std::strstr(name, "NAND") != nullptr || std::strstr(name, "nand") != nullptr) return Kind::Nand;
-  if (std::strstr(name, "gas gauge") != nullptr || std::strstr(name, "battery") != nullptr) return Kind::Battery;
-  return Kind::Other;
 }
 
 struct Sensor {
@@ -122,7 +100,7 @@ int main(int argc, char** argv) {
       }
       CFRelease(product);
     }
-    sensors.push_back({service, name, Classify(name), {}, -1.0, 0});
+    sensors.push_back({service, name, mirabar::ClassifySensor(name), {}, -1.0, 0});
   }
   const double names_us = ElapsedUs(t);
 

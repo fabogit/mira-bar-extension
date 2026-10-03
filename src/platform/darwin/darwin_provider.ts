@@ -24,7 +24,7 @@ const TICK_STATES = 4;
 
 /**
  * Minimum ticks per core between two CPU samples (~50 ms at the 100 Hz Mach tick rate).
- * Closer samples (activation, forced refresh right after a tick) would read 0% or 100% per core,
+ * Closer samples (activation, forced refresh right after a read) would read 0% or 100% per core,
  * so they return the previous result and keep accumulating the baseline instead.
  */
 const MIN_TICKS_PER_CORE = 5;
@@ -414,7 +414,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
   }
 
   /**
-   * Checks whether battery hardware is present, without querying IOKit on every tick.
+   * Checks whether battery hardware is present, without querying IOKit on every read.
    *
    * The result is cached; a missing battery is re-probed at most every BATTERY_RECHECK_MS.
    *
