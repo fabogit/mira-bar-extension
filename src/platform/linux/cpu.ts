@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { CpuUsageInfo } from '../../types.js';
 
 /**
@@ -31,17 +32,19 @@ const MIN_TICKS_PER_CORE = 5;
  * - Sparse array hole protection against CPU core parking / hotplugging.
  */
 export class CpuProvider {
+  private readonly statPath: string;
   private prevOverall: CoreStat | null = null;
-  private prevCores: Map<number, CoreStat> = new Map();
+  private readonly prevCores: Map<number, CoreStat> = new Map();
   private lastResult: CpuUsageInfo = { overallPercent: 0, perCorePercent: [] };
 
   /**
    * Primes the tick baseline so the first sample after activation already has a delta, and the
    * result before that delta carries the core count (all cores at 0%) rather than an empty array.
    *
-   * @param statPath - Path of the kernel CPU statistics file (tests pass a mocked file).
+   * @param procRoot - Root of the procfs tree (tests pass a mocked tree).
    */
-  constructor(private readonly statPath = '/proc/stat') {
+  constructor(procRoot = '/proc') {
+    this.statPath = path.join(procRoot, 'stat');
     this.sample();
   }
 

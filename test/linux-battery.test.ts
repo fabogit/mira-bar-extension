@@ -1,6 +1,7 @@
 // Linux battery time remaining against a mocked sysfs tree (#3): driver estimates, energy over power,
 // charge over current (signed or not), states without a time, zero or missing rates, implausible
-// values, several batteries, and the tooltip row.
+// values, several batteries, discovery (system batteries only, rescan while none is found, #45), and
+// the tooltip row.
 //
 // Usage (any OS):  pnpm run test:linux-battery (bundled with the vscode mock: sections.ts imports config.ts)
 import assert from 'node:assert/strict';
@@ -27,14 +28,14 @@ function write(root: string, bat: string, files: Files): void {
 }
 
 /** A fresh sysfs tree with the given batteries, and a provider that discovered it. */
-function setup(batteries: Record<string, Files>): { root: string; provider: BatteryProvider } {
+function setup(batteries: Record<string, Files>, now?: () => number): { root: string; provider: BatteryProvider } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mirabar-sysfs-'));
   roots.push(root);
   write(root, 'ACAD', { type: 'Mains', online: 0 });
   for (const [name, files] of Object.entries(batteries)) {
     write(root, name, { type: 'Battery', ...files });
   }
-  return { root, provider: new BatteryProvider(root) };
+  return { root, provider: new BatteryProvider(root, now) };
 }
 
 /** Energy-reporting battery (µWh, µW): 40 of 50 Wh. */
@@ -133,6 +134,28 @@ function run(): void {
   ({ provider } = setup({ BAT0: energy('Full'), BAT1: energy('Not charging') }));
   assert.equal(provider.sample()!.status, 'Not charging');
   step('several batteries');
+
+  // Discovery by type, not by name: a fuel gauge battery counts, a mouse battery (scope Device) does not.
+  ({ provider } = setup({
+    'bq27500-0': charge('Discharging', { current_now: 1_380_000 }),
+    hidpp_battery_0: { scope: 'Device', status: 'Discharging', capacity: 5 },
+  }));
+  info = provider.sample()!;
+  assert.deepEqual([info.percent, info.timeRemainingMinutes], [75, 120], 'the mouse battery is not averaged in');
+  step('system batteries only (type Battery, scope not Device)');
+
+  // No battery at activation (inserted or driver loaded later): rescanned at most once a minute.
+  let now = 1_000_000;
+  ({ root, provider } = setup({}, () => now));
+  assert.equal(provider.isAvailable, false);
+  write(root, 'BAT0', { type: 'Battery', ...energy('Discharging', { power_now: 10_000_000 }) });
+  now += 59_999;
+  assert.equal(provider.isAvailable, false, 'no rescan before 60 s');
+  assert.equal(provider.sample(), null);
+  now += 1;
+  assert.equal(provider.isAvailable, true);
+  assert.equal(time(provider), 240);
+  step('battery appearing after activation found by the rescan (#45)');
 
   // Tooltip row: same field and rendering as macOS.
   const ctx = { config: {} as MiraBarConfig, updatedAt: '12:00:00' };
