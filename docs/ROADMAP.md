@@ -256,7 +256,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 **Follow-ups (Linux):**
 
 - [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) **Thread latency of cpufreq and battery**: p95 238–256 µs and 304–311 µs at 200 ms (401–421 µs and 359–395 µs every 2 s), above the 250 µs target of #5; options: async reads, one cpufreq file per policy, `pread` on open descriptors.
-- [ ] **Desktop without battery**: `test:linux` and the VSIX on a desktop (battery hidden, hwmon temperature found).
+- [x] **Desktop without battery** (2026-10-03, v1.3.0): the whole suite (`typecheck`, `build`, `test:linux`, `test:linux-temp`, `test:linux-battery`, `test:integration`, `test:extension`) passes on a Ryzen 7 3700X desktop (Garuda Linux, kernel 7.2 zen, Node 24 and 26): no battery (widget hidden), `k10temp` Tctl without a critical limit (100 °C shown), one NVMe component sensor. Multiple disks (`mirabar.disk.drives` with the NVMe btrfs root, two SATA SSDs on ntfs3, an 8 TB SATA HDD on exfat, plus a missing path): every mount read, values as `df`, the missing path skipped, *All* and *MostFull* rendered; `statfs` ~12 µs per mount, no device access. Still open: the VSIX in VS Code on that desktop.
 - [ ] **Battery time on a real discharge**: compare with `upower -i` on battery (the test laptop was held at its charge limit, *Not charging*).
 - [ ] **Battery `temp` file** (#36) on a laptop that exposes it (verified with the mock only).
 

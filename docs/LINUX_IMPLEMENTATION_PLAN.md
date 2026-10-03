@@ -195,7 +195,7 @@ When testing and developing on the Linux PC, execute the following steps in sequ
 - [x] Decouple `DiskProvider` in [`src/disk/disk_provider.ts`](../src/disk/disk_provider.ts) and remove obsolete `src/providers/`.
 - [x] Make [`test/integration.ts`](../test/integration.ts) platform-agnostic using `createPlatformProvider()`.
 - [ ] Run `pnpm run test:linux` on Linux machine:
-  - Desktop Linux (verify battery gracefully disabled, hwmon temp detected). Not done yet.
+  - [x] Desktop Linux (verify battery gracefully disabled, hwmon temp detected): Ryzen 7 3700X, Garuda Linux, 2026-10-03.
   - [x] Laptop Linux (verify battery percentage, health, cycles); time remaining waits for #3.
 - [x] Run extension in VS Code / Antigravity-IDE debug host (`F5`) on Linux to verify:
   - Status bar widget rendering without horizontal jitter.
