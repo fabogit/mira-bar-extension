@@ -5,13 +5,15 @@
  */
 import { UNIT_DIVISORS, type MiraBarConfig, type TooltipSection } from './config.js';
 import {
+  barCell,
   formatBytes,
   formatMinutes,
   padNum,
-  renderBar,
+  renderCoreList,
   renderDynamicAsciiTable,
   renderMonospaceTable,
   type ColumnDef,
+  type CoreLoad,
 } from './format.js';
 import type { BatteryInfo, CpuTempInfo, CpuUsageInfo, DiskDriveInfo, FreqOrLoadInfo, MemoryInfo } from './types.js';
 
@@ -59,9 +61,24 @@ export function tooltipFooter(updatedAt: string): string[] {
 /** Limit of the CPU row when the kernel exposes no trip point, and bar scale of sensors without limits. */
 const DEFAULT_TEMP_LIMIT_C = 100;
 
-/** Bar plus right-aligned percentage, as used in every tooltip table. */
-function barCell(pct: number): string {
-  return `${renderBar(pct, 6, false)}  ${pct.toFixed(1).padStart(5, ' ')}%`;
+/** Limits of the macOS rows, which come without thresholds: SoC die (peak and average), NAND flash, battery cell. */
+const DARWIN_SOC_DIE_LIMIT_C = 100;
+const DARWIN_NAND_LIMIT_C = 75;
+const DARWIN_BATTERY_CELL_LIMIT_C = 45;
+
+/** Per-core tables from this many cores on are split into two side-by-side columns. */
+const TWO_COLUMN_MIN_CORES = 4;
+
+/**
+ * Splits per-core rows into a left and a right column (the left one longer when odd), or keeps them
+ * all on the left below TWO_COLUMN_MIN_CORES.
+ */
+function splitColumns<T>(items: T[]): [T[], T[]] {
+  if (items.length < TWO_COLUMN_MIN_CORES) {
+    return [items, []];
+  }
+  const mid = Math.ceil(items.length / 2);
+  return [items.slice(0, mid), items.slice(mid)];
 }
 
 /** CPU usage: overall percentage; tooltip with cluster summary and per-core breakdown. */
@@ -100,8 +117,8 @@ export function renderCpu(cpu: CpuUsageInfo, ctx: RenderContext, withTooltip: bo
 
   const isTable = ctx.config.cpuTooltipLayout === 'Table';
   if (hasCoreTypes) {
-    const pCores: { label: string; pct: number }[] = [];
-    const eCores: { label: string; pct: number }[] = [];
+    const pCores: CoreLoad[] = [];
+    const eCores: CoreLoad[] = [];
     cpu.perCorePercent.forEach((pct, idx) => {
       if (cpu.coreTypes![idx] === 'P') {
         pCores.push({ label: `P${idx}`, pct });
@@ -113,33 +130,18 @@ export function renderCpu(cpu: CpuUsageInfo, ctx: RenderContext, withTooltip: bo
       lines.push(...renderMonospaceTable('Performance Cores', 'Efficiency Cores', pCores, eCores));
     } else {
       if (pCores.length > 0) {
-        lines.push('#### Performance Cores');
-        for (const p of pCores) {
-          lines.push(`- **Core ${p.label}**: ${renderBar(p.pct, 6)} ${padNum(p.pct.toFixed(1), 5)}%`);
-        }
+        lines.push('#### Performance Cores', ...renderCoreList(pCores));
       }
       if (eCores.length > 0) {
-        lines.push('#### Efficiency Cores');
-        for (const e of eCores) {
-          lines.push(`- **Core ${e.label}**: ${renderBar(e.pct, 6)} ${padNum(e.pct.toFixed(1), 5)}%`);
-        }
+        lines.push('#### Efficiency Cores', ...renderCoreList(eCores));
       }
     }
   } else if (coreCount > 0) {
-    if (isTable && coreCount >= 4) {
-      const mid = Math.ceil(coreCount / 2);
-      const left: { label: string; pct: number }[] = [];
-      const right: { label: string; pct: number }[] = [];
-      for (let idx = 0; idx < coreCount; idx++) {
-        (idx < mid ? left : right).push({ label: `C${idx}`, pct: cpu.perCorePercent[idx]! });
-      }
+    const [left, right] = splitColumns(cpu.perCorePercent.map((pct, idx) => ({ label: `C${idx}`, pct })));
+    if (isTable && right.length > 0) {
       lines.push(...renderMonospaceTable('Cluster 0', 'Cluster 1', left, right));
     } else {
-      lines.push('*Per-Core Utilization:*');
-      for (let idx = 0; idx < coreCount; idx++) {
-        const pct = cpu.perCorePercent[idx]!;
-        lines.push(`- **Core ${idx}**: ${renderBar(pct, 6)} ${padNum(pct.toFixed(1), 5)}%`);
-      }
+      lines.push('*Per-Core Utilization:*', ...renderCoreList(cpu.perCorePercent.map((pct, idx) => ({ label: String(idx), pct }))));
     }
   }
   lines.push(...tooltipFooter(ctx.updatedAt));
@@ -151,7 +153,8 @@ export function renderFreqOrLoad(info: FreqOrLoadInfo, ctx: RenderContext, withT
   const config = ctx.config;
   if (info.kind === 'load') {
     const load = info.data;
-    const pct = (v: number): number => Math.min(100, Math.max(0, (v / load.totalCores) * 100));
+    // No core count (the os.cpus() fallback can be empty): 0% rather than NaN.
+    const pct = (v: number): number => (load.totalCores > 0 ? Math.min(100, Math.max(0, (v / load.totalCores) * 100)) : 0);
     const pct1 = pct(load.load1);
     const text =
       config.loadFormat === 'Percent' ? `$(dashboard) ${padNum(pct1.toFixed(1), 5)}% L` : `$(dashboard) ${padNum(load.load1.toFixed(2), 4)} L`;
@@ -200,24 +203,15 @@ export function renderFreqOrLoad(info: FreqOrLoadInfo, ctx: RenderContext, withT
     ),
   ];
   if (freq.perCoreHz.length > 0) {
-    const cores = freq.perCoreHz;
-    const split = cores.length >= 4;
-    const mid = split ? Math.ceil(cores.length / 2) : cores.length;
+    const [left, right] = splitColumns(freq.perCoreHz.map((hz, i) => [`C${i}`, fmt(hz)]));
     const cols: ColumnDef[] = [
       { header: 'Core', align: 'left' },
       { header: 'Clock', align: 'right' },
     ];
-    const rows: string[][] = [];
-    for (let i = 0; i < mid; i++) {
-      const row = [`C${i}`, fmt(cores[i]!)];
-      if (split) {
-        const j = i + mid;
-        row.push(j < cores.length ? `C${j}` : '', j < cores.length ? fmt(cores[j]!) : '');
-      }
-      rows.push(row);
-    }
-    if (split) {
+    let rows = left;
+    if (right.length > 0) {
       cols.push({ header: 'Core', align: 'left' }, { header: 'Clock', align: 'right' });
+      rows = left.map((cells, i) => [...cells, ...(right[i] ?? ['', ''])]);
     }
     lines.push('', '*Per-Core Clock:*', ...renderDynamicAsciiTable(cols, rows));
   }
@@ -248,12 +242,15 @@ export function renderTemp(temp: CpuTempInfo, ctx: RenderContext, withTooltip: b
   const aboveMax: string[] = [];
   const asleep: string[] = [];
   if (temp.peakCelsius !== undefined) {
-    rows.push(row('SoC Die Peak', temp.peakCelsius, 100), row('SoC Die Average', temp.tempCelsius, 100));
+    rows.push(
+      row('SoC Die Peak', temp.peakCelsius, DARWIN_SOC_DIE_LIMIT_C),
+      row('SoC Die Average', temp.tempCelsius, DARWIN_SOC_DIE_LIMIT_C)
+    );
     if (temp.nandCelsius !== undefined && temp.nandCelsius > 0) {
-      rows.push(row('NAND Flash SSD', temp.nandCelsius, 75));
+      rows.push(row('NAND Flash SSD', temp.nandCelsius, DARWIN_NAND_LIMIT_C));
     }
     if (temp.batteryCelsius !== undefined && temp.batteryCelsius > 0) {
-      rows.push(row('Battery Cell', temp.batteryCelsius, 45));
+      rows.push(row('Battery Cell', temp.batteryCelsius, DARWIN_BATTERY_CELL_LIMIT_C));
     }
   } else {
     rows.push(row('CPU Package', temp.tempCelsius, temp.critCelsius ?? DEFAULT_TEMP_LIMIT_C));
