@@ -182,12 +182,12 @@ When testing and developing on the Linux PC, execute the following steps in sequ
 - [x] If all good: push `develop` (Phases 1.1 and 1.2). Done: released as 1.2.0 on 2026-10-01.
 
 ### Phase 2: Implementation of Linux Parity
-- [ ] **CPU Cold-Start**: Edit [`src/platform/linux/cpu.ts`](../src/platform/linux/cpu.ts) to pre-sample in constructor.
+- [x] **CPU Cold-Start** (#1): [`src/platform/linux/cpu.ts`](../src/platform/linux/cpu.ts) primes in the constructor; second read 500 ms after activation (`src/monitor.ts`).
 - [x] **Frequency Monospace Table** (#2, shipped in 1.2.0): Average/Peak table and per-core table in `renderFreqOrLoad` ([`src/sections.ts`](../src/sections.ts)).
-- [ ] **Linux refresh minimums**: measure the read cost of each Linux source (procfs, sysfs, hwmon, power_supply) and `pnpm run bench:extension` on Linux, then make `MEASURED_MIN_STATUS_BAR_MS` per platform with the ADR-0010 rule.
-- [ ] **Battery Time Remaining**: Edit [`src/platform/linux/battery.ts`](../src/platform/linux/battery.ts) to parse `power_now`/`current_now`/`time_to_empty_now`.
+- [x] **Linux refresh minimums** (#5): `pnpm run bench:linux` and `bench:extension`; `MEASURED_MIN_STATUS_BAR_MS` per platform (Linux: temperature 900 ms, frequency 400 ms, battery 300 ms, the rest 200 ms; ADR-0010).
+- [x] **Battery Time Remaining** (#3): [`src/platform/linux/battery.ts`](../src/platform/linux/battery.ts), `test:linux-battery`; a real discharge is still to be checked on the laptop.
 - [x] **Thermal Limits**: [`src/platform/linux/cputemp.ts`](../src/platform/linux/cputemp.ts) reads `temp*_crit`/`temp*_max` and the thermal zone `critical` trip point.
-- [x] **Component temperatures** (NVMe, RAM, Wi-Fi, battery): [`src/platform/linux/components.ts`](../src/platform/linux/components.ts), read asynchronously (ADR-0016).
+- [x] **Component temperatures** (NVMe, RAM, Wi-Fi, battery): [`src/platform/linux/components.ts`](../src/platform/linux/components.ts), read asynchronously (ADR-0016); `mirabar.temperature.componentSensors` avoids waking runtime-suspended devices.
 
 ### Phase 3: Test Suite & Local Verification
 - [x] Create `test/smoke-linux.ts` asserting all providers.

@@ -14,7 +14,7 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 
 * **Decisions**: the reasons behind the architecture are recorded as ADRs in [`docs/adr/`](adr/README.md).
 
-### Status at a glance (2026-10-01)
+### Status at a glance (2026-10-03)
 
 | Phase | Platform | Status | Next step |
 | :--- | :--- | :--- | :--- |
@@ -23,7 +23,7 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 | 1.1 – Darwin memory safety & native refactor (v1.2.0) | macOS (shared code) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | — |
 | 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | Per-platform minimums |
 | 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, released in 1.2.0 | Marketplace publishing |
-| 2 – Linux modernization & parity (v1.3.0) | Linux | In progress (temperature sensors done) | Battery time (#3), cold start (#1), benchmarks and per-platform minimums (#5) |
+| 2 – Linux modernization & parity (v1.3.0) | Linux | Implemented locally, in verification (2026-10-03) | Local test of the `linux-x64` VSIX, push, close #1 #3 #4 #5 #33–#36, release 1.3.0 |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
 | Cross-platform backlog | All | Planned, unscheduled | Inactive window first (smallest change, also the base for sharing across windows) |
@@ -226,27 +226,30 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 - [x] On a Linux machine with real sensors (AMD laptop: `k10temp`, `nvme`, cpufreq on 16 threads, battery): `pnpm run typecheck`, `test:linux`, `test:integration`, `test:extension`, `package:linux-x64`; install the VSIX and check the status bar, the settings panel, the gear tooltip, Static/Live tooltips.
 - [x] Linux-specific code changed in Phase 1.1/1.2: `cpufreq` skips cores without `scaling_cur_freq` and rescans every 60 s; temperature is cached per interval and reports `sampleSeq` / `ageMs`. Check on hardware with cpufreq and hwmon, and on a laptop (battery).
-- [ ] **Per-platform refresh minimums** (ADR-0010): the minimums are macOS measurements applied everywhere (temperature 8400 ms). Measure Linux with `bench:extension` plus a Linux source bench (sysfs/procfs read cost), and make `MEASURED_MIN_STATUS_BAR_MS` per platform.
+- [x] **Per-platform refresh minimums** (ADR-0010): `MEASURED_MIN_STATUS_BAR_MS` keyed by platform. Linux measured with `bench:linux` and `bench:extension` on a Ryzen 7 7840U (2026-10-03): temperature 900 ms (component pass counted in full), CPU frequency 400 ms, battery 300 ms, the rest 200 ms; ~0.24% of one core at the defaults (macOS 0.49%). macOS unchanged; unmeasured platforms take the highest value per section. The machine was not idle, so the system-wide figure stayed within the noise: repeat on an idle machine.
 - [x] **CI**: `test:extension` runs in both release jobs; the release notes come from the CHANGELOG section of the tag; a `prerelease` input (or a tag suffix such as `-rc.1`) publishes a pre-release.
 
 **Linux parity items:**
 
-- [ ] [#1](https://github.com/fabogit/mira-bar-extension/issues/1) **CPU Cold-Start Synchronization (Tick 0)**:
-  - Pre-sample `/proc/stat` in constructor of `CpuProvider` to prime tick counters immediately.
+- [x] [#1](https://github.com/fabogit/mira-bar-extension/issues/1) **CPU Cold-Start Synchronization (Tick 0)**:
+  - `CpuProvider` primes `/proc/stat` in its constructor (every core listed from the first tooltip); reads closer than ~50 ms keep the previous result, as on macOS; the monitor takes the second CPU read 500 ms after activation.
 - [x] [#2](https://github.com/fabogit/mira-bar-extension/issues/2) **CPU Frequency Monospace Table Layout**:
   - Done in 1.2.0: Average/Peak table and a two-column-pair per-core table in the frequency tooltip (`src/sections.ts`).
-- [ ] [#3](https://github.com/fabogit/mira-bar-extension/issues/3) **Battery Autonomy & Time Remaining**:
-  - Parse sysfs `power_now` / `current_now` and `time_to_empty_now` / `time_to_full_now` to calculate `timeRemainingMinutes`.
+- [x] [#3](https://github.com/fabogit/mira-bar-extension/issues/3) **Battery Autonomy & Time Remaining**:
+  - `timeRemainingMinutes` from `time_to_empty_now` / `time_to_full_now` (single battery), else energy over `power_now` or charge over `current_now` (absolute value), capped at 48 h; none when Full / Not charging / Unknown. The battery state is now the kernel's (was *Discharging* by default).
+  - Verified with mocked sysfs trees (`test:linux-battery`); on the test laptop only the *Not charging* state (held at its charge limit on AC): check a real discharge on battery.
 - [x] [#4](https://github.com/fabogit/mira-bar-extension/issues/4) **Dynamic Hardware Thermal Trip Points**:
   - CPU limit from `temp*_crit`, else `temp*_max`, or the thermal zone `critical` trip point (`critCelsius`); 100 °C when the kernel exposes none (`k10temp` on the test laptop).
-- [ ] [#5](https://github.com/fabogit/mira-bar-extension/issues/5) **Empirical Benchmarking & Scientific Evaluation**:
+- [x] [#5](https://github.com/fabogit/mira-bar-extension/issues/5) **Empirical Benchmarking & Scientific Evaluation**:
   - Measure execution latency of TypeScript VFS reader at 200 ms polling intervals (`performance.now()`) against the < 250 µs SLA budget.
   - Profile V8 garbage collection overhead and heap allocation stability.
-  - Tools available since Phase 1.2: `pnpm run bench:extension` (extension CPU per configuration and per section) and the heap check in `pnpm run test:extension`; the result feeds the per-platform minimums above.
+  - Done with `pnpm run bench:linux` (new) and `bench:extension`; results in ADR-0010 and docs/ARCHITECTURE.md "Refresh Floors".
+  - Within 250 µs at 200 ms polling: memory, CPU temperature, load average. Over it (p95): `/proc/stat` 344–415 µs, cpufreq 668–755 µs (16 files), battery 731–810 µs once the ACPI cache expires: candidates for a follow-up. Disk and component sensors never block the thread.
+  - GC: ~33 KB allocated per tick with every source at 200 ms, 3–4.3 ms of pause per minute; heap stable after a full GC (no leak).
 - [x] **More temperature sensors**: NVMe [#33](https://github.com/fabogit/mira-bar-extension/issues/33), RAM [#34](https://github.com/fabogit/mira-bar-extension/issues/34), Wi-Fi [#35](https://github.com/fabogit/mira-bar-extension/issues/35), battery [#36](https://github.com/fabogit/mira-bar-extension/issues/36), with limits from hwmon `temp1_max` / `temp1_crit` and a note above the operating maximum (ADR-0016).
   - Measured on the test laptop: these reads take 0.7-41 ms (NVMe SMART command, I2C, Wi-Fi firmware), so they run asynchronously, one at a time, started 100 ms before the read by `requestTempRefresh`; the extension host thread spends ~45 µs per temperature read.
   - Verified on the test laptop (NVMe, two `spd5118` modules, `mt7921`) and with a mocked sysfs tree (`pnpm run test:linux-temp`); the battery `temp` file only with the mock (BAT1 does not expose it).
-  - Open: a setting to turn the component sensors off if waking the NVMe drive every interval matters on battery.
+  - [x] `mirabar.temperature.componentSensors`: `awake` (default, runtime-suspended devices are not read and shown as *asleep*), `always`, `off` (ADR-0016). On the test laptop no device is ever runtime-suspended (`control` = `on`), so `awake` reads like `always`; an awake NVMe still leaves its deepest APST state briefly on each read.
 - [x] [#6](https://github.com/fabogit/mira-bar-extension/issues/6) **Cross-Platform Dual-Runner CI/CD**:
   - Configured `.github/workflows/release.yml` with decoupled dual-runner matrix (`macos-14` + `ubuntu-latest`), hardened least-privilege permissions, concurrency controls, and `workflow_dispatch` manual build testing.
 
