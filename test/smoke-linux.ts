@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { LinuxTelemetryProvider } from '../src/platform/linux/linux_provider.js';
 import { DiskProvider } from '../src/disk/disk_provider.js';
 
@@ -15,7 +16,19 @@ async function run(): Promise<void> {
 
   console.log('\n--- 1. CPU Usage Sampling (/proc/stat) ---');
   const cpu1 = provider.sampleCpu();
-  console.log('Sample 1 (Tick 0):', cpu1);
+  console.log('Sample 1 (Tick 0):', cpu1 ? { overallPercent: cpu1.overallPercent, coresSampled: cpu1.perCorePercent.length } : null);
+  const isLinux = process.platform === 'linux';
+  /** Valid percentages, one per core: no NaN, no holes, within 0-100. */
+  const checkCpu = (cpu: typeof cpu1, label: string): void => {
+    assert.ok(cpu, `${label}: /proc/stat readable`);
+    assert.ok(cpu.perCorePercent.length > 0, `${label}: per-core array not empty (counters primed in the constructor)`);
+    for (const p of [cpu.overallPercent, ...cpu.perCorePercent]) {
+      assert.ok(Number.isFinite(p) && p >= 0 && p <= 100, `${label}: percentage out of range: ${p}`);
+    }
+  };
+  if (isLinux) {
+    checkCpu(cpu1, 'Tick 0');
+  }
 
   await new Promise((r) => setTimeout(r, 500));
 
@@ -24,6 +37,10 @@ async function run(): Promise<void> {
     overallPercent: cpu2 ? `${cpu2.overallPercent.toFixed(2)}%` : 'null',
     coresSampled: cpu2?.perCorePercent.length ?? 0,
   });
+  if (isLinux) {
+    checkCpu(cpu2, 'Sample 2');
+    assert.equal(cpu2!.perCorePercent.length, cpu1!.perCorePercent.length, 'same core count at Tick 0 and after');
+  }
   if (cpu2 && cpu2.perCorePercent.length > 0) {
     console.log('First 4 Cores:', cpu2.perCorePercent.slice(0, 4).map((p, i) => `C${i}: ${p.toFixed(1)}%`).join(' '));
   }

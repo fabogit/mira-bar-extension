@@ -30,7 +30,7 @@ MiraBar enforces a strict **Zero-Subprocess Invariant** on all supported platfor
 ```
 
 ### 1. CPU Load & Topology
-- **Linux**: Reads `/proc/stat` delta counters across logical cores. Handles `iowait` as idle to avoid false I/O spikes.
+- **Linux**: Reads `/proc/stat` delta counters across logical cores. Handles `iowait` as idle to avoid false I/O spikes. The constructor primes the counters (as on Darwin), so the first read already has the core count and, after ~50 ms, a real delta; reads closer than 5 jiffies per core return the previous result and keep the baseline.
 - **Darwin (Apple Silicon)**: Calls `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` via Mach host APIs to retrieve user, system, idle, and nice ticks per core.
   - **Cold-Start Pre-Sampling (Tick 0)**: Pre-samples CPU ticks during provider instantiation so that the first hover immediately displays valid per-core metrics rather than waiting for an arbitrary polling cycle.
   - **Asymmetric Topology**: Discovers Performance (P) and Efficiency (E) core clusters via `sysctlbyname("hw.perflevel0.logicalcpu")` and `sysctlbyname("hw.perflevel1.logicalcpu")`.
