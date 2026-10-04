@@ -71,7 +71,8 @@ const ATTRIBUTE_BUFFER = Buffer.allocUnsafe(4096);
  * A sysfs attribute a provider reads at every sample (per-core cpufreq, the CPU sensor, the battery
  * files), found once by discovery. The file is opened at the first read and kept open: each read is a
  * single `pread` at offset 0, which makes the kernel produce the value again, instead of
- * open + read + close (issue #40: about 2 µs per file instead of 12 for the 16 cpufreq files).
+ * open + read + close (issue #40, bench:linux: the 16 cpufreq files in 20 µs instead of 114, the
+ * battery in 9 µs instead of 57, reads back to back).
  * A failed read closes the descriptor and retries once with a fresh one (device removed and back,
  * core offlined); `close()` releases it when the provider drops the attribute.
  */
