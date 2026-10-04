@@ -365,6 +365,37 @@ test('settings scopes', async () => {
   await setCfg({ 'show.disk': true }, 300);
 });
 
+// The five toggle commands: each flips its setting, confirms it, and the gear tooltip follows; a second
+// run flips it back.
+test('toggle commands', async () => {
+  const toggles = [
+    ['mirabar.toggleTooltipMode', 'tooltip.mode', ['Static', 'Live'], (v) => `Tooltip mode set to ${v}`],
+    ['mirabar.toggleTooltipAutoRefresh', 'tooltip.autoRefresh', [true, false], (v) => `Static tooltip auto-refresh ${v ? 'on' : 'off'}`],
+    ['mirabar.toggleCpuLayout', 'tooltip.cpuLayout', ['Table', 'List'], (v) => `CPU layout set to ${v}`],
+    ['mirabar.toggleLoadFormat', 'loadFormat', ['Percent', 'Value'], (v) => `Load format set to ${v}`],
+    ['mirabar.toggleDiskMultiDisplay', 'disk.multiDisplay', ['All', 'MostFull'], (v) => `Multi-disk display set to ${v}`],
+  ];
+  s.notifications.length = 0;
+  for (const [command, key, [from, to], message] of toggles) {
+    assert.ok(!(key in s.cfg), `${key} starts at its default`);
+    await s.cmds[command]();
+    assert.equal(s.cfg[key], to, `${command}: ${from} -> ${to}`);
+    assert.equal(s.notifications.at(-1), `MiraBar: ${message(to)}`);
+  }
+  await sleep(300);
+  const options = gear().tooltip.value;
+  assert.ok(options.includes('| Tooltip mode | Live | [switch to Static](command:mirabar.toggleTooltipMode) |'), 'gear: tooltip mode');
+  assert.ok(!options.includes('| Auto-refresh |'), 'gear: no auto-refresh row in Live mode');
+  assert.ok(options.includes('| CPU cores | List | [switch to Table](command:mirabar.toggleCpuLayout) |'), 'gear: CPU cores');
+  assert.ok(options.includes('| Several disks | Most full | [switch to All](command:mirabar.toggleDiskMultiDisplay) |'), 'gear: several disks');
+  for (const [command, key, [from]] of toggles) {
+    await s.cmds[command]();
+    assert.equal(s.cfg[key], from, `${command} again: back to ${from}`);
+  }
+  assert.equal(s.notifications.length, 10, 'one confirmation per run');
+  await setCfg(Object.fromEntries(toggles.map(([, key]) => [key, undefined])), 300);
+});
+
 // Invalid values in settings.json: widgets and panel keep working with the defaults, each value logged once.
 test('invalid settings in the running extension', async () => {
   const panel = s.panels[0];
