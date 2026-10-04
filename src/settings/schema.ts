@@ -94,8 +94,9 @@ export function validateSetting(key: string, value: unknown): ValidationResult {
       if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
         return { ok: false, reason: `${key} must be a list of paths` };
       }
-      const paths = (value as string[]).map((v) => v.trim()).filter((v) => v.length > 0).slice(0, 32);
-      return { ok: true, value: [...new Set(paths)] };
+      // Duplicates removed before the cap: a repeated path must not push a distinct one out.
+      const paths = new Set((value as string[]).map((v) => v.trim()).filter((v) => v.length > 0));
+      return { ok: true, value: [...paths].slice(0, 32) };
     }
     case 'order':
       if (!Array.isArray(value)) {
