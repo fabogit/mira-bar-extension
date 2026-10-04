@@ -11,6 +11,8 @@
 //   - the same reads paced like the extension: every 200 ms (issue #5: on-thread latency against the
 //     250 µs target) and every 2 s (the regime of the defaults), where kernel caches have expired (ACPI
 //     battery: `battery.cache_time`, 1 s) and the NVMe drive may be in a low power state.
+//   - battery with the ACPI cache expired, read on the thread alone vs refreshed on the libuv pool 100 ms
+//     ahead (the monitor's battery prefetch from a 1 s interval, issue #40): time the thread is blocked.
 //   - V8 heap behaviour: bytes allocated per read, GC count and pause time (v8.GCProfiler), heap retained
 //     after a full GC (allocation stability), and the GC load of the paced runs.
 // It then prints, per source, the interval at which its cost alone would use the whole budget (0.5% of
@@ -19,8 +21,8 @@
 // extension's own cost per read, proposes the minimums and prints the total cost at the default intervals.
 //
 // Usage (on Linux; close heavy apps for a stable baseline):
-//   pnpm run bench:linux                              # ~3 min
-//   node --expose-gc test/bench-linux.mjs --quick     # ~1.5 min (shorter windows and paced runs)
+//   pnpm run bench:linux                              # ~3.5 min
+//   node --expose-gc test/bench-linux.mjs --quick     # ~2 min (shorter windows and paced runs)
 //   node --expose-gc test/bench-linux.mjs --json      # also prints the raw results as JSON
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -76,6 +78,10 @@ const PACED_MS = QUICK ? 10_000 : 30_000; // reads every 200 ms
 const PACED_INTERVAL_MS = 200;
 const SPACED_MS = QUICK ? 12_000 : 40_000; // reads every 2 s
 const SPACED_INTERVAL_MS = 2000;
+const BATTERY_AHEAD_MS = QUICK ? 24_000 : 60_000; // battery, the two modes alternated
+const BATTERY_AHEAD_INTERVAL_MS = 1500; // each mode every 3 s: the ACPI cache (1 s) always expired
+/** The monitor's PREFETCH_MS (src/monitor.ts): how long before the read the battery is refreshed. */
+const BATTERY_PREFETCH_MS = 100;
 /** Issue #5: on-thread latency target of one read at 200 ms polling. */
 const SLA_US = 250;
 /** Component sensors are rescanned once a minute (src/platform/linux/components.ts, RESCAN_MS). */
@@ -270,6 +276,44 @@ async function measurePaced(sources, durationMs, intervalMs) {
 }
 
 /**
+ * Battery with the ACPI driver's cache expired (issue #40), the two ways the monitor reads it, alternated:
+ * on the thread alone (intervals below 1 s, where most reads hit the cache), and refreshed on the libuv
+ * pool BATTERY_PREFETCH_MS ahead (1 s and more). Blocked: requesting the refresh plus the read; longest
+ * stall: the larger of the two, which happen 100 ms apart.
+ */
+async function measureBatteryAhead(battery, durationMs, intervalMs) {
+  const capacity = Math.ceil(durationMs / intervalMs) + 2;
+  const modes = {
+    sync: { blocked: new Float64Array(capacity), stall: new Float64Array(capacity), cpuUs: 0, n: 0 },
+    ahead: { blocked: new Float64Array(capacity), stall: new Float64Array(capacity), cpuUs: 0, n: 0 },
+  };
+  const t0 = performance.now();
+  let ticks = 0;
+  while (performance.now() - t0 < durationMs && ticks < capacity) {
+    const mode = ticks % 2 ? 'ahead' : 'sync';
+    const c0 = process.cpuUsage();
+    let requestUs = 0;
+    if (mode === 'ahead') {
+      const s = performance.now();
+      battery.requestRefresh();
+      requestUs = (performance.now() - s) * 1000;
+      await sleep(BATTERY_PREFETCH_MS);
+    }
+    const s = performance.now();
+    battery.sample();
+    const readUs = (performance.now() - s) * 1000;
+    const r = modes[mode];
+    r.blocked[r.n] = requestUs + readUs;
+    r.stall[r.n++] = Math.max(requestUs, readUs);
+    r.cpuUs += cpuUs(process.cpuUsage(c0));
+    ticks++;
+    await sleep(Math.max(0, t0 + ticks * intervalMs - performance.now()));
+  }
+  const result = (r) => ({ blocked: dist(r.blocked, r.n), stall: dist(r.stall, r.n), processCpuUs: r.cpuUs / r.n, reads: r.n });
+  return { sync: result(modes.sync), ahead: result(modes.ahead) };
+}
+
+/**
  * Component sensors (async, libuv pool): the scan (once a minute), passes back to back, and each file
  * on its own. The provider's clock is driven here, so rescans happen only when asked for.
  */
@@ -349,20 +393,26 @@ const SOURCES = [
 const NAMES = Object.fromEntries(SOURCES.map(([key, , , name]) => [key, name]));
 NAMES.components = 'temperature: component pass (async)';
 
-console.log(`1/4 Per-read cost (${ROUNDS} × ${WINDOW_MS / 1000} s per source, between idle windows)...`);
+console.log(`1/5 Per-read cost (${ROUNDS} × ${WINDOW_MS / 1000} s per source, between idle windows)...`);
 const hot = {};
 for (const [key, fn, isAsync, name] of SOURCES) {
   hot[key] = await measureLoop(name, fn, isAsync);
 }
 
-console.log(`2/4 Component temperature sensors (rescans, ${ROUNDS} × ${PASS_WINDOW_MS / 1000} s of passes, each file)...`);
+console.log(`2/5 Component temperature sensors (rescans, ${ROUNDS} × ${PASS_WINDOW_MS / 1000} s of passes, each file)...`);
 const components = await measureComponents();
 
-console.log(`3/4 Reads every ${PACED_INTERVAL_MS} ms for ${PACED_MS / 1000} s (issue #5: on-thread latency, GC)...`);
+console.log(`3/5 Reads every ${PACED_INTERVAL_MS} ms for ${PACED_MS / 1000} s (issue #5: on-thread latency, GC)...`);
 const paced = await measurePaced(SOURCES, PACED_MS, PACED_INTERVAL_MS);
 
-console.log(`4/4 Reads every ${SPACED_INTERVAL_MS / 1000} s for ${SPACED_MS / 1000} s (kernel caches expired, devices idle between reads)...\n`);
+console.log(`4/5 Reads every ${SPACED_INTERVAL_MS / 1000} s for ${SPACED_MS / 1000} s (kernel caches expired, devices idle between reads)...\n`);
 const spaced = await measurePaced([...SOURCES, ['components', () => components.comp.refresh(), true]], SPACED_MS, SPACED_INTERVAL_MS);
+
+let batteryAhead = null;
+if (hasBattery) {
+  console.log(`5/5 Battery, ACPI cache expired: on the thread vs refreshed ${BATTERY_PREFETCH_MS} ms ahead, alternated for ${BATTERY_AHEAD_MS / 1000} s...\n`);
+  batteryAhead = await measureBatteryAhead(battery, BATTERY_AHEAD_MS, BATTERY_AHEAD_INTERVAL_MS);
+}
 
 console.log('Per-read cost, reads back to back (wall per call; CPU per call):');
 console.table(
@@ -393,6 +443,24 @@ const timing = (title, run) => {
 };
 timing(`Reads every ${PACED_INTERVAL_MS} ms (${paced.ticks} ticks), on the calling thread:`, paced);
 timing(`Reads every ${SPACED_INTERVAL_MS / 1000} s (${spaced.ticks} ticks):`, spaced);
+
+if (batteryAhead) {
+  console.log(`Battery with the ACPI cache expired (each mode every ${(2 * BATTERY_AHEAD_INTERVAL_MS) / 1000} s), on the calling thread:`);
+  console.table(
+    [
+      ['read on the thread (intervals below 1 s)', batteryAhead.sync],
+      [`refreshed ${BATTERY_PREFETCH_MS} ms ahead on the pool (1 s and more)`, batteryAhead.ahead],
+    ].map(([mode, r]) => ({
+      mode: `${mode}, ${r.reads} reads`,
+      'blocked µs median': fmt(r.blocked.median),
+      'p95': fmt(r.blocked.p95),
+      'max': fmt(r.blocked.max),
+      'longest stall µs p95': fmt(r.stall.p95),
+      'process CPU µs': fmt(r.processCpuUs),
+      [`blocked < ${SLA_US} µs (p95)`]: r.blocked.p95 <= SLA_US ? 'yes' : 'NO',
+    }))
+  );
+}
 
 const c = components;
 const spacedPass = spaced.sources.components;
@@ -505,5 +573,5 @@ if (extData && extData.platform === 'linux') {
 
 if (JSON_OUT) {
   delete components.comp;
-  console.log('\n' + JSON.stringify({ share: SHARE, hot, components, paced, spaced, proposed }, null, 2));
+  console.log('\n' + JSON.stringify({ share: SHARE, hot, components, paced, spaced, batteryAhead, proposed }, null, 2));
 }
