@@ -2,6 +2,14 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/). Decisions behind the changes: [docs/adr/](docs/adr/README.md).
 
+## [Unreleased]
+
+### Changed
+
+- Linux: the files read at every sample (cpufreq, CPU sensor, battery) stay open and are read again from offset 0 instead of being opened and closed each time, and CPU frequency is read once per cpufreq policy. On the test laptop the CPU frequency read blocks the extension host thread for 160 µs at the 95th percentile at 200 ms instead of ~315 µs, within the 250 µs target ([ADR-0017](docs/adr/0017-linux-sysfs-reads-kept-open-battery-refresh.md)) (#40).
+- Linux, ACPI batteries: from a 1 s battery interval up, the battery is read on the libuv pool 100 ms before each read, so the embedded controller query (~250 µs, once the driver's 1 s cache has expired) no longer runs on the extension host thread: at the 10 s default the thread is blocked ~135-150 µs per read instead of ~280-310 µs (median), p95 ~225-240 µs instead of ~315-485 µs (ADR-0017) (#40).
+- Development: `test:linux-sysfs` (descriptors kept open, cpufreq per policy); `bench:linux` compares the two ways of reading the battery with the ACPI cache expired (#40).
+
 ## [1.3.0] - 2026-10-03
 
 Linux parity (roadmap Phase 2, milestone [v1.3.0](https://github.com/fabogit/mira-bar-extension/milestone/3)): component temperatures, battery time remaining, CPU cold start and refresh minimums measured on Linux.
