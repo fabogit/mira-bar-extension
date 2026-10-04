@@ -6,9 +6,10 @@ import type { MemoryInfo } from '../../types.js';
  * High-performance, single-pass Linux RAM and Swap usage provider.
  *
  * Reads directly from `/proc/meminfo` and parses MemTotal, MemAvailable, SwapTotal,
- * and SwapFree (MemFree, Buffers and Cached stand in for a missing MemAvailable). Calculates actual memory consumption taking into account modern Linux
- * kernel memory management heuristics (where buffers and reclaimable page cache are
- * accounted for in `MemAvailable`).
+ * and SwapFree (MemFree, Buffers and Cached stand in for a missing MemAvailable).
+ * Calculates actual memory consumption taking into account modern Linux kernel memory
+ * management heuristics (where buffers and reclaimable page cache are accounted for in
+ * `MemAvailable`).
  */
 export class MemoryProvider {
   private readonly meminfoPath: string;
