@@ -1,10 +1,14 @@
 // Behaviour tests of the extension outside VS Code (test/harness/vscode-mock.cjs): per-section
 // schedule, tooltips, minimums, settings panel, disk isolation, lifecycle and heap stability.
 //
-// Usage (macOS after `pnpm run compile:native`, or Linux):  node --expose-gc test/extension.test.mjs
+// The tests share one extension instance and run in order: each one starts from the settings the
+// previous one left (most restore them at the end).
+//
+// Usage (macOS after `pnpm run compile:native`, or Linux):  pnpm run test:host
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { after, test } from 'node:test';
 
 const require = createRequire(import.meta.url);
 const fsp = require('node:fs/promises');
@@ -22,12 +26,17 @@ fsp.statfs = (p, ...rest) => {
   return origStatfs(p, ...rest);
 };
 
-const { loadExtension, loadModule } = await import('./harness/load-extension.mjs');
+const { loadExtension, loadModule } = await import('../harness/load-extension.mjs');
 const { vscode, ext, cleanup } = loadExtension('test-extension');
 const { module: config, cleanup: cleanupConfig } = loadModule('src/config.ts', 'test-config');
 const s = vscode.__state;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const keepAlive = setInterval(() => {}, 1000); // the extension timer is unref()'d
+after(() => {
+  clearInterval(keepAlive);
+  cleanup();
+  cleanupConfig();
+});
 const live = () => s.items.filter((i) => !i.disposed);
 const item = (label) => live().find((i) => i.name === `MiraBar: ${label}`);
 const gear = () => live().find((i) => i.text === '$(settings-gear)');
@@ -52,7 +61,6 @@ const tooltipRate = async (label, ms) => {
   await sleep(ms);
   return ((it.tooltipSetCount - n0) * 1000) / ms;
 };
-const step = (name) => console.log(`ok - ${name}`);
 
 // Measured minimums of this host (they differ per platform, ADR-0010) and how the gear tooltip shows them.
 const MIN = config.measuredMinimums(process.platform);
@@ -63,7 +71,7 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
 
 // Minimums per platform, with the platform injected: macOS keeps its measured values, Linux has its own,
 // an unmeasured platform takes the highest of each section; the unlock lowers all of them to 200 ms.
-{
+test('minimums per platform', (t) => {
   const all = (ms) => ({ cpu: ms, freq: ms, temp: ms, mem: ms, battery: ms, disk: ms });
   assert.deepEqual(config.measuredMinimums('darwin'), { ...all(200), temp: 8400 }, 'macOS minimums unchanged');
   const linux = config.measuredMinimums('linux');
@@ -80,14 +88,14 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
     assert.ok(config.DEFAULT_STATUS_BAR_MS[section] >= Math.max(...['darwin', 'linux', 'win32'].map((p) => config.measuredMinimums(p)[section])),
       `default ${section} not below any platform's minimum`);
   }
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
   assert.deepEqual(pkg['mirabar.statusBarMs'].default, config.DEFAULT_STATUS_BAR_MS, 'package.json statusBarMs default = config.ts');
   assert.deepEqual(pkg['mirabar.tooltipMs'].default, config.DEFAULT_TOOLTIP_MS, 'package.json tooltipMs default = config.ts');
-  step(`minimums per platform (this host, ${process.platform}: ${config.TOOLTIP_SECTIONS.map((x) => `${x} ${MIN[x]}`).join(', ')})`);
-}
+  t.diagnostic(`this host (${process.platform}): ${config.TOOLTIP_SECTIONS.map((x) => `${x} ${MIN[x]}`).join(', ')}`);
+});
 
 // Settings validated on read: an invalid value falls back to the default and is logged once.
-{
+test('settings validated on read', () => {
   const warnings = [];
   config.setConfigLog({ warn: (m) => warnings.push(m) });
   s.cfg = { 'disk.format': 'Bogus', 'freq.unit': 'THz', 'mem.unit': 'TB', 'disk.drives': '/home', priority: 'high', 'show.mem': 'yes', alignment: 'Center' };
@@ -110,14 +118,14 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
   assert.ok(warnings.some((w) => w === 'Setting mirabar.freq.unit: invalid value "THz", using "GHz"'), warnings.join(' / '));
   config.setConfigLog(undefined);
   s.cfg = {};
-  step('settings validated on read');
-}
+});
 
 // Every default in the code equals its package.json default: with an invalid value for every key, each
 // setting falls back to the code's default, and the panel snapshot (every key) must equal package.json.
-{
+test('defaults and options match package.json', (t) => {
   const { module: schema, cleanup: cleanupSchema } = loadModule('src/settings/schema.ts', 'test-schema');
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
+  t.after(cleanupSchema);
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
   const defaults = Object.fromEntries(Object.entries(pkg).map(([k, spec]) => [k.replace(/^mirabar\./, ''), spec.default]));
   s.cfg = Object.fromEntries(Object.keys(defaults).map((k) => [k, 'bogus']));
   assert.deepEqual(schema.readSettingsSnapshot(), defaults, 'getConfig defaults = package.json defaults');
@@ -126,13 +134,12 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
     assert.deepEqual(spec.options, pkg[`mirabar.${spec.key}`].enum, `${spec.key} options = package.json enum`);
   }
   s.cfg = {};
-  cleanupSchema();
-  step('defaults and options match package.json');
-}
+});
 
 // Renderers and panel page: frequency text width per unit, section names and rows per platform.
-{
+test('frequency width per unit, panel per platform', (t) => {
   const { module: sections, cleanup: cleanupSections } = loadModule('src/sections.ts', 'test-sections');
+  t.after(cleanupSections);
   const base = config.getConfig();
   for (const unit of ['GHz', 'MHz', 'KHz', 'Hz']) {
     const text = (hz) => sections.renderFreqOrLoad({ kind: 'freq', data: { avgHz: hz, maxHz: hz, perCoreHz: [] } },
@@ -143,9 +150,10 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
   const battery = sections.renderBattery({ percent: 80, status: 'Discharging', cycleCount: 120 },
     { config: base, updatedAt: '00:00:00' }, true).tooltip;
   assert.ok(battery.includes('120 cycles') && !battery.includes('Condition'), 'no battery condition no platform reports');
-  cleanupSections();
 
   const { module: page, cleanup: cleanupPage } = loadModule('src/settings/panel_html.ts', 'test-panel-html');
+
+  t.after(cleanupPage);
   const labels = (html) => JSON.parse(html.match(/const LABELS = (\{.*\});/)[1]);
   const hiddenRows = (html) => [...html.matchAll(/data-platform="(\w+)"( hidden)?/g)].map((m) => `${m[1]}${m[2] ? ' hidden' : ''}`);
   const darwin = page.renderSettingsHtml('n', 'csp', 'darwin');
@@ -158,16 +166,13 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
   assert.deepEqual(hiddenRows(win32), ['linux hidden', 'darwin hidden', 'linux hidden'], 'win32 shows neither platform\'s rows');
   assert.ok(!/let platform/.test(linux), 'no hard-coded platform in the page');
   for (const unit of ['GHz', 'MHz', 'KHz', 'Hz', 'GB', 'MB', 'KB', 'B']) assert.ok(linux.includes(`<option value="${unit}">${unit}</option>`), unit);
-  cleanupPage();
-  step('frequency width per unit, panel per platform');
-}
-
-s.cfg = { 'show.disk': true };
-ext.activate({ subscriptions: [] });
-await sleep(500);
+});
 
 // Activation: metric widgets, gear last with the intervals in use.
-{
+test('activation and gear tooltip', async () => {
+  s.cfg = { 'show.disk': true };
+  ext.activate({ subscriptions: [] });
+  await sleep(500);
   assert.ok(item('CPU usage')?.visible && item('Memory')?.visible, 'cpu and memory shown');
   const g = gear();
   assert.ok(g && g.command === 'mirabar.openSettings');
@@ -182,23 +187,35 @@ await sleep(500);
   const lines = item('CPU usage').tooltip.value.split('\n');
   assert.equal(lines[0], '### CPU Utilization');
   assert.match(lines.at(-3), /^\*Updated at \d\d:\d\d:\d\d\*$/, 'update time without tenths at 2 s');
-  step('activation and gear tooltip');
-}
+});
+
+// Only changes to mirabar.* settings reach the widgets (the listener filters the change events).
+test('changes to other settings ignored', async () => {
+  s.cfg['show.mem'] = false;
+  vscode.__fireConfigChange(['editor.fontSize', 'mirabarx.show']);
+  await sleep(250);
+  assert.ok(item('Memory')?.visible, 'another section changed: settings not read again');
+  vscode.__fireConfigChange();
+  await sleep(250);
+  assert.ok(!item('Memory')?.visible, 'mirabar.show.mem changed: memory hidden');
+  await setCfg({ 'show.mem': undefined });
+  assert.ok(item('Memory')?.visible, 'shown again');
+});
 
 // Per-section status bar intervals: Live tooltips follow each section's own reads (minimums unlocked:
 // the schedule is under test here, not the platform's minimums).
-{
+test('per-section status bar', async (t) => {
   await setCfg({ allowFastRefresh: true, 'tooltip.mode': 'Live', statusBarMs: { cpu: 200, mem: 1000, freq: 5000, temp: 5000, battery: 10000, disk: 10000 } }, 400);
   const [cpu, mem] = await Promise.all([tooltipRate('CPU usage', 3000), tooltipRate('Memory', 3000)]);
   assert.ok(cpu >= 4 && cpu <= 5.6, `cpu reads/s at 200 ms: ${cpu}`);
   assert.ok(mem >= 0.6 && mem <= 1.4, `memory reads/s at 1000 ms: ${mem}`);
   assert.match(item('CPU usage').tooltip.value, /Updated at \d\d:\d\d:\d\d\.\d\*/, 'tenths below 1000 ms');
   assert.match(item('Memory').tooltip.value, /Updated at \d\d:\d\d:\d\d\*/, 'no tenths at 1000 ms');
-  step(`per-section status bar: cpu ${cpu.toFixed(1)}/s, memory ${mem.toFixed(1)}/s`);
-}
+  t.diagnostic(`cpu ${cpu.toFixed(1)}/s, memory ${mem.toFixed(1)}/s`);
+});
 
 // Static tooltips at their own interval, never faster than the status bar; auto-refresh off = click only.
-{
+test('static tooltips', async (t) => {
   await setCfg({ 'tooltip.mode': 'Static', tooltipMs: { cpu: 1000, mem: 200 } }, 400);
   const [cpu, mem] = await Promise.all([tooltipRate('CPU usage', 4000), tooltipRate('Memory', 4000)]);
   assert.ok(cpu >= 0.7 && cpu <= 1.3, `static cpu tooltip at 1000 ms (bar 200 ms): ${cpu}/s`);
@@ -212,11 +229,11 @@ await sleep(500);
   s.cmds['mirabar.refresh']();
   assert.notEqual(item('CPU usage').tooltip.value, frozen, 'click rebuilds the tooltip');
   await setCfg({ 'tooltip.autoRefresh': undefined, tooltipMs: undefined });
-  step(`static tooltips: cpu ${cpu.toFixed(1)}/s, memory ${mem.toFixed(1)}/s`);
-}
+  t.diagnostic(`cpu ${cpu.toFixed(1)}/s, memory ${mem.toFixed(1)}/s`);
+});
 
 // Measured minimums on the status bar interval, unlockable.
-{
+test('measured minimums', async () => {
   await setCfg({ allowFastRefresh: undefined, statusBarMs: { temp: 200, battery: 200, disk: 200, cpu: 200, mem: 200, freq: 200 } });
   assert.equal(row('Temperature').bar, barCell('temp', 200), 'temperature raised to its measured minimum, flagged');
   assert.ok(gear().tooltip.value.includes('raised to its measured minimum'), 'note under the table');
@@ -229,12 +246,11 @@ await sleep(500);
     assert.equal(row(label).bar, '200 ms', `${label} unlocked`);
   }
   await setCfg({ allowFastRefresh: undefined, statusBarMs: undefined });
-  step('measured minimums');
-}
+});
 
 // Only the mirabar.* interval settings exist: the beta keys are gone from package.json.
-{
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+test('settings and commands namespace', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   const keys = Object.keys(pkg.contributes.configuration.properties);
   for (const legacy of ['updatefrequencyms', 'refreshMs', 'refreshSeconds', 'allowFastBatteryDiskRefresh']) {
     assert.ok(!keys.includes(`mirabar.${legacy}`), `${legacy} not contributed`);
@@ -243,11 +259,10 @@ await sleep(500);
   const sensors = pkg.contributes.configuration.properties['mirabar.temperature.componentSensors'];
   assert.deepEqual([sensors.enum, sensors.default, sensors.enumDescriptions.length], [['awake', 'always', 'off'], 'awake', 3]);
   assert.ok(pkg.contributes.commands.every((c) => c.command.startsWith('mirabar.') && c.category === 'MiraBar'), 'commands under mirabar.*, category MiraBar');
-  step('settings and commands namespace');
-}
+});
 
 // Settings panel: single instance, CSP, validation, serialized messages.
-{
+test('settings panel', async () => {
   s.cmds['mirabar.openSettings']();
   s.cmds['mirabar.openSettings']();
   assert.equal(s.panels.length, 1);
@@ -311,12 +326,11 @@ await sleep(500);
   s.cfg['show.disk'] = true;
   vscode.__fireConfigChange();
   await sleep(300);
-  step('settings panel');
-}
+});
 
 // Settings scopes: toggles, panel edits and "Restore defaults" act on the scope that sets the value
 // (a write to the user settings would not change a value set in the workspace).
-{
+test('settings scopes', async () => {
   const panel = s.panels[0];
   await setCfg({});
   s.workspaceCfg['tooltip.mode'] = 'Live';
@@ -349,15 +363,15 @@ await sleep(500);
   assert.ok(!s.posted.some((m) => m.type === 'saved'), 'no "Saved" when a value remains');
   delete s.folderCfg.alignment;
   await setCfg({ 'show.disk': true }, 300);
-  step('settings scopes');
-}
+});
 
 // Invalid values in settings.json: widgets and panel keep working with the defaults, each value logged once.
-{
+test('invalid settings in the running extension', async () => {
   const panel = s.panels[0];
   s.warnings.length = 0;
   await setCfg({ 'disk.format': 'Bogus', 'mem.unit': 'TB', 'freq.unit': 'THz', 'disk.drives': '/', priority: 'high' }, 400);
-  await setCfg({}, 300); // a second read of the same values
+  vscode.__fireConfigChange(['mirabar.disk.format']); // a second read of the same values
+  await sleep(300);
   assert.ok(!item('Disk').text.includes('undefined'), `disk text: ${item('Disk').text}`);
   assert.match(item('Memory').text, / GB$/, `memory text: ${item('Memory').text}`);
   if (item('CPU frequency')?.visible) assert.match(item('CPU frequency').text, / GHz$/);
@@ -370,11 +384,10 @@ await sleep(500);
     assert.equal(s.warnings.filter((w) => w.includes(`mirabar.${key}:`)).length, 1, `${key} logged once`);
   }
   await setCfg({ 'disk.format': undefined, 'mem.unit': undefined, 'freq.unit': undefined, 'disk.drives': undefined, priority: undefined }, 300);
-  step('invalid settings in the running extension');
-}
+});
 
 // Panel message queue: a message whose handling fails does not block the ones after it.
-{
+test('panel queue survives a failed message', async () => {
   const panel = s.panels[0];
   const postMessage = panel.webview.postMessage;
   panel.webview.postMessage = () => {
@@ -387,14 +400,15 @@ await sleep(500);
   await sleep(30);
   assert.equal(s.cfg['tooltip.cpuLayout'], 'List', 'later message applied');
   await setCfg({ 'tooltip.cpuLayout': undefined });
-  step('panel queue survives a failed message');
-}
+});
 
 // Component sensors (Linux): mirabar.temperature.componentSensors applies without a reload. Machines
-// without a temperature sensor (CI VMs) have no temperature widget: the modes are covered by test:linux-temp.
-if (process.platform === 'linux' && !item('Temperature')?.tooltip) {
-  step('component sensors applied live: skipped, no temperature sensor here');
-} else if (process.platform === 'linux') {
+// without a temperature sensor (CI VMs) have no temperature widget: the modes are covered by test/unit/linux-temp.
+test('component sensors applied live', { skip: process.platform !== 'linux' && 'Linux only' }, async (t) => {
+  if (!item('Temperature')?.tooltip) {
+    t.skip('no temperature sensor here');
+    return;
+  }
   const componentRows = () => item('Temperature').tooltip.value.split('\n')
     .filter((l) => /^(NVMe|RAM DIMM|Wi-Fi|Battery)/.test(l)).length;
   const readTwice = async () => {
@@ -410,11 +424,11 @@ if (process.platform === 'linux' && !item('Temperature')?.tooltip) {
   await setCfg({ 'temperature.componentSensors': undefined }, 400);
   await readTwice();
   assert.equal(componentRows(), before, 'awake again: component rows back');
-  step(`component sensors applied live (${before} rows here)`);
-}
+  t.diagnostic(`${before} component rows here`);
+});
 
 // Hidden sections are not read; with everything hidden no timer runs.
-{
+test('hidden sections', async () => {
   const it = item('Memory');
   await setCfg({ 'show.mem': false, 'tooltip.mode': 'Live', statusBarMs: { mem: 200, cpu: 200 } });
   assert.equal(it.visible, false);
@@ -428,11 +442,10 @@ if (process.platform === 'linux' && !item('Temperature')?.tooltip) {
   await sleep(800);
   assert.equal(s.textSets + s.tooltipSets, t0, 'nothing runs with every section hidden');
   await setCfg({ 'show.cpuusage': undefined, 'show.cpufreq': undefined, 'show.cputemp': undefined, 'show.mem': undefined, 'show.battery': undefined, 'show.disk': true });
-  step('hidden sections');
-}
+});
 
 // Disk: a hung statfs neither blocks the other sections nor piles up; new paths recover; stale result dropped.
-{
+test('disk isolation', async () => {
   await setCfg({ allowFastRefresh: true, statusBarMs: { disk: 200, cpu: 200 }, 'tooltip.mode': 'Live' }, 400);
   hang = true;
   const calls0 = statfsCalls;
@@ -449,11 +462,10 @@ if (process.platform === 'linux' && !item('Temperature')?.tooltip) {
   await sleep(300);
   assert.ok(item('Disk').visible, 'stale result does not clear the widget');
   await setCfg({ 'disk.drives': undefined, allowFastRefresh: undefined, statusBarMs: undefined, 'tooltip.mode': undefined }, 400);
-  step('disk isolation');
-}
+});
 
 // Placement changes recreate the widgets without leaking them.
-{
+test('placement and order', async () => {
   for (let i = 0; i < 10; i++) {
     s.cfg.alignment = i % 2 ? 'Left' : 'Right';
     s.cfg.priority = 100 + i;
@@ -469,11 +481,10 @@ if (process.platform === 'linux' && !item('Temperature')?.tooltip) {
   assert.deepEqual(names.slice(0, 2), ['MiraBar: Memory', 'MiraBar: CPU usage']);
   assert.equal(names.at(-1), 'MiraBar Settings');
   await setCfg({ order: undefined, alignment: undefined, priority: undefined }, 300);
-  step('placement and order');
-}
+});
 
 // Heap stability at 200 ms Live with every section on.
-if (typeof globalThis.gc === 'function') {
+test('heap stability', { skip: typeof globalThis.gc !== 'function' && 'needs --expose-gc' }, async (t) => {
   await setCfg({ allowFastRefresh: true, 'tooltip.mode': 'Live', statusBarMs: { cpu: 200, freq: 200, temp: 200, mem: 200, battery: 200, disk: 200 } }, 3000);
   globalThis.gc();
   const h0 = process.memoryUsage().heapUsed;
@@ -481,11 +492,11 @@ if (typeof globalThis.gc === 'function') {
   globalThis.gc();
   const growthKb = (process.memoryUsage().heapUsed - h0) / 1024;
   assert.ok(growthKb < 512, `heap growth over 15 s: ${growthKb.toFixed(0)} KB`);
-  step(`heap growth over 15 s at 200 ms Live: ${growthKb.toFixed(0)} KB`);
-}
+  t.diagnostic(`heap growth over 15 s at 200 ms Live: ${growthKb.toFixed(0)} KB`);
+});
 
 // Deactivate with a statfs pending, then activate again: no writes to disposed items, one schedule.
-{
+test('deactivate and re-activate', async () => {
   hang = true;
   s.cmds['mirabar.refresh']();
   const panel = s.panels[0];
@@ -503,13 +514,13 @@ if (typeof globalThis.gc === 'function') {
   const rate = await tooltipRate('CPU usage', 2000);
   assert.ok(rate >= 4 && rate <= 5.6, `one schedule after re-activation: ${rate}/s`);
   ext.deactivate();
-  step('deactivate and re-activate');
-}
+});
 
 // Battery refreshed off the thread ahead of each read (#40): from a 1 s interval (the ACPI driver's
 // cache time) one refresh ~100 ms before every read; none at shorter intervals; dispose reaches the provider.
-{
+test('battery refreshed ahead of each read from 1 s, not below', async (t) => {
   const { module: monitorModule, cleanup: cleanupMonitor } = loadModule('src/monitor.ts', 'test-monitor');
+  t.after(cleanupMonitor);
   const run = async (batteryMs, ms) => {
     const events = [];
     let disposed = false;
@@ -543,12 +554,9 @@ if (typeof globalThis.gc === 'function') {
   }
   const fast = await run(500, 1200);
   assert.equal(fast.filter((e) => e.kind === 'refresh').length, 0, 'no refresh below 1 s');
-  cleanupMonitor();
-  step('battery refreshed ahead of each read from 1 s, not below');
-}
+});
 
-assert.deepEqual(s.errors.filter((e) => /disposed/.test(e)), [], 'no writes to disposed items');
-clearInterval(keepAlive);
-cleanup();
-cleanupConfig();
-console.log('EXTENSION TESTS OK');
+// Errors logged to the output channel and writes to disposed items, over the whole run.
+test('no errors logged, no writes to disposed items', () => {
+  assert.deepEqual(s.errors, []);
+});

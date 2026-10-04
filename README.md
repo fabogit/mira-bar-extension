@@ -165,17 +165,15 @@ pnpm run compile:native
 
 Run test suite locally:
 ```bash
-# Linux telemetry smoke test (verifies /proc and /sys on Linux):
-pnpm run test:linux
+# Unit tests, any OS (test/unit: mocked sysfs trees, renderers):
+pnpm test
 
-# Darwin native telemetry assertion smoke test (on macOS):
-pnpm run test:darwin
+# On this machine (test/host): smoke test of the platform's providers or native addon, integration,
+# extension behaviour outside VS Code (schedule, tooltips, minimums, settings panel, lifecycle):
+pnpm run test:host
 
-# Cross-platform end-to-end integration test:
-pnpm run test:integration
-
-# Extension behaviour outside VS Code (schedule, tooltips, minimums, settings panel, lifecycle):
-pnpm run test:extension
+# One file or one test, any node:test option (TypeScript files are bundled first):
+node test/harness/run-ts.mjs --test-name-pattern="rescan" test/unit/linux-temp.test.ts
 
 # Native leak & cost probe (on macOS): µs per call, RSS growth, Mach host port refs
 node --expose-gc test/leak-darwin.mjs

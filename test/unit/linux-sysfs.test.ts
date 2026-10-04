@@ -4,16 +4,18 @@
 // once per policy and fans the value out to the policy's cores, keeps its descriptors across the
 // rescan, and closes them on dispose.
 //
-// Usage (Linux, counts the open descriptors in /proc/self/fd):  pnpm run test:linux-sysfs
+// Usage (counts the open descriptors in /proc/self/fd, skipped without it):  pnpm test
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { CpuFreqProvider } from '../src/platform/linux/cpufreq.js';
-import { SysfsAttribute } from '../src/platform/linux/sysfs.js';
+import { after, describe, test } from 'node:test';
+import { CpuFreqProvider } from '../../src/platform/linux/cpufreq.js';
+import { SysfsAttribute } from '../../src/platform/linux/sysfs.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mirabar-sysfs-'));
-const step = (name: string): void => console.log(`ok - ${name}`);
+after(() => fs.rmSync(root, { recursive: true, force: true }));
+const skip = fs.existsSync('/proc/self/fd') ? false : 'needs /proc/self/fd (Linux)';
 
 /** Files open in this process under the mocked tree. */
 function openUnderRoot(): string[] {
@@ -55,12 +57,7 @@ function cpufreqTree(base: string, clusters: number[][], khz: (policy: number) =
   }
 }
 
-async function run(): Promise<void> {
-  if (!fs.existsSync('/proc/self/fd')) {
-    console.log('linux-sysfs: needs /proc/self/fd (Linux); skipped.');
-    return;
-  }
-
+test('one descriptor per attribute, current value at each read, close', { skip }, () => {
   const file = path.join(root, 'attr/value');
   write(file, 1200);
   const attr = new SysfsAttribute(file);
@@ -75,8 +72,9 @@ async function run(): Promise<void> {
   assert.deepEqual(openUnderRoot(), [], 'closed');
   assert.equal(attr.readText(), 'Discharging', 'a read after close opens it again');
   attr.close();
-  step('one descriptor per attribute, current value at each read, close');
+});
 
+test('missing file, failed read: unreadable, retried, nothing left open', { skip }, () => {
   const missing = new SysfsAttribute(path.join(root, 'attr/missing'));
   assert.ok(Number.isNaN(missing.readInt()));
   assert.equal(missing.readText(), null);
@@ -88,8 +86,9 @@ async function run(): Promise<void> {
   const failing = new SysfsAttribute(path.join(root, 'attr'));
   assert.ok(Number.isNaN(failing.readInt()));
   assert.deepEqual(openUnderRoot(), [], 'no descriptor left after a failed read');
-  step('missing file, failed read: unreadable, retried, nothing left open');
+});
 
+test('refresh off the thread, close deferred while it reads', { skip }, async () => {
   // refreshAsync (battery ahead of the read): nothing before the first read, one read in flight at a
   // time, and a close during it releases the descriptor once that read completes.
   const refreshed = new SysfsAttribute(path.join(root, 'attr/refreshed'));
@@ -105,43 +104,39 @@ async function run(): Promise<void> {
   assert.deepEqual(openUnderRoot(), [], 'closed once the refresh completed');
   assert.equal(refreshed.readInt(), 42, 'reads again after close');
   refreshed.close();
-  step('refresh off the thread, close deferred while it reads');
+});
 
+describe('cpufreq', { skip }, () => {
   // Two clusters of 4 cores (shared policies) and two cores with a policy each.
   const tree = path.join(root, 'clusters');
-  cpufreqTree(tree, [[0, 1, 2, 3], [4, 5, 6, 7], [8], [9]], (policy) => 1_000_000 + policy * 100_000);
-  let now = 1_000_000;
-  const freq = new CpuFreqProvider(tree, () => now);
-  const first = freq.sample()!;
-  assert.deepEqual(first.perCoreHz, [1e9, 1e9, 1e9, 1e9, 1.4e9, 1.4e9, 1.4e9, 1.4e9, 1.8e9, 1.9e9]);
-  assert.equal(first.maxHz, 1.9e9);
-  assert.equal(first.avgHz, (4 * 1e9 + 4 * 1.4e9 + 1.8e9 + 1.9e9) / 10, 'average over cores, not policies');
   const policyFiles = [0, 4, 8, 9].map((p) => path.join(tree, `devices/system/cpu/cpufreq/policy${p}/scaling_cur_freq`));
-  assert.deepEqual(openUnderRoot(), [...policyFiles].sort(), 'one descriptor per policy, not per core');
-  step('cpufreq read once per policy, value on each of its cores');
+  let now = 1_000_000;
+  let freq: CpuFreqProvider;
 
-  write(policyFiles[1]!, 2_500_000);
-  now += 60_000; // rescan
-  const second = freq.sample()!;
-  assert.deepEqual(second.perCoreHz.slice(4, 8), [2.5e9, 2.5e9, 2.5e9, 2.5e9]);
-  assert.deepEqual(openUnderRoot(), [...policyFiles].sort(), 'descriptors kept across the rescan');
-  // Policy 9 goes away (core unplugged): its descriptor is closed by the rescan, the core reads 0 Hz.
-  fs.rmSync(path.join(tree, 'devices/system/cpu/cpu9'), { recursive: true });
-  fs.rmSync(path.join(tree, 'devices/system/cpu/cpufreq/policy9'), { recursive: true });
-  now += 60_000;
-  const third = freq.sample()!;
-  assert.equal(third.perCoreHz.length, 9);
-  assert.deepEqual(openUnderRoot(), policyFiles.slice(0, 3).sort(), 'dropped policy closed');
-  freq.dispose();
-  assert.deepEqual(openUnderRoot(), [], 'dispose closes every descriptor');
-  step('cpufreq descriptors kept across rescans, closed when dropped and on dispose');
+  test('read once per policy, value on each of its cores', () => {
+    cpufreqTree(tree, [[0, 1, 2, 3], [4, 5, 6, 7], [8], [9]], (policy) => 1_000_000 + policy * 100_000);
+    freq = new CpuFreqProvider(tree, () => now);
+    const first = freq.sample()!;
+    assert.deepEqual(first.perCoreHz, [1e9, 1e9, 1e9, 1e9, 1.4e9, 1.4e9, 1.4e9, 1.4e9, 1.8e9, 1.9e9]);
+    assert.equal(first.maxHz, 1.9e9);
+    assert.equal(first.avgHz, (4 * 1e9 + 4 * 1.4e9 + 1.8e9 + 1.9e9) / 10, 'average over cores, not policies');
+    assert.deepEqual(openUnderRoot(), [...policyFiles].sort(), 'one descriptor per policy, not per core');
+  });
 
-  console.log('\nAll Linux sysfs tests passed.');
-}
-
-run()
-  .catch((err) => {
-    console.error(err);
-    process.exitCode = 1;
-  })
-  .finally(() => fs.rmSync(root, { recursive: true, force: true }));
+  test('descriptors kept across rescans, closed when dropped and on dispose', () => {
+    write(policyFiles[1]!, 2_500_000);
+    now += 60_000; // rescan
+    const second = freq.sample()!;
+    assert.deepEqual(second.perCoreHz.slice(4, 8), [2.5e9, 2.5e9, 2.5e9, 2.5e9]);
+    assert.deepEqual(openUnderRoot(), [...policyFiles].sort(), 'descriptors kept across the rescan');
+    // Policy 9 goes away (core unplugged): its descriptor is closed by the rescan, the core reads 0 Hz.
+    fs.rmSync(path.join(tree, 'devices/system/cpu/cpu9'), { recursive: true });
+    fs.rmSync(path.join(tree, 'devices/system/cpu/cpufreq/policy9'), { recursive: true });
+    now += 60_000;
+    const third = freq.sample()!;
+    assert.equal(third.perCoreHz.length, 9);
+    assert.deepEqual(openUnderRoot(), policyFiles.slice(0, 3).sort(), 'dropped policy closed');
+    freq.dispose();
+    assert.deepEqual(openUnderRoot(), [], 'dispose closes every descriptor');
+  });
+});

@@ -1,7 +1,7 @@
 // Measurement bench for the refresh floors (Linux), the counterpart of test/bench-darwin.mjs.
 //
 // For every data source the extension reads, through the real providers (src/platform/linux, bundled
-// with esbuild as in test:linux), it measures:
+// with test/harness/bundle.mjs as the tests are), it measures:
 //   - cost per read, reads back to back: wall µs per call on the calling thread (performance.now, median /
 //     p95 / max), process CPU (process.cpuUsage, which also counts the libuv pool threads that serve the
 //     async reads; its kernel part is the work the kernel does inside our syscalls) and system CPU: busy
@@ -25,14 +25,13 @@
 //   node --expose-gc test/bench-linux.mjs --quick     # ~2 min (shorter windows and paced runs)
 //   node --expose-gc test/bench-linux.mjs --json      # also prints the raw results as JSON
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import v8 from 'node:v8';
+import { bundle, root } from './harness/bundle.mjs';
 
 const require = createRequire(import.meta.url);
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 if (process.platform !== 'linux') {
   console.log(`bench-linux: Linux only (this is ${process.platform}); on macOS use \`pnpm run bench:darwin\`.`);
@@ -44,29 +43,20 @@ if (typeof globalThis.gc !== 'function') {
 }
 
 // The providers as the extension runs them: the TypeScript sources bundled for Node.
-const bundle = path.join(root, 'dist', 'bench-linux-providers.cjs');
-require('esbuild').buildSync({
-  stdin: {
-    contents: [
-      "export { CpuProvider } from './src/platform/linux/cpu.ts';",
-      "export { CpuFreqProvider } from './src/platform/linux/cpufreq.ts';",
-      "export { MemoryProvider } from './src/platform/linux/memory.ts';",
-      "export { CpuTempProvider } from './src/platform/linux/cputemp.ts';",
-      "export { ComponentTempProvider } from './src/platform/linux/components.ts';",
-      "export { BatteryProvider } from './src/platform/linux/battery.ts';",
-      "export { DiskProvider } from './src/disk/disk_provider.ts';",
-    ].join('\n'),
-    resolveDir: root,
-    loader: 'ts',
-  },
-  bundle: true,
-  platform: 'node',
-  format: 'cjs',
-  outfile: bundle,
-  logLevel: 'warning',
+const bundleFile = bundle({
+  name: 'bench-linux-providers',
+  contents: [
+    "export { CpuProvider } from './src/platform/linux/cpu.ts';",
+    "export { CpuFreqProvider } from './src/platform/linux/cpufreq.ts';",
+    "export { MemoryProvider } from './src/platform/linux/memory.ts';",
+    "export { CpuTempProvider } from './src/platform/linux/cputemp.ts';",
+    "export { ComponentTempProvider } from './src/platform/linux/components.ts';",
+    "export { BatteryProvider } from './src/platform/linux/battery.ts';",
+    "export { DiskProvider } from './src/disk/disk_provider.ts';",
+  ].join('\n'),
 });
-const P = require(bundle);
-fs.rmSync(bundle, { force: true });
+const P = require(bundleFile);
+fs.rmSync(bundleFile, { force: true });
 
 const args = process.argv.slice(2);
 const QUICK = args.includes('--quick');

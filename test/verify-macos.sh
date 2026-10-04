@@ -18,12 +18,11 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 STARTED="$(date '+%Y-%m-%d %H:%M %Z')"
 DIRTY_AT_START="$(git status --porcelain --untracked-files=no)"
 
-NAMES=(install typecheck build compile:native test:darwin test:integration test:extension
-  test:linux-temp test:linux-battery test:linux-sysfs leak-darwin package:darwin-arm64)
+NAMES=(install typecheck build compile:native test test:host leak-darwin package:darwin-arm64)
 CMDS=("pnpm install --frozen-lockfile" "pnpm run typecheck" "pnpm run build" "pnpm run compile:native"
-  "pnpm run test:darwin" "pnpm run test:integration" "pnpm run test:extension" "pnpm run test:linux-temp"
-  "pnpm run test:linux-battery" "pnpm run test:linux-sysfs" "node --expose-gc test/leak-darwin.mjs"
-  "pnpm run package:darwin-arm64")
+  "pnpm test" "pnpm run test:host" "node --expose-gc test/leak-darwin.mjs" "pnpm run package:darwin-arm64")
+# Skips: node:test marks a skipped test or suite with "﹣ <name> (<time>) # <reason>"; the scripts print ": skipped".
+SKIPPED='(:|;) skipped|^ *﹣ '
 RESULTS=(); DURATIONS=(); FAILED=""
 
 for i in "${!NAMES[@]}"; do
@@ -37,7 +36,7 @@ for i in "${!NAMES[@]}"; do
   sed -i '' -e $'s/\x1b\\[[0-9;]*m//g' "$out" 2>/dev/null || sed -i -e $'s/\x1b\\[[0-9;]*m//g' "$out"
   [ "$name" = "leak-darwin" ] && grep -q 'LEAK?' "$out" && [ "$rc" -eq 0 ] && rc=99
   if [ "$rc" -ne 0 ]; then RESULTS[$i]="**FAILED** (exit $rc)"; FAILED="$name"
-  elif grep -q -E '(:|;) skipped' "$out"; then RESULTS[$i]="OK, with skips"
+  elif grep -q -E "$SKIPPED" "$out"; then RESULTS[$i]="OK, with skips"
   else RESULTS[$i]="OK"; fi
 done
 
@@ -81,7 +80,7 @@ step_out() { local i; for i in "${!NAMES[@]}"; do [ "${NAMES[$i]}" = "$1" ] && [
   section 'WARN|Warning|deprecated|Ignored build scripts'
   echo "## Skipped"
   echo
-  section '(:|;) skipped'
+  section "$SKIPPED"
   echo "## Leak test (\`leak-darwin.mjs\`)"
   echo
   if [ -n "$(step_out leak-darwin)" ]; then
