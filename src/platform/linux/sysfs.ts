@@ -47,34 +47,141 @@ export function listDir(dir: string): string[] {
   }
 }
 
+/** The canonical path (symlinks resolved), or `null` if it does not exist. */
+export function realpath(p: string): string | null {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a file exists: a stat, which neither reads the attribute nor reaches the device. */
 export function exists(file: string): boolean {
   return fs.existsSync(file);
 }
 
 /**
+ * Read buffer shared by every {@link SysfsAttribute}: reads are synchronous, so it is never used by
+ * two reads at once. A sysfs attribute is at most one page.
+ */
+const ATTRIBUTE_BUFFER = Buffer.allocUnsafe(4096);
+/** Where {@link SysfsAttribute.refreshAsync} reads: the value is dropped, so concurrent reads may share it. */
+const REFRESH_BUFFER = Buffer.allocUnsafe(64);
+
+/** Closes a descriptor, ignoring an already invalid one. */
+function closeQuietly(fd: number): void {
+  try {
+    fs.closeSync(fd);
+  } catch {
+    // already invalid: nothing to release
+  }
+}
+
+/**
  * A sysfs attribute a provider reads at every sample (per-core cpufreq, the CPU sensor, the battery
- * files), found once by discovery. Each read opens the file by path; how it is read (e.g. keeping the
- * descriptor open and reading at offset 0) is decided here only.
+ * files), found once by discovery. The file is opened at the first read and kept open: each read is a
+ * single `pread` at offset 0, which makes the kernel produce the value again, instead of
+ * open + read + close (issue #40, bench:linux: the 16 cpufreq files in 20 µs instead of 114, the
+ * battery in 9 µs instead of 57, reads back to back).
+ * A failed read closes the descriptor and retries once with a fresh one (device removed and back,
+ * core offlined); `close()` releases it when the provider drops the attribute.
  */
 export class SysfsAttribute {
+  private fd = -1;
+  private refreshing = false;
+  /** A descriptor closed while a refresh was reading it: closed when that read completes. */
+  private closeAfterRefresh = -1;
+
   constructor(public readonly file: string) {}
 
   /** The content without surrounding whitespace, or `null` if unreadable. */
   public readText(): string | null {
-    return readText(this.file);
+    const length = this.read();
+    return length < 0 ? null : ATTRIBUTE_BUFFER.toString('utf8', 0, length).trim();
   }
 
   /** The value as an integer, or `NaN` if unreadable or not a number. */
   public readInt(): number {
-    return readInt(this.file);
+    const length = this.read();
+    return length < 0 ? NaN : parseInt(ATTRIBUTE_BUFFER.toString('latin1', 0, length), 10);
+  }
+
+  /**
+   * Reads the attribute on the libuv pool and drops the value, so that the driver refreshes what it
+   * caches off the extension host thread. ACPI battery (issue #40): the first read after the driver's
+   * 1 s cache expires queries the embedded controller (~250 µs); after this refresh the next synchronous
+   * read is served from the cache. Does nothing before the first synchronous read (no descriptor yet)
+   * or while a refresh is in flight.
+   */
+  public refreshAsync(): void {
+    if (this.fd < 0 || this.refreshing) {
+      return;
+    }
+    this.refreshing = true;
+    fs.read(this.fd, REFRESH_BUFFER, 0, REFRESH_BUFFER.length, 0, () => {
+      this.refreshing = false;
+      if (this.closeAfterRefresh >= 0) {
+        closeQuietly(this.closeAfterRefresh);
+        this.closeAfterRefresh = -1;
+      }
+    });
+  }
+
+  /** Closes the descriptor, if open; a later read opens it again. */
+  public close(): void {
+    if (this.fd < 0) {
+      return;
+    }
+    if (this.refreshing) {
+      this.closeAfterRefresh = this.fd; // the refresh still reads it: its number must not be reused yet
+    } else {
+      closeQuietly(this.fd);
+    }
+    this.fd = -1;
+  }
+
+  /** Reads the attribute into the shared buffer: the number of bytes, or -1 if unreadable. */
+  private read(): number {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const reopened = this.fd < 0;
+      try {
+        if (reopened) {
+          this.fd = fs.openSync(this.file, 'r');
+        }
+        return fs.readSync(this.fd, ATTRIBUTE_BUFFER, 0, ATTRIBUTE_BUFFER.length, 0);
+      } catch {
+        this.close();
+        if (reopened) {
+          return -1; // a fresh descriptor failed too: missing file or the driver refuses the read
+        }
+      }
+    }
+    return -1;
   }
 }
 
-/** The attribute `name` of `dir` if the file exists (checked with a stat, not read), else `undefined`. */
-export function attribute(dir: string, name: string): SysfsAttribute | undefined {
+/** Closes the attributes no longer in use after a rediscovery (those of `previous` not in `current`). */
+export function closeDropped(previous: Iterable<SysfsAttribute | undefined>, current: Iterable<SysfsAttribute | undefined>): void {
+  const kept = new Set(current);
+  for (const attr of previous) {
+    if (attr && !kept.has(attr)) {
+      attr.close();
+    }
+  }
+}
+
+/**
+ * The attribute `name` of `dir` if the file exists (checked with a stat, not read), else `undefined`.
+ *
+ * @param reuse - Attributes of the previous discovery by path: the same file keeps its open descriptor.
+ */
+export function attribute(dir: string, name: string, reuse?: ReadonlyMap<string, SysfsAttribute>): SysfsAttribute | undefined {
   const file = path.join(dir, name);
-  return exists(file) ? new SysfsAttribute(file) : undefined;
+  if (!exists(file)) {
+    return undefined;
+  }
+  return reuse?.get(file) ?? new SysfsAttribute(file);
 }
 
 // --- asynchronous (libuv pool) ---------------------------------------------------------------------

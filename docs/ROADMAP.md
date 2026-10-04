@@ -245,7 +245,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
   - Measure execution latency of TypeScript VFS reader at 200 ms polling intervals (`performance.now()`) against the < 250 µs SLA budget.
   - Profile V8 garbage collection overhead and heap allocation stability.
   - Done with `pnpm run bench:linux` (new) and `bench:extension`; results in ADR-0010 and docs/ARCHITECTURE.md "Refresh Floors".
-  - Within 250 µs at 200 ms polling: memory, CPU temperature, load average. At the usual load `/proc/stat` is within it (p95 149–153 µs), cpufreq at the limit (238–256 µs, 401–421 µs with cold caches every 2 s), the battery over it once the ACPI cache expires (304–311 µs): follow-up issue. Disk and component sensors never block the thread.
+  - Within 250 µs at 200 ms polling: memory, CPU temperature, load average. At the usual load `/proc/stat` is within it (p95 149–153 µs), cpufreq at the limit (238–256 µs, 401–421 µs with cold caches every 2 s), the battery over it once the ACPI cache expires (304–311 µs): follow-up #40 (ADR-0017). Disk and component sensors never block the thread.
   - GC: ~33 KB allocated per tick with every source at 200 ms, 1.1–1.3 ms of pause per minute; heap stable after a full GC (no leak).
 - [x] **More temperature sensors**: NVMe [#33](https://github.com/fabogit/mira-bar-extension/issues/33), RAM [#34](https://github.com/fabogit/mira-bar-extension/issues/34), Wi-Fi [#35](https://github.com/fabogit/mira-bar-extension/issues/35), battery [#36](https://github.com/fabogit/mira-bar-extension/issues/36), with limits from hwmon `temp1_max` / `temp1_crit` and a note above the operating maximum (ADR-0016).
   - Measured on the test laptop: these reads take 0.7-41 ms (NVMe SMART command, I2C, Wi-Fi firmware), so they run asynchronously, one at a time, started 100 ms before the read by `requestTempRefresh`; the extension host thread spends ~45 µs per temperature read.
@@ -256,7 +256,7 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 **Follow-ups (Linux):**
 
-- [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) **Thread latency of cpufreq and battery**: p95 238–256 µs and 304–311 µs at 200 ms (401–421 µs and 359–395 µs every 2 s), above the 250 µs target of #5; options: async reads, one cpufreq file per policy, `pread` on open descriptors. Scheduled in v1.3.1 (§5b).
+- [x] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) **Thread latency of cpufreq and battery** (v1.3.1, ADR-0017): p95 238–256 µs and 304–311 µs at 200 ms in v1.3.0, above the 250 µs target of #5. Files kept open and read with `pread` at offset 0, cpufreq per policy: CPU frequency p95 160 µs at 200 ms. The battery's remaining cost is the ACPI embedded controller query (~250 µs once the driver's 1 s cache expires): from a 1 s interval it is paid on the libuv pool 100 ms before the read (p95 ~225-240 µs at the 10 s default); below 1 s it stays on the thread once per second.
 - [x] **Desktop without battery** (2026-10-03, v1.3.0): the whole suite (`typecheck`, `build`, `test:linux`, `test:linux-temp`, `test:linux-battery`, `test:integration`, `test:extension`) passes on a Ryzen 7 3700X desktop (Garuda Linux, kernel 7.2 zen, Node 24 and 26): no battery (widget hidden), `k10temp` Tctl without a critical limit (100 °C shown), one NVMe component sensor. Multiple disks (`mirabar.disk.drives` with the NVMe btrfs root, two SATA SSDs on ntfs3, an 8 TB SATA HDD on exfat, plus a missing path): every mount read, values as `df`, the missing path skipped, *All* and *MostFull* rendered; `statfs` ~12 µs per mount, no device access. Still open: the VSIX in VS Code on that desktop.
 - [x] **SATA drives in standby** (2026-10-03, Garuda): `statfs` and `drivetemp` (SCT Status) leave SSDs and the hard disk in standby; the SMART attributes, `drivetemp`'s fallback without SCT, wake them (hard disk spin-up 9.5 s). SATA temperatures are therefore not read (ADR-0016).
 - [ ] **Battery time on a real discharge**: compare with `upower -i` on battery (the test laptop was held at its charge limit, *Not charging*).
@@ -282,7 +282,7 @@ The final polish of the 1.x codebase, built from three read-only audits of `deve
 
 **2. Linux read latency**
 
-- [ ] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) cpufreq and battery reads under 250 µs of thread time: descriptors kept open and read from offset 0, cpufreq per policy, async only if needed; `bench:linux` before and after at the usual load.
+- [x] [#40](https://github.com/fabogit/mira-bar-extension/issues/40) cpufreq and battery reads under 250 µs of thread time: descriptors kept open and read from offset 0, cpufreq per policy; the ACPI battery refreshed on the libuv pool ahead of the read from a 1 s interval. `bench:linux` before and after, machine idle ([ADR-0017](adr/0017-linux-sysfs-reads-kept-open-battery-refresh.md)).
 
 **3. Tests, CI and build**
 

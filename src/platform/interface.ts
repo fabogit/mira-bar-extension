@@ -74,6 +74,19 @@ export interface TelemetryPlatformProvider {
   isBatteryAvailable(): boolean;
 
   /**
+   * Optional: starts a battery read off the thread without waiting for it, so that the next
+   * sampleBattery() is served from the driver's cache (Linux ACPI batteries, whose driver queries the
+   * embedded controller once its 1 s cache has expired).
+   */
+  requestBatteryRefresh?(): void;
+
+  /**
+   * Optional: releases what the provider keeps open between reads (Linux: the sysfs files read at
+   * every sample). Called when the monitor is disposed.
+   */
+  dispose?(): void;
+
+  /**
    * Optional platform-specific architecture topology description (e.g. 'Apple M4 (4P + 6E)').
    */
   getTopologyDescription?(): string;

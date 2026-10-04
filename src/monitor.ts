@@ -23,10 +23,24 @@ import { CPU_LAYOUTS, DISK_MULTI_DISPLAY_NAMES, DISK_MULTI_DISPLAYS, LOAD_FORMAT
 const SCHEDULE_SLACK_MS = 25;
 
 /**
- * Temperature on macOS: a background sensor pass (~16-18 ms on an M4) is requested this long before
- * the read, so the read shows a reading taken just before it instead of one a whole interval old.
+ * Sources refreshed off the event loop this long before their read:
+ * - temperature: a background sensor pass (macOS ~16-18 ms on an M4; Linux component sensors), so the
+ *   read shows a reading taken just before it instead of one a whole interval old;
+ * - battery (Linux ACPI): one read on the libuv pool pays the embedded controller query (~250 µs once
+ *   the driver's 1 s cache has expired), so the read on this thread is served from the cache (#40).
  */
-const TEMP_PREFETCH_MS = 100;
+const PREFETCH_MS = 100;
+
+/** Sections with a source that can be refreshed ahead of the read (PREFETCH_MS). */
+const PREFETCH_SECTIONS = ['temp', 'battery'] as const;
+type PrefetchSection = (typeof PREFETCH_SECTIONS)[number];
+
+/**
+ * Battery prefetch only from this interval up: the ACPI driver caches the battery state for 1 s
+ * (`battery.cache_time`), so at shorter intervals most reads hit the cache anyway and the refresh
+ * would add its cost to every read (#40, measured: at 200 ms the median grows from ~105 to ~150 µs).
+ */
+const BATTERY_PREFETCH_MIN_MS = 1000;
 
 /**
  * CPU usage is the difference between two readings, and the first one after activation has only the
@@ -58,8 +72,8 @@ export class ResourceMonitor implements vscode.Disposable {
   private readonly lastReadAt = zeros();
   /** Time of the last tooltip rebuild per section (0 = never). */
   private readonly lastTooltipAt = zeros();
-  /** lastReadAt.temp for which the next pass was already requested (TEMP_PREFETCH_MS). */
-  private tempPrefetchedFor = -1;
+  /** lastReadAt per section for which the refresh before the next read was already requested (PREFETCH_MS). */
+  private readonly prefetchedFor: Record<PrefetchSection, number> = { temp: -1, battery: -1 };
   /** Sequence number of the temperature reading in the current tooltip (Live rebuilds on change). */
   private tempTooltipSeq: number | undefined;
   /**
@@ -134,6 +148,7 @@ export class ResourceMonitor implements vscode.Disposable {
     }
     this.diskPending = null;
     this.disposeItems();
+    this.provider.dispose?.();
   }
 
   // --- widgets -------------------------------------------------------------------------------------
@@ -236,14 +251,26 @@ export class ResourceMonitor implements vscode.Disposable {
     }
   }
 
-  /** Whether the temperature pass can be requested ahead of the read (macOS sensors, Linux components; intervals of 400 ms or more). */
-  private tempPrefetchEnabled(): boolean {
-    return this.provider.requestTempRefresh !== undefined && this.config.statusBarMs.temp >= 4 * TEMP_PREFETCH_MS;
+  /**
+   * When the refresh ahead of a section's next read is due, or null when there is none to request:
+   * temperature (macOS sensors, Linux components) at intervals of 400 ms or more, battery at
+   * BATTERY_PREFETCH_MIN_MS or more; at most one per read.
+   */
+  private prefetchAt(section: PrefetchSection): number | null {
+    const interval = this.config.statusBarMs[section];
+    const enabled =
+      section === 'temp'
+        ? this.config.showCpuTemp && this.provider.requestTempRefresh !== undefined && interval >= 4 * PREFETCH_MS
+        : this.provider.requestBatteryRefresh !== undefined && interval >= BATTERY_PREFETCH_MIN_MS && this.visible('battery');
+    if (!enabled || this.prefetchedFor[section] === this.lastReadAt[section]) {
+      return null;
+    }
+    return this.lastReadAt[section] + interval - PREFETCH_MS;
   }
 
   /**
-   * One wake-up: requests the temperature pass if it is due, reads every section whose status bar
-   * interval has elapsed (all of them when forced) and schedules the next wake-up.
+   * One wake-up: requests the refreshes ahead of a read that are due (temperature, battery), reads every
+   * section whose status bar interval has elapsed (all of them when forced) and schedules the next wake-up.
    */
   private run(force: boolean): void {
     if (this.disposed) {
@@ -254,11 +281,15 @@ export class ResourceMonitor implements vscode.Disposable {
       this.timer = null;
     }
     const now = Date.now();
-    if (!force && this.config.showCpuTemp && this.tempPrefetchEnabled() && this.tempPrefetchedFor !== this.lastReadAt.temp) {
-      const prefetchAt = this.lastReadAt.temp + this.config.statusBarMs.temp - TEMP_PREFETCH_MS;
-      if (now + SCHEDULE_SLACK_MS >= prefetchAt) {
-        this.tempPrefetchedFor = this.lastReadAt.temp;
-        this.provider.requestTempRefresh!();
+    for (const section of PREFETCH_SECTIONS) {
+      const at = force ? null : this.prefetchAt(section);
+      if (at !== null && now + SCHEDULE_SLACK_MS >= at) {
+        this.prefetchedFor[section] = this.lastReadAt[section];
+        if (section === 'temp') {
+          this.provider.requestTempRefresh!();
+        } else {
+          this.provider.requestBatteryRefresh!();
+        }
       }
     }
     for (const section of TOOLTIP_SECTIONS) {
@@ -285,8 +316,11 @@ export class ResourceMonitor implements vscode.Disposable {
         next = Math.min(next, this.lastReadAt[section] + this.config.statusBarMs[section]);
       }
     }
-    if (this.config.showCpuTemp && this.tempPrefetchEnabled() && this.tempPrefetchedFor !== this.lastReadAt.temp) {
-      next = Math.min(next, this.lastReadAt.temp + this.config.statusBarMs.temp - TEMP_PREFETCH_MS);
+    for (const section of PREFETCH_SECTIONS) {
+      const at = this.prefetchAt(section);
+      if (at !== null) {
+        next = Math.min(next, at);
+      }
     }
     if (!Number.isFinite(next)) {
       return;
