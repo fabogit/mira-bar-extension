@@ -12,8 +12,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { CpuProvider } from '../../src/platform/linux/cpu.js';
+import type { ComponentTempProvider } from '../../src/platform/linux/components.js';
 import { CpuFreqProvider } from '../../src/platform/linux/cpufreq.js';
 import { CpuTempProvider } from '../../src/platform/linux/cputemp.js';
+import { LinuxTelemetryProvider } from '../../src/platform/linux/linux_provider.js';
 import { MemoryProvider } from '../../src/platform/linux/memory.js';
 
 const roots: string[] = [];
@@ -323,5 +325,88 @@ describe('CpuTempProvider: which sensor is the CPU', () => {
       assert.equal(temp.sample(), null, `reading ${invalid}`);
     }
     temp.dispose();
+  });
+});
+
+describe('LinuxTelemetryProvider.sampleTemp', () => {
+  const sys = tree();
+  hwmon(sys, 0, 'k10temp', { temp1_input: 50000, temp1_label: 'Tctl' });
+  hwmon(sys, 1, 'nvme', { temp1_input: 40000 });
+  let now = 1_000_000;
+  const provider = new LinuxTelemetryProvider({ sysRoot: sys, procRoot: tree(), now: () => now });
+  const components = (provider as unknown as { components: ComponentTempProvider }).components;
+  /** Waits for the component pass sampleTemp started, if any (the provider keeps no handle on it). */
+  const pass = async (): Promise<void> => {
+    if (components.busy) {
+      await components.refresh();
+    }
+  };
+  const nvme = (temp: ReturnType<LinuxTelemetryProvider['sampleTemp']>): number | null | undefined =>
+    temp?.sensors?.find((s) => s.label === 'NVMe SSD')?.celsius;
+  after(() => provider.dispose());
+
+  test('CPU reading cached for maxAgeMs; components refreshed by the read that finds them older', async () => {
+    const first = provider.sampleTemp(1000)!;
+    assert.deepEqual([first.tempCelsius, first.sensors], [50, undefined], 'components not read yet');
+    assert.ok(components.busy, 'the first read starts a component pass');
+    await pass();
+    const cached = provider.sampleTemp(1000)!;
+    assert.deepEqual([cached.sampleSeq, cached.ageMs, nvme(cached)], [first.sampleSeq, undefined, 40]);
+    assert.equal(components.busy, false, 'components fresh: no pass');
+    now += 400;
+    write(sys, 'class/hwmon/hwmon0/temp1_input', 55000);
+    write(sys, 'class/hwmon/hwmon1/temp1_input', 42000);
+    const young = provider.sampleTemp(1000)!;
+    assert.deepEqual([young.tempCelsius, young.sampleSeq, young.ageMs, nvme(young)], [50, first.sampleSeq, 400, 40]);
+    assert.equal(components.busy, false);
+    // Older than maxAgeMs: the CPU is read again and a component pass starts; until it completes the
+    // previous component readings are shown.
+    now += 1100;
+    const reread = provider.sampleTemp(1000)!;
+    assert.deepEqual([reread.tempCelsius, reread.sampleSeq, reread.ageMs, nvme(reread)], [55, first.sampleSeq! + 1, undefined, 40]);
+    assert.ok(components.busy);
+    await pass();
+    assert.equal(nvme(provider.sampleTemp(1000)), 42);
+  });
+
+  test('component readings older than 3 intervals (at least 5 s) not shown', async () => {
+    // maxAgeMs 1000 (half a 2 s interval): stale after 3 × 2 s. The pass started by the read is still
+    // running (a slow device), so the readings shown are those of the previous pass.
+    now += 6000;
+    assert.equal(nvme(provider.sampleTemp(1000)), 42, '6 s old: shown');
+    await pass();
+    now += 6001;
+    const stale = provider.sampleTemp(1000)!;
+    assert.deepEqual([stale.tempCelsius, stale.sensors], [55, undefined], '6.001 s old: CPU only');
+    const pending = components.refresh();
+    assert.equal(provider.sampleTemp(1000)?.sensors, undefined);
+    assert.equal(components.refresh(), pending, 'one pass in flight');
+    await pass();
+    assert.equal(nvme(provider.sampleTemp(1000)), 42);
+    // Short intervals: never stale before 5 s.
+    now += 5000;
+    assert.equal(nvme(provider.sampleTemp(500)), 42, '5 s old with maxAgeMs 500: shown');
+    now += 1;
+    assert.equal(provider.sampleTemp(500)?.sensors, undefined, '5.001 s old: not shown');
+    await pass();
+  });
+
+  test("componentSensors 'off': CPU only, no pass", async () => {
+    provider.setComponentSensors('off');
+    now += 2000;
+    const cpuOnly = provider.sampleTemp(1000)!;
+    assert.deepEqual([cpuOnly.tempCelsius, cpuOnly.sensors, components.busy], [55, undefined, false]);
+    provider.setComponentSensors('awake');
+    provider.requestTempRefresh();
+    await pass();
+    assert.equal(nvme(provider.sampleTemp(1000)), 42);
+  });
+
+  test('no CPU sensor: null', () => {
+    const noCpu = tree();
+    hwmon(noCpu, 0, 'nvme', { temp1_input: 40000 });
+    const p = new LinuxTelemetryProvider({ sysRoot: noCpu, procRoot: tree(), now: () => now });
+    assert.equal(p.sampleTemp(1000), null);
+    p.dispose();
   });
 });
