@@ -2,7 +2,7 @@
 // Wi-Fi (#35), battery (#36), labels, invalid values, rescan (components and CPU, #45), the CPU cache,
 // and the tooltip rows (ADR-0016).
 //
-// Usage (any OS):  pnpm test (bundled with the vscode mock: sections.ts imports config.ts)
+// Usage (any OS):  pnpm test
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';

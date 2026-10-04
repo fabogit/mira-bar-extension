@@ -3,7 +3,7 @@
 // values, several batteries, discovery (system batteries only, rescan while none is found, #45), and
 // the tooltip row.
 //
-// Usage (any OS):  pnpm test (bundled with the vscode mock: sections.ts imports config.ts)
+// Usage (any OS):  pnpm test
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
