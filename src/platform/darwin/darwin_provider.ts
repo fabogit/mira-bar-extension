@@ -69,8 +69,13 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
    * @param log - Where a native addon failure is reported (the MiraBar output channel).
    * @param addon - The native addon (default: the bundled one; a fake in tests, `null` for the fallback).
    *   If its first calls throw, the provider uses the Node.js fallback instead of failing activation.
+   * @param now - Clock (ms since epoch), for the battery re-probe.
    */
-  constructor(log: PlatformLogger, addon: DarwinNativeAddon | null = loadDarwinNativeAddon(log)) {
+  constructor(
+    log: PlatformLogger,
+    addon: DarwinNativeAddon | null = loadDarwinNativeAddon(log),
+    private readonly now: () => number = Date.now,
+  ) {
     let topology: CpuTopology | null = null;
     if (addon) {
       try {
@@ -81,7 +86,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
           this.swapTickBuffers(cores);
         }
         this.batteryPresent = addon.getBatteryStats().isAvailable;
-        this.batteryRecheckAt = Date.now() + BATTERY_RECHECK_MS;
+        this.batteryRecheckAt = this.now() + BATTERY_RECHECK_MS;
       } catch (err) {
         log.warn(`Native addon failed at startup; using the Node.js fallback: ${describeError(err)}`);
         topology = null;
@@ -424,7 +429,7 @@ export class DarwinTelemetryProvider implements TelemetryPlatformProvider {
     if (!this.nativeAddon || this.batteryPresent) {
       return this.batteryPresent;
     }
-    const now = Date.now();
+    const now = this.now();
     if (now >= this.batteryRecheckAt) {
       this.batteryRecheckAt = now + BATTERY_RECHECK_MS;
       this.batteryPresent = this.nativeAddon.getBatteryStats().isAvailable;
