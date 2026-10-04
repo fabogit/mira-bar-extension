@@ -66,6 +66,17 @@ export function exists(file: string): boolean {
  * two reads at once. A sysfs attribute is at most one page.
  */
 const ATTRIBUTE_BUFFER = Buffer.allocUnsafe(4096);
+/** Where {@link SysfsAttribute.refreshAsync} reads: the value is dropped, so concurrent reads may share it. */
+const REFRESH_BUFFER = Buffer.allocUnsafe(64);
+
+/** Closes a descriptor, ignoring an already invalid one. */
+function closeQuietly(fd: number): void {
+  try {
+    fs.closeSync(fd);
+  } catch {
+    // already invalid: nothing to release
+  }
+}
 
 /**
  * A sysfs attribute a provider reads at every sample (per-core cpufreq, the CPU sensor, the battery
@@ -78,6 +89,9 @@ const ATTRIBUTE_BUFFER = Buffer.allocUnsafe(4096);
  */
 export class SysfsAttribute {
   private fd = -1;
+  private refreshing = false;
+  /** A descriptor closed while a refresh was reading it: closed when that read completes. */
+  private closeAfterRefresh = -1;
 
   constructor(public readonly file: string) {}
 
@@ -93,16 +107,38 @@ export class SysfsAttribute {
     return length < 0 ? NaN : parseInt(ATTRIBUTE_BUFFER.toString('latin1', 0, length), 10);
   }
 
+  /**
+   * Reads the attribute on the libuv pool and drops the value, so that the driver refreshes what it
+   * caches off the extension host thread. ACPI battery (issue #40): the first read after the driver's
+   * 1 s cache expires queries the embedded controller (~250 µs); after this refresh the next synchronous
+   * read is served from the cache. Does nothing before the first synchronous read (no descriptor yet)
+   * or while a refresh is in flight.
+   */
+  public refreshAsync(): void {
+    if (this.fd < 0 || this.refreshing) {
+      return;
+    }
+    this.refreshing = true;
+    fs.read(this.fd, REFRESH_BUFFER, 0, REFRESH_BUFFER.length, 0, () => {
+      this.refreshing = false;
+      if (this.closeAfterRefresh >= 0) {
+        closeQuietly(this.closeAfterRefresh);
+        this.closeAfterRefresh = -1;
+      }
+    });
+  }
+
   /** Closes the descriptor, if open; a later read opens it again. */
   public close(): void {
-    if (this.fd >= 0) {
-      try {
-        fs.closeSync(this.fd);
-      } catch {
-        // already invalid: nothing to release
-      }
-      this.fd = -1;
+    if (this.fd < 0) {
+      return;
     }
+    if (this.refreshing) {
+      this.closeAfterRefresh = this.fd; // the refresh still reads it: its number must not be reused yet
+    } else {
+      closeQuietly(this.fd);
+    }
+    this.fd = -1;
   }
 
   /** Reads the attribute into the shared buffer: the number of bytes, or -1 if unreadable. */

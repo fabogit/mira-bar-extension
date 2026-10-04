@@ -506,6 +506,47 @@ if (typeof globalThis.gc === 'function') {
   step('deactivate and re-activate');
 }
 
+// Battery refreshed off the thread ahead of each read (#40): from a 1 s interval (the ACPI driver's
+// cache time) one refresh ~100 ms before every read; none at shorter intervals; dispose reaches the provider.
+{
+  const { module: monitorModule, cleanup: cleanupMonitor } = loadModule('src/monitor.ts', 'test-monitor');
+  const run = async (batteryMs, ms) => {
+    const events = [];
+    let disposed = false;
+    const provider = {
+      platformName: 'linux',
+      isBatteryAvailable: () => true,
+      sampleBattery: () => (events.push({ kind: 'read', at: Date.now() }), null),
+      requestBatteryRefresh: () => events.push({ kind: 'refresh', at: Date.now() }),
+      dispose: () => (disposed = true),
+    };
+    const base = config.getConfig();
+    const cfg = {
+      ...base,
+      ...{ showCpuUsage: false, showCpuFreq: false, showCpuTemp: false, showMem: false, showDisk: false, showSettings: false, showBattery: true },
+      statusBarMs: { ...base.statusBarMs, battery: batteryMs },
+    };
+    const monitor = new monitorModule.ResourceMonitor(provider, {}, vscode.window.createOutputChannel('test'), cfg);
+    await sleep(ms);
+    monitor.dispose();
+    assert.ok(disposed, 'provider disposed with the monitor');
+    return events;
+  };
+  const events = await run(1000, 2400);
+  const reads = events.filter((e) => e.kind === 'read');
+  const refreshes = events.filter((e) => e.kind === 'refresh');
+  assert.equal(reads.length, 3, `reads at 0, 1 and 2 s: ${reads.length}`);
+  assert.equal(refreshes.length, 2, `one refresh per read after the first: ${refreshes.length}`);
+  for (const refresh of refreshes) {
+    const next = reads.find((r) => r.at >= refresh.at);
+    assert.ok(next && next.at - refresh.at >= 50 && next.at - refresh.at <= 200, `refresh ${next ? next.at - refresh.at : '-'} ms before the read`);
+  }
+  const fast = await run(500, 1200);
+  assert.equal(fast.filter((e) => e.kind === 'refresh').length, 0, 'no refresh below 1 s');
+  cleanupMonitor();
+  step('battery refreshed ahead of each read from 1 s, not below');
+}
+
 assert.deepEqual(s.errors.filter((e) => /disposed/.test(e)), [], 'no writes to disposed items');
 clearInterval(keepAlive);
 cleanup();

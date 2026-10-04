@@ -143,6 +143,11 @@ export class LinuxTelemetryProvider implements TelemetryPlatformProvider {
     return this.batt.isAvailable;
   }
 
+  /** Refreshes the battery driver's cache off the thread before the next sampleBattery() (issue #40). */
+  public requestBatteryRefresh(): void {
+    this.batt.requestRefresh();
+  }
+
   /** Closes the sysfs files kept open between reads (cpufreq, CPU sensor, battery). */
   public dispose(): void {
     this.freq.dispose();

@@ -1,5 +1,6 @@
 // Linux sysfs reads kept open (#40) against a mocked sysfs tree: an attribute keeps one descriptor and
-// reads the current value at offset 0, reopens after a failed read, releases it on close; cpufreq reads
+// reads the current value at offset 0, reopens after a failed read, releases it on close, refreshes off
+// the thread (battery ahead of the read) without closing a descriptor still in use; cpufreq reads
 // once per policy and fans the value out to the policy's cores, keeps its descriptors across the
 // rescan, and closes them on dispose.
 //
@@ -54,7 +55,7 @@ function cpufreqTree(base: string, clusters: number[][], khz: (policy: number) =
   }
 }
 
-function run(): void {
+async function run(): Promise<void> {
   if (!fs.existsSync('/proc/self/fd')) {
     console.log('linux-sysfs: needs /proc/self/fd (Linux); skipped.');
     return;
@@ -89,6 +90,23 @@ function run(): void {
   assert.deepEqual(openUnderRoot(), [], 'no descriptor left after a failed read');
   step('missing file, failed read: unreadable, retried, nothing left open');
 
+  // refreshAsync (battery ahead of the read): nothing before the first read, one read in flight at a
+  // time, and a close during it releases the descriptor once that read completes.
+  const refreshed = new SysfsAttribute(path.join(root, 'attr/refreshed'));
+  write(refreshed.file, 42);
+  refreshed.refreshAsync();
+  assert.deepEqual(openUnderRoot(), [], 'no descriptor opened by a refresh');
+  assert.equal(refreshed.readInt(), 42);
+  refreshed.refreshAsync();
+  refreshed.refreshAsync(); // ignored: one in flight
+  refreshed.close();
+  assert.deepEqual(openUnderRoot(), [refreshed.file], 'kept open while the refresh reads it');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(openUnderRoot(), [], 'closed once the refresh completed');
+  assert.equal(refreshed.readInt(), 42, 'reads again after close');
+  refreshed.close();
+  step('refresh off the thread, close deferred while it reads');
+
   // Two clusters of 4 cores (shared policies) and two cores with a policy each.
   const tree = path.join(root, 'clusters');
   cpufreqTree(tree, [[0, 1, 2, 3], [4, 5, 6, 7], [8], [9]], (policy) => 1_000_000 + policy * 100_000);
@@ -121,11 +139,9 @@ function run(): void {
   console.log('\nAll Linux sysfs tests passed.');
 }
 
-try {
-  run();
-} catch (err) {
-  console.error(err);
-  process.exitCode = 1;
-} finally {
-  fs.rmSync(root, { recursive: true, force: true });
-}
+run()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  .finally(() => fs.rmSync(root, { recursive: true, force: true }));

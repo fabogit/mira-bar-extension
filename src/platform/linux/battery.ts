@@ -132,6 +132,17 @@ export class BatteryProvider {
     this.batteries = found;
   }
 
+  /**
+   * Makes the battery driver refresh its cached state off the extension host thread, ahead of the next
+   * sample (the monitor calls it shortly before the read): one read of `capacity` per battery on the
+   * libuv pool, which pays the ACPI embedded controller query there (issue #40).
+   */
+  public requestRefresh(): void {
+    for (const bat of this.batteries) {
+      bat.capacity.refreshAsync();
+    }
+  }
+
   /** Closes the open battery files. */
   public dispose(): void {
     for (const bat of this.batteries) {
