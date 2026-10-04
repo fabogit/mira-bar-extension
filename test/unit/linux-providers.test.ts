@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { CpuProvider } from '../../src/platform/linux/cpu.js';
 import { CpuFreqProvider } from '../../src/platform/linux/cpufreq.js';
+import { CpuTempProvider } from '../../src/platform/linux/cputemp.js';
 import { MemoryProvider } from '../../src/platform/linux/memory.js';
 
 const roots: string[] = [];
@@ -248,5 +249,79 @@ describe('MemoryProvider (/proc/meminfo)', () => {
     assert.equal(new MemoryProvider(proc).sample(), null, 'no /proc/meminfo');
     writeMeminfo(proc, { MemFree: GiB, MemAvailable: GiB });
     assert.equal(new MemoryProvider(proc).sample(), null, 'no MemTotal');
+  });
+});
+
+/** hwmon<n> named `name`, with its files (values in m°C). */
+function hwmon(sys: string, n: number, name: string, files: Record<string, string | number> = {}): void {
+  write(sys, `class/hwmon/hwmon${n}/name`, name);
+  for (const [file, value] of Object.entries(files)) {
+    write(sys, `class/hwmon/hwmon${n}/${file}`, value);
+  }
+}
+
+/** Sensor chosen by a fresh CpuTempProvider: `name: label`, or null. */
+function cpuSensor(sys: string): string | null {
+  const temp = new CpuTempProvider(sys);
+  const sample = temp.sample();
+  temp.dispose();
+  return sample ? `${sample.sensorName}: ${sample.sensorLabel}` : null;
+}
+
+describe('CpuTempProvider: which sensor is the CPU', () => {
+  test("the test laptop's hwmon layout: k10temp Tctl, not acpitz listed before it", () => {
+    // /sys/class/hwmon on the reference laptop (Ryzen AI, cros_ec, MediaTek Wi-Fi), in kernel order.
+    const sys = tree();
+    hwmon(sys, 0, 'ACAD');
+    hwmon(sys, 1, 'acpitz', { temp1_input: 56000, temp2_input: 45000, temp3_input: 47000, temp4_input: 44000 });
+    hwmon(sys, 2, 'BAT1');
+    hwmon(sys, 3, 'nvme', { temp1_input: 38850, temp1_label: 'Composite', temp1_max: 81850, temp1_crit: 84850 });
+    hwmon(sys, 4, 'amdgpu', { temp1_input: 49000, temp1_label: 'edge' });
+    hwmon(sys, 5, 'k10temp', { temp1_input: 52375, temp1_label: 'Tctl' });
+    hwmon(sys, 6, 'spd5118', { temp1_input: 41250, temp1_max: 55000, temp1_crit: 85000 });
+    hwmon(sys, 7, 'spd5118', { temp1_input: 42000, temp1_max: 55000, temp1_crit: 85000 });
+    hwmon(sys, 8, 'cros_ec', { temp1_input: 47000, temp1_label: 'cpu@4c', temp1_crit: 105000 });
+    hwmon(sys, 9, 'ucsi_source_psy_USBC000:001');
+    hwmon(sys, 13, 'mt7921_phy0', { temp1_input: 43000 });
+    const sample = new CpuTempProvider(sys).sample();
+    assert.deepEqual(sample, { tempCelsius: 52.375, sensorName: 'k10temp', sensorLabel: 'Tctl', critCelsius: undefined });
+  });
+
+  test('AMD (k10temp, zenpower) over coretemp over generic sensors, whatever the order', () => {
+    const sys = tree();
+    hwmon(sys, 0, 'acpitz', { temp1_input: 40000 });
+    hwmon(sys, 1, 'coretemp', { temp1_input: 50000, temp1_label: 'Package id 0' });
+    hwmon(sys, 2, 'zenpower', { temp1_input: 60000, temp1_label: 'Tdie' });
+    assert.equal(cpuSensor(sys), 'zenpower: Tdie');
+    fs.rmSync(path.join(sys, 'class/hwmon/hwmon2'), { recursive: true });
+    assert.equal(cpuSensor(sys), 'coretemp: Package id 0');
+    // An AMD sensor without temperature inputs is skipped.
+    hwmon(sys, 3, 'k10temp');
+    assert.equal(cpuSensor(sys), 'coretemp: Package id 0');
+  });
+
+  test('generic sensors: acpitz or a name with "cpu"; GPU, NVMe and EC never; then thermal_zone0', () => {
+    const sys = tree();
+    hwmon(sys, 0, 'amdgpu', { temp1_input: 49000 });
+    hwmon(sys, 1, 'nvme', { temp1_input: 38000 });
+    hwmon(sys, 2, 'cros_ec', { temp1_input: 47000 });
+    write(sys, 'class/thermal/thermal_zone0/temp', 45000);
+    assert.equal(cpuSensor(sys), 'acpi: thermal_zone0', 'no CPU hwmon sensor: the thermal zone');
+    hwmon(sys, 3, 'cpu_thermal', { temp1_input: 51000 });
+    assert.equal(cpuSensor(sys), 'cpu_thermal: temp1_input', 'name with "cpu", no label: the file name');
+  });
+
+  test('temp1_input first, else the first input; invalid readings null', () => {
+    const sys = tree();
+    hwmon(sys, 0, 'k10temp', { temp3_input: 61000, temp3_label: 'Tccd1', temp5_input: 58000, temp5_label: 'Tccd3' });
+    assert.equal(cpuSensor(sys), 'k10temp: Tccd1', 'no temp1: the first input in name order');
+    hwmon(sys, 0, 'k10temp', { temp1_input: 63000, temp1_label: 'Tctl' });
+    assert.equal(cpuSensor(sys), 'k10temp: Tctl');
+    const temp = new CpuTempProvider(sys);
+    for (const invalid of [0, -5000, 'garbage']) {
+      write(sys, 'class/hwmon/hwmon0/temp1_input', invalid);
+      assert.equal(temp.sample(), null, `reading ${invalid}`);
+    }
+    temp.dispose();
   });
 });
