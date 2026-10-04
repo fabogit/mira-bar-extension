@@ -6,7 +6,7 @@ import type { MemoryInfo } from '../../types.js';
  * High-performance, single-pass Linux RAM and Swap usage provider.
  *
  * Reads directly from `/proc/meminfo` and parses MemTotal, MemAvailable, SwapTotal,
- * and SwapFree. Calculates actual memory consumption taking into account modern Linux
+ * and SwapFree (MemFree, Buffers and Cached stand in for a missing MemAvailable). Calculates actual memory consumption taking into account modern Linux
  * kernel memory management heuristics (where buffers and reclaimable page cache are
  * accounted for in `MemAvailable`).
  */
@@ -30,7 +30,11 @@ export class MemoryProvider {
       const content = fs.readFileSync(this.meminfoPath, 'utf8');
 
       let memTotalKb = 0;
-      let memAvailableKb = 0;
+      let memAvailableKb: number | null = null;
+      // Kernels before 3.14 (and some container views of meminfo) have no MemAvailable.
+      let memFreeKb = 0;
+      let buffersKb = 0;
+      let cachedKb = 0;
       let swapTotalKb = 0;
       let swapFreeKb = 0;
 
@@ -47,6 +51,15 @@ export class MemoryProvider {
           case 'MemAvailable':
             memAvailableKb = parseInt(line.slice(colon + 1), 10) || 0;
             break;
+          case 'MemFree':
+            memFreeKb = parseInt(line.slice(colon + 1), 10) || 0;
+            break;
+          case 'Buffers':
+            buffersKb = parseInt(line.slice(colon + 1), 10) || 0;
+            break;
+          case 'Cached':
+            cachedKb = parseInt(line.slice(colon + 1), 10) || 0;
+            break;
           case 'SwapTotal':
             swapTotalKb = parseInt(line.slice(colon + 1), 10) || 0;
             break;
@@ -61,7 +74,9 @@ export class MemoryProvider {
       }
 
       const totalBytes = memTotalKb * 1024;
-      const availableBytes = memAvailableKb * 1024;
+      // Without MemAvailable, free plus buffers and page cache (what `free` showed before it): used
+      // would otherwise read 100%.
+      const availableBytes = (memAvailableKb ?? Math.min(memTotalKb, memFreeKb + buffersKb + cachedKb)) * 1024;
       const usedBytes = Math.max(0, totalBytes - availableBytes);
       const usedPercent = (usedBytes / totalBytes) * 100;
 
