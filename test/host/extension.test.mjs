@@ -1,5 +1,5 @@
 // Behaviour tests of the extension outside VS Code (test/harness/vscode-mock.cjs): per-section
-// schedule, tooltips, minimums, settings panel, disk isolation, lifecycle and heap stability.
+// schedule, tooltips, minimums, settings panel, disk isolation, lifecycle (heap stability: `pnpm run test:soak`).
 //
 // The tests share one extension instance and run in order: each one starts from the settings the
 // previous one left (most restore them at the end).
@@ -481,18 +481,6 @@ test('placement and order', async () => {
   assert.deepEqual(names.slice(0, 2), ['MiraBar: Memory', 'MiraBar: CPU usage']);
   assert.equal(names.at(-1), 'MiraBar Settings');
   await setCfg({ order: undefined, alignment: undefined, priority: undefined }, 300);
-});
-
-// Heap stability at 200 ms Live with every section on.
-test('heap stability', { skip: typeof globalThis.gc !== 'function' && 'needs --expose-gc' }, async (t) => {
-  await setCfg({ allowFastRefresh: true, 'tooltip.mode': 'Live', statusBarMs: { cpu: 200, freq: 200, temp: 200, mem: 200, battery: 200, disk: 200 } }, 3000);
-  globalThis.gc();
-  const h0 = process.memoryUsage().heapUsed;
-  await sleep(15000);
-  globalThis.gc();
-  const growthKb = (process.memoryUsage().heapUsed - h0) / 1024;
-  assert.ok(growthKb < 512, `heap growth over 15 s: ${growthKb.toFixed(0)} KB`);
-  t.diagnostic(`heap growth over 15 s at 200 ms Live: ${growthKb.toFixed(0)} KB`);
 });
 
 // Deactivate with a statfs pending, then activate again: no writes to disposed items, one schedule.
