@@ -386,7 +386,7 @@ test('toggle commands', async () => {
     assert.equal(s.cfg[key], to, `${command}: ${from} -> ${to}`);
     assert.equal(s.notifications.at(-1), `MiraBar: ${message(to)}`);
   }
-  await sleep(300);
+  await until(() => gear().tooltip.value.includes('| Tooltip mode | Live |'), 'gear follows the toggles');
   const options = gear().tooltip.value;
   assert.ok(options.includes('| Tooltip mode | Live | [switch to Static](command:mirabar.toggleTooltipMode) |'), 'gear: tooltip mode');
   assert.ok(!options.includes('| Auto-refresh |'), 'gear: no auto-refresh row in Live mode');
@@ -397,7 +397,7 @@ test('toggle commands', async () => {
     assert.equal(s.cfg[key], from, `${command} again: back to ${from}`);
   }
   assert.equal(s.notifications.length, 10, 'one confirmation per run');
-  await setCfg(Object.fromEntries(toggles.map(([, key]) => [key, undefined])), 300);
+  await setCfg(Object.fromEntries(toggles.map(([, key]) => [key, undefined])));
 });
 
 // Invalid values in settings.json: widgets and panel keep working with the defaults, each value logged once.

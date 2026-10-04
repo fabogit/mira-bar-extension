@@ -172,6 +172,9 @@ pnpm test
 # extension behaviour outside VS Code (schedule, tooltips, minimums, settings panel, lifecycle):
 pnpm run test:host
 
+# Heap growth of the running extension over 15 s at 200 ms Live (opt-in, ~20 s):
+pnpm run test:soak
+
 # One file or one test, any node:test option (TypeScript files are bundled first):
 node test/harness/run-ts.mjs --test-name-pattern="rescan" test/unit/linux-temp.test.ts
 

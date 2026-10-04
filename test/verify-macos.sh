@@ -18,9 +18,10 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 STARTED="$(date '+%Y-%m-%d %H:%M %Z')"
 DIRTY_AT_START="$(git status --porcelain --untracked-files=no)"
 
-NAMES=(install typecheck build compile:native test test:host leak-darwin package:darwin-arm64)
+NAMES=(install typecheck build compile:native test test:host test:soak leak-darwin package:darwin-arm64)
 CMDS=("pnpm install --frozen-lockfile" "pnpm run typecheck" "pnpm run build" "pnpm run compile:native"
-  "pnpm test" "pnpm run test:host" "node --expose-gc test/leak-darwin.mjs" "pnpm run package:darwin-arm64")
+  "pnpm test" "pnpm run test:host" "pnpm run test:soak" "node --expose-gc test/leak-darwin.mjs"
+  "pnpm run package:darwin-arm64")
 # Skips: node:test marks a skipped test or suite with "﹣ <name> (<time>) # <reason>"; the scripts print ": skipped".
 SKIPPED='(:|;) skipped|^ *﹣ '
 RESULTS=(); DURATIONS=(); FAILED=""
