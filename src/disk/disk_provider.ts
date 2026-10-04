@@ -1,5 +1,9 @@
+import type { StatsFs } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import type { DiskDriveInfo } from '../types.js';
+
+/** The filesystem query: `fs.promises.statfs`, or a stub in tests. */
+export type StatFs = (path: string) => Promise<Pick<StatsFs, 'bsize' | 'blocks' | 'bavail'>>;
 
 /**
  * Asynchronous disk storage utilization provider.
@@ -8,6 +12,11 @@ import type { DiskDriveInfo } from '../types.js';
  * external shell commands (`df`). Pure POSIX implementation with zero dependency on VS Code APIs.
  */
 export class DiskProvider {
+  /**
+   * @param statfs - Filesystem query (tests pass a stub).
+   */
+  constructor(private readonly statfs: StatFs = fs.statfs) {}
+
   /**
    * Queries filesystem metrics for the specified mount points or defaults to the fallback path or '/'.
    *
@@ -30,7 +39,7 @@ export class DiskProvider {
 
     for (const mountPath of targetPaths) {
       try {
-        const stat = await fs.statfs(mountPath);
+        const stat = await this.statfs(mountPath);
         const bsize = stat.bsize;
         const totalBytes = stat.blocks * bsize;
         const freeBytes = stat.bavail * bsize;
