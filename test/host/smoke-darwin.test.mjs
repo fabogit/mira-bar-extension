@@ -5,7 +5,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const addonPath = path.resolve(__dirname, '../dist/native/darwin_telemetry.node');
+const addonPath = path.resolve(__dirname, '../../dist/native/darwin_telemetry.node');
 console.log('Loading addon from:', addonPath);
 const addon = require(addonPath);
 

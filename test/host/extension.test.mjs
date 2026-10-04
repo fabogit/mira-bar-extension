@@ -22,7 +22,7 @@ fsp.statfs = (p, ...rest) => {
   return origStatfs(p, ...rest);
 };
 
-const { loadExtension, loadModule } = await import('./harness/load-extension.mjs');
+const { loadExtension, loadModule } = await import('../harness/load-extension.mjs');
 const { vscode, ext, cleanup } = loadExtension('test-extension');
 const { module: config, cleanup: cleanupConfig } = loadModule('src/config.ts', 'test-config');
 const s = vscode.__state;
@@ -80,7 +80,7 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
     assert.ok(config.DEFAULT_STATUS_BAR_MS[section] >= Math.max(...['darwin', 'linux', 'win32'].map((p) => config.measuredMinimums(p)[section])),
       `default ${section} not below any platform's minimum`);
   }
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
   assert.deepEqual(pkg['mirabar.statusBarMs'].default, config.DEFAULT_STATUS_BAR_MS, 'package.json statusBarMs default = config.ts');
   assert.deepEqual(pkg['mirabar.tooltipMs'].default, config.DEFAULT_TOOLTIP_MS, 'package.json tooltipMs default = config.ts');
   step(`minimums per platform (this host, ${process.platform}: ${config.TOOLTIP_SECTIONS.map((x) => `${x} ${MIN[x]}`).join(', ')})`);
@@ -117,7 +117,7 @@ const barCell = (section, stored) => (stored < MIN[section] ? `${duration(MIN[se
 // setting falls back to the code's default, and the panel snapshot (every key) must equal package.json.
 {
   const { module: schema, cleanup: cleanupSchema } = loadModule('src/settings/schema.ts', 'test-schema');
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).contributes.configuration.properties;
   const defaults = Object.fromEntries(Object.entries(pkg).map(([k, spec]) => [k.replace(/^mirabar\./, ''), spec.default]));
   s.cfg = Object.fromEntries(Object.keys(defaults).map((k) => [k, 'bogus']));
   assert.deepEqual(schema.readSettingsSnapshot(), defaults, 'getConfig defaults = package.json defaults');
@@ -234,7 +234,7 @@ await sleep(500);
 
 // Only the mirabar.* interval settings exist: the beta keys are gone from package.json.
 {
-  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   const keys = Object.keys(pkg.contributes.configuration.properties);
   for (const legacy of ['updatefrequencyms', 'refreshMs', 'refreshSeconds', 'allowFastBatteryDiskRefresh']) {
     assert.ok(!keys.includes(`mirabar.${legacy}`), `${legacy} not contributed`);

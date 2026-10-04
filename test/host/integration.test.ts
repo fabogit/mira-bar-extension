@@ -1,5 +1,5 @@
-import { createPlatformProvider } from '../src/platform/factory.js';
-import { DiskProvider } from '../src/disk/disk_provider.js';
+import { createPlatformProvider } from '../../src/platform/factory.js';
+import { DiskProvider } from '../../src/disk/disk_provider.js';
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

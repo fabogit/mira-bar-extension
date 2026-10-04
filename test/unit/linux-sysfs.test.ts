@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { CpuFreqProvider } from '../src/platform/linux/cpufreq.js';
-import { SysfsAttribute } from '../src/platform/linux/sysfs.js';
+import { CpuFreqProvider } from '../../src/platform/linux/cpufreq.js';
+import { SysfsAttribute } from '../../src/platform/linux/sysfs.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mirabar-sysfs-'));
 const step = (name: string): void => console.log(`ok - ${name}`);

@@ -8,10 +8,10 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { BatteryProvider } from '../src/platform/linux/battery.js';
-import { renderBattery } from '../src/sections.js';
-import type { MiraBarConfig } from '../src/config.js';
-import type { BatteryInfo } from '../src/types.js';
+import { BatteryProvider } from '../../src/platform/linux/battery.js';
+import { renderBattery } from '../../src/sections.js';
+import type { MiraBarConfig } from '../../src/config.js';
+import type { BatteryInfo } from '../../src/types.js';
 
 const roots: string[] = [];
 const step = (name: string): void => console.log(`ok - ${name}`);

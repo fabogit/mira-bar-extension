@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { LinuxTelemetryProvider } from '../src/platform/linux/linux_provider.js';
-import { DiskProvider } from '../src/disk/disk_provider.js';
+import { LinuxTelemetryProvider } from '../../src/platform/linux/linux_provider.js';
+import { DiskProvider } from '../../src/disk/disk_provider.js';
 
 async function run(): Promise<void> {
   console.log('=== MIRABAR - LINUX TELEMETRY SMOKE TEST ===\n');
