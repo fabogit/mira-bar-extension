@@ -1,15 +1,26 @@
 // Minimal stand-in for the `vscode` module, enough to run the extension outside VS Code
-// (test/extension.test.mjs, test/bench-extension.mjs). It records status bar writes, settings writes
-// and webview messages, and keeps settings per scope like VS Code (`cfg` user, `workspaceCfg`,
-// `folderCfg`; the most specific one that sets a key applies); it renders nothing, so the renderer-side cost of an update in real VS Code is
-// not part of any measurement.
+// (test/host/extension.test.mjs, test/bench-extension.mjs; bundles resolve `vscode` here through
+// test/harness/bundle.mjs). It records status bar writes, settings writes, output channel lines and
+// webview messages, keeps settings per scope like VS Code (`cfg` user, `workspaceCfg`, `folderCfg`; the
+// most specific one that sets a key applies) and reports which settings a change event affects; it renders
+// nothing, so the renderer-side cost of an update in real VS Code is not part of any measurement.
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
+
+/** The extension's package.json: the nearest one above this file. */
+function findManifest() {
+  for (let dir = __dirname; ; dir = path.dirname(dir)) {
+    const file = path.join(dir, 'package.json');
+    if (fs.existsSync(file)) return file;
+    if (path.dirname(dir) === dir) throw new Error(`vscode-mock: no package.json above ${__dirname}`);
+  }
+}
 
 /** Contributed defaults (package.json), returned by get() for keys the user did not set, like VS Code. */
 const DEFAULTS = Object.fromEntries(
-  Object.entries(require(path.join(__dirname, '..', '..', 'package.json')).contributes.configuration.properties)
+  Object.entries(require(findManifest()).contributes.configuration.properties)
     .filter(([, spec]) => 'default' in spec)
     .map(([key, spec]) => [key.replace(/^mirabar\./, ''), spec.default])
 );
@@ -26,9 +37,12 @@ const state = {
   cmds: {},
   textSets: 0,
   tooltipSets: 0,
+  /** Output channel errors and writes to disposed items: a test run should end with none. */
   errors: [],
   infos: [],
   warnings: [],
+  /** Output channel trace/debug lines and append/appendLine text. */
+  logs: [],
   notifications: [],
   panels: [],
   posted: [],
@@ -83,8 +97,38 @@ class MarkdownString {
   }
 }
 
-function fireConfigChange() {
-  for (const cb of state.listeners) cb({ affectsConfiguration: () => true });
+/** The value get() returns for a key: the most specific scope that sets it, else the default. */
+function effective(k) {
+  for (const scope of [state.folderCfg, state.workspaceCfg, state.cfg]) {
+    if (k in scope) return scope[k];
+  }
+  return DEFAULTS[k];
+}
+
+function snapshot() {
+  const keys = new Set([...Object.keys(DEFAULTS), ...Object.keys(state.cfg), ...Object.keys(state.workspaceCfg), ...Object.keys(state.folderCfg)]);
+  return Object.fromEntries([...keys].map((k) => [k, JSON.stringify(effective(k))]));
+}
+/** Effective values at the last change event, to tell listeners which settings changed. */
+let lastSeen = snapshot();
+
+/**
+ * Notifies the configuration listeners, as VS Code does after a settings change. The event affects the
+ * `mirabar.*` keys whose effective value changed since the last such event, or, when given, `keys` (full
+ * names, e.g. `editor.fontSize` to check that a listener ignores other sections; the change tracking is
+ * left as it was).
+ *
+ * @param {string[]} [keys]
+ */
+function fireConfigChange(keys) {
+  let changed = keys;
+  if (!changed) {
+    const now = snapshot();
+    changed = [...new Set([...Object.keys(now), ...Object.keys(lastSeen)])].filter((k) => now[k] !== lastSeen[k]).map((k) => `mirabar.${k}`);
+    lastSeen = now;
+  }
+  const event = { affectsConfiguration: (section) => changed.some((k) => k === section || k.startsWith(`${section}.`)) };
+  for (const cb of state.listeners) cb(event);
 }
 
 function createWebviewPanel(viewType, title) {
@@ -137,10 +181,22 @@ module.exports = {
   MarkdownString,
   window: {
     createStatusBarItem: (alignment, priority) => new Item(alignment, priority),
-    createOutputChannel: () => ({
+    // A LogOutputChannel (`{ log: true }`), the kind the extension creates.
+    createOutputChannel: (name) => ({
+      name,
+      logLevel: 3, // LogLevel.Info
+      onDidChangeLogLevel: () => ({ dispose() {} }),
+      trace: (m) => state.logs.push(m),
+      debug: (m) => state.logs.push(m),
       info: (m) => state.infos.push(m),
       warn: (m) => state.warnings.push(m),
-      error: (m) => state.errors.push(m),
+      error: (m) => state.errors.push(m instanceof Error ? m.message : m),
+      append: (m) => state.logs.push(m),
+      appendLine: (m) => state.logs.push(m),
+      replace() {},
+      clear() {},
+      show() {},
+      hide() {},
       dispose() {},
     }),
     createWebviewPanel,
@@ -152,10 +208,8 @@ module.exports = {
     workspaceFolders: undefined,
     getConfiguration: (_section, resource) => ({
       get: (k, d) => {
-        for (const scope of [state.folderCfg, state.workspaceCfg, state.cfg]) {
-          if (k in scope) return scope[k];
-        }
-        return k in DEFAULTS ? DEFAULTS[k] : d;
+        const v = effective(k);
+        return v === undefined ? d : v;
       },
       inspect: (k) => ({
         key: k,

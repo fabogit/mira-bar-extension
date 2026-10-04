@@ -3,18 +3,23 @@
 // values, several batteries, discovery (system batteries only, rescan while none is found, #45), and
 // the tooltip row.
 //
-// Usage (any OS):  pnpm run test:linux-battery (bundled with the vscode mock: sections.ts imports config.ts)
+// Usage (any OS):  pnpm test (bundled with the vscode mock: sections.ts imports config.ts)
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { after, test } from 'node:test';
 import { BatteryProvider } from '../../src/platform/linux/battery.js';
 import { renderBattery } from '../../src/sections.js';
 import type { MiraBarConfig } from '../../src/config.js';
 import type { BatteryInfo } from '../../src/types.js';
 
 const roots: string[] = [];
-const step = (name: string): void => console.log(`ok - ${name}`);
+after(() => {
+  for (const root of roots) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 type Files = Record<string, string | number>;
 
@@ -60,33 +65,37 @@ const charge = (status: string, extra: Files = {}): Files => ({
 
 const time = (provider: BatteryProvider): number | undefined => provider.sample()!.timeRemainingMinutes;
 
-function run(): void {
+test('energy_now / power_now, discharging and charging', () => {
   // Energy over power: 40 Wh / 10 W = 4 h; charging: (50 - 40) Wh / 20 W = 30 min.
-  let { root, provider } = setup({ BAT0: energy('Discharging', { power_now: 10_000_000 }) });
+  const { root, provider } = setup({ BAT0: energy('Discharging', { power_now: 10_000_000 }) });
   assert.equal(time(provider), 240);
   write(root, 'BAT0', { status: 'Charging', power_now: 20_000_000 });
   assert.equal(time(provider), 30);
-  step('energy_now / power_now, discharging and charging');
+});
 
+test('time_to_empty_now / time_to_full_now first', () => {
   // The driver's estimate wins; 0 (no estimate) falls back to the rate.
-  ({ root, provider } = setup({ BAT0: energy('Discharging', { power_now: 10_000_000, time_to_empty_now: 3600, time_to_full_now: 900 }) }));
+  const { root, provider } = setup({ BAT0: energy('Discharging', { power_now: 10_000_000, time_to_empty_now: 3600, time_to_full_now: 900 }) });
   assert.equal(time(provider), 60);
   write(root, 'BAT0', { time_to_empty_now: 0 });
   assert.equal(time(provider), 240, 'time_to_empty_now 0: rate');
   write(root, 'BAT0', { status: 'Charging' });
   assert.equal(time(provider), 15, 'time_to_full_now');
-  step('time_to_empty_now / time_to_full_now first');
+});
 
+test('charge_now / current_now, negative current', () => {
   // Charge over current, signed or not: 2760 mAh / 1380 mA = 2 h; (3678 - 2760) mAh / 918 mA = 1 h.
-  ({ root, provider } = setup({ BAT1: charge('Discharging', { current_now: -1_380_000 }) }));
+  const { root, provider } = setup({ BAT1: charge('Discharging', { current_now: -1_380_000 }) });
   assert.equal(time(provider), 120);
   write(root, 'BAT1', { current_now: 1_380_000 });
   assert.equal(time(provider), 120);
   write(root, 'BAT1', { status: 'Charging', current_now: 918_000 });
   assert.equal(time(provider), 60);
-  step('charge_now / current_now, negative current');
+});
 
+test('Full, Not charging, Unknown: no time', () => {
   // No time when the battery is idle, whatever the rate says.
+  const { root, provider } = setup({ BAT1: charge('Charging', { current_now: 918_000 }) });
   for (const status of ['Full', 'Not charging', 'Unknown']) {
     write(root, 'BAT1', { status, current_now: 918_000 });
     const info = provider.sample()!;
@@ -94,36 +103,36 @@ function run(): void {
     assert.equal(info.isCharging, false);
     assert.equal(info.timeRemainingMinutes, undefined, status);
   }
-  step('Full, Not charging, Unknown: no time');
+});
 
+test('zero, unreadable or missing rate', () => {
   // Discharging without a usable rate: -1 (estimating), as macOS. Charging: no time.
-  write(root, 'BAT1', { status: 'Discharging', current_now: 0 });
+  const { root, provider } = setup({ BAT1: charge('Discharging', { current_now: 0 }) });
   assert.equal(time(provider), -1, 'current_now 0');
   write(root, 'BAT1', { current_now: 'garbage' });
   assert.equal(time(provider), -1, 'unreadable current_now');
   fs.rmSync(path.join(root, 'class/power_supply/BAT1/current_now'));
   assert.equal(time(provider), -1, 'current_now removed after discovery');
   assert.equal(provider.sample()!.currentCapacity, 2760, 'the other values are still read');
-  ({ provider } = setup({ BAT0: energy('Discharging') }));
-  assert.equal(time(provider), -1, 'no power_now');
-  ({ provider } = setup({ BAT0: energy('Charging') }));
-  assert.equal(time(provider), undefined, 'charging without power_now');
-  step('zero, unreadable or missing rate');
+  assert.equal(time(setup({ BAT0: energy('Discharging') }).provider), -1, 'no power_now');
+  assert.equal(time(setup({ BAT0: energy('Charging') }).provider), undefined, 'charging without power_now');
+});
 
+test('estimates above 48 h discarded', () => {
   // Implausible: 40 Wh at 0.5 W is 80 h (cap 48 h); a 1-week driver estimate falls back to the rate.
-  ({ root, provider } = setup({ BAT0: energy('Discharging', { power_now: 500_000 }) }));
+  const { root, provider } = setup({ BAT0: energy('Discharging', { power_now: 500_000 }) });
   assert.equal(time(provider), -1);
   write(root, 'BAT0', { status: 'Charging', power_now: 100_000 });
   assert.equal(time(provider), undefined, '10 Wh at 0.1 W: 100 h');
-  ({ provider } = setup({ BAT0: energy('Discharging', { power_now: 10_000_000, time_to_empty_now: 7 * 86400 }) }));
-  assert.equal(time(provider), 240);
-  step('estimates above 48 h discarded');
+  assert.equal(time(setup({ BAT0: energy('Discharging', { power_now: 10_000_000, time_to_empty_now: 7 * 86400 }) }).provider), 240);
+});
 
+test('several batteries', () => {
   // Two batteries draining one after the other: summed energy over summed power, per-battery times ignored.
-  ({ provider } = setup({
+  let { provider } = setup({
     BAT0: energy('Discharging', { energy_now: 20_000_000, power_now: 10_000_000, time_to_empty_now: 7200 }),
     BAT1: energy('Unknown', { energy_now: 30_000_000, power_now: 0 }),
-  }));
+  });
   let info: BatteryInfo = provider.sample()!;
   assert.equal(info.status, 'Discharging');
   assert.equal(info.timeRemainingMinutes, 300);
@@ -133,20 +142,22 @@ function run(): void {
   assert.equal(info.timeRemainingMinutes, 60, '(100 - 80) Wh / 20 W');
   ({ provider } = setup({ BAT0: energy('Full'), BAT1: energy('Not charging') }));
   assert.equal(provider.sample()!.status, 'Not charging');
-  step('several batteries');
+});
 
+test('system batteries only (type Battery, scope not Device)', () => {
   // Discovery by type, not by name: a fuel gauge battery counts, a mouse battery (scope Device) does not.
-  ({ provider } = setup({
+  const { provider } = setup({
     'bq27500-0': charge('Discharging', { current_now: 1_380_000 }),
     hidpp_battery_0: { scope: 'Device', status: 'Discharging', capacity: 5 },
-  }));
-  info = provider.sample()!;
+  });
+  const info = provider.sample()!;
   assert.deepEqual([info.percent, info.timeRemainingMinutes], [75, 120], 'the mouse battery is not averaged in');
-  step('system batteries only (type Battery, scope not Device)');
+});
 
+test('battery appearing after activation found by the rescan (#45)', () => {
   // No battery at activation (inserted or driver loaded later): rescanned at most once a minute.
   let now = 1_000_000;
-  ({ root, provider } = setup({}, () => now));
+  const { root, provider } = setup({}, () => now);
   assert.equal(provider.isAvailable, false);
   write(root, 'BAT0', { type: 'Battery', ...energy('Discharging', { power_now: 10_000_000 }) });
   now += 59_999;
@@ -155,12 +166,13 @@ function run(): void {
   now += 1;
   assert.equal(provider.isAvailable, true);
   assert.equal(time(provider), 240);
-  step('battery appearing after activation found by the rescan (#45)');
+});
 
+test('tooltip row and icon', () => {
   // Tooltip row: same field and rendering as macOS.
   const ctx = { config: {} as MiraBarConfig, updatedAt: '12:00:00' };
   const row = (bat: BatteryInfo): string => renderBattery(bat, ctx, true).tooltip!.split('\n').find((l) => l.startsWith('Power State'))!;
-  ({ root, provider } = setup({ BAT0: energy('Discharging', { power_now: 9_000_000 }) }));
+  const { root, provider } = setup({ BAT0: energy('Discharging', { power_now: 9_000_000 }) });
   assert.match(row(provider.sample()!), /Discharging\s+│ 4h 27m \(remaining\)/);
   write(root, 'BAT0', { status: 'Charging', power_now: 20_000_000 });
   assert.match(row(provider.sample()!), /Charging\s+│ 30m \(until full\)/);
@@ -170,18 +182,4 @@ function run(): void {
   const notCharging = provider.sample()!;
   assert.match(row(notCharging), /Not charging\s+│ AC Connected/);
   assert.ok(renderBattery(notCharging, ctx, false).text.startsWith('$(plug)'), 'not charging: plug icon, not the battery');
-  step('tooltip row and icon');
-
-  console.log('\nAll Linux battery tests passed.');
-}
-
-try {
-  run();
-} catch (err) {
-  console.error(err);
-  process.exitCode = 1;
-} finally {
-  for (const root of roots) {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-}
+});

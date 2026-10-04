@@ -59,14 +59,11 @@ jobs:
       - name: Compile Native C++ Addon (darwin-arm64)
         run: pnpm run compile:native
 
-      - name: Run Darwin Smoke & Integration Tests
-        run: |
-          pnpm run test:darwin
-          pnpm run test:linux-temp
-          pnpm run test:linux-battery
-          pnpm run test:linux-sysfs
-          pnpm run test:integration
-          pnpm run test:extension
+      - name: Unit Tests
+        run: pnpm test
+
+      - name: Host Tests (smoke, integration, extension)
+        run: pnpm run test:host
 
       - name: Package VSIX (darwin-arm64)
         run: pnpm run package:darwin-arm64
@@ -111,14 +108,11 @@ jobs:
       - name: Build Extension Bundle
         run: pnpm run build
 
-      - name: Run Linux Smoke & Integration Tests
-        run: |
-          pnpm run test:linux
-          pnpm run test:linux-temp
-          pnpm run test:linux-battery
-          pnpm run test:linux-sysfs
-          pnpm run test:integration
-          pnpm run test:extension
+      - name: Unit Tests
+        run: pnpm test
+
+      - name: Host Tests (smoke, integration, extension)
+        run: pnpm run test:host
 
       - name: Package VSIX (linux-x64)
         run: pnpm run package:linux-x64

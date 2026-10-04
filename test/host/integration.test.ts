@@ -1,86 +1,62 @@
+// The platform provider this machine gets (createPlatformProvider) and the disk provider, as the extension
+// uses them: CPU from the first read, a second round of every section a second later, values logged.
+//
+// Usage (Linux, or macOS after `pnpm run compile:native`):  pnpm run test:host
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
 import { createPlatformProvider } from '../../src/platform/factory.js';
 import { DiskProvider } from '../../src/disk/disk_provider.js';
 
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const GB = 1024 ** 3;
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function run(): Promise<void> {
+test('platform and disk providers on this machine', async () => {
   const provider = createPlatformProvider(console);
-  console.log(`=== MIRABAR - INTEGRATION TEST (${provider.platformName.toUpperCase()}) ===\n`);
+  console.log(`Platform: ${provider.platformName}, topology: ${provider.getTopologyDescription?.() ?? 'Standard SMP'}, battery: ${provider.isBatteryAvailable()}`);
 
-  console.log('Platform:', provider.platformName);
-  console.log('Topology:', provider.getTopologyDescription ? provider.getTopologyDescription() : 'Standard SMP');
-  console.log('Battery Available:', provider.isBatteryAvailable());
-
-  console.log('\nTick 0 Instantaneous Sampling (Cold Start)...');
-  const tick0Cpu = provider.sampleCpu();
-  console.log('Tick 0 Cores count:', tick0Cpu?.perCorePercent.length, 'CoreTypes:', tick0Cpu?.coreTypes ? tick0Cpu.coreTypes.join('') : 'Uniform SMP');
-  if (!tick0Cpu || tick0Cpu.perCorePercent.length === 0) {
-    console.error('TEST FAILED: Tick 0 CPU returned empty cores!');
-    process.exit(1);
-  }
-  if (provider.platformName === 'darwin' && !tick0Cpu.coreTypes) {
-    console.error('TEST FAILED: Darwin Tick 0 CPU missing coreTypes!');
-    process.exit(1);
+  // Tick 0 (cold start): every core present from the first read, with its type on macOS.
+  const tick0 = provider.sampleCpu();
+  assert.ok(tick0 && tick0.perCorePercent.length > 0, 'Tick 0 CPU has every core');
+  if (provider.platformName === 'darwin') {
+    assert.ok(tick0.coreTypes, 'darwin Tick 0 CPU carries coreTypes');
   }
 
   await sleep(1000);
 
-  console.log('Tick 2 Sampling...');
   const cpu = provider.sampleCpu();
   const freqOrLoad = provider.sampleFreqOrLoad();
   const temp = provider.sampleTemp(5000); // first call: a fresh reading (macOS waits for the first pass)
   const mem = provider.sampleMemory();
   const bat = provider.sampleBattery();
+  const disks = await new DiskProvider().sample([]);
 
-  const diskProvider = new DiskProvider();
-  const disks = await diskProvider.sample([]);
-
-  console.log('\n--- VERIFICATION RESULTS ---');
-  console.log('CPU Usage:', cpu ? `${cpu.overallPercent.toFixed(2)}% across ${cpu.perCorePercent.length} cores` : 'FAILED');
-  if (cpu?.coreTypes) {
-    const pCount = cpu.coreTypes.filter((t) => t === 'P').length;
-    const eCount = cpu.coreTypes.filter((t) => t === 'E').length;
-    console.log(`Core Distribution: ${pCount} Performance Cores, ${eCount} Efficiency Cores`);
-    console.log('Per Core Loads:', cpu.perCorePercent.map((p, i) => `C${i}(${cpu.coreTypes![i]}): ${p.toFixed(1)}%`).join(' '));
-  } else if (cpu) {
-    console.log('Per Core Loads:', cpu.perCorePercent.map((p, i) => `C${i}: ${p.toFixed(1)}%`).join(' '));
+  assert.ok(cpu, 'CPU usage');
+  // System load is always there on macOS; cpufreq may be missing on Linux VMs (no cpufreq in cloud VMs).
+  if (provider.platformName === 'darwin') {
+    assert.ok(freqOrLoad, 'darwin system load');
   }
+  assert.ok(mem, 'memory');
+  assert.ok(disks.length > 0, 'at least one volume');
 
+  const cores = cpu.perCorePercent.map((p, i) => `C${i}${cpu.coreTypes ? `(${cpu.coreTypes[i]})` : ''}: ${p.toFixed(1)}%`).join(' ');
+  console.log(`CPU: ${cpu.overallPercent.toFixed(2)}% over ${cpu.perCorePercent.length} cores; ${cores}`);
   if (freqOrLoad?.kind === 'load') {
-    console.log(`System Load Average: 1m: ${freqOrLoad.data.load1.toFixed(2)}, 5m: ${freqOrLoad.data.load5.toFixed(2)}, 15m: ${freqOrLoad.data.load15.toFixed(2)}`);
+    console.log(`Load average: ${freqOrLoad.data.load1.toFixed(2)} / ${freqOrLoad.data.load5.toFixed(2)} / ${freqOrLoad.data.load15.toFixed(2)}`);
   } else if (freqOrLoad?.kind === 'freq') {
-    console.log(`CPU Frequency: Avg: ${(freqOrLoad.data.avgHz / 1e9).toFixed(2)} GHz, Peak: ${(freqOrLoad.data.maxHz / 1e9).toFixed(2)} GHz across ${freqOrLoad.data.perCoreHz.length} cores`);
+    console.log(`Frequency: avg ${(freqOrLoad.data.avgHz / 1e9).toFixed(2)} GHz, peak ${(freqOrLoad.data.maxHz / 1e9).toFixed(2)} GHz over ${freqOrLoad.data.perCoreHz.length} cores`);
   } else {
-    console.log('Frequency/Load:', freqOrLoad);
+    console.log('Frequency/load: not available');
   }
-
   const sensor = temp?.sensorName ? ` [${temp.sensorName}: ${temp.sensorLabel}]` : '';
-  console.log('Temperature:', temp ? `${temp.tempCelsius.toFixed(2)} °C${sensor}` : 'N/A or Not Accessible');
-  console.log('Memory:', mem ? `Used: ${(mem.usedBytes / 1024**3).toFixed(2)} GB / ${(mem.totalBytes / 1024**3).toFixed(2)} GB (${mem.usedPercent.toFixed(1)}%) | Compressed: ${((mem.compressedBytes || 0) / 1024**3).toFixed(2)} GB` : 'FAILED');
+  console.log('Temperature:', temp ? `${temp.tempCelsius.toFixed(2)} °C${sensor}` : 'not available');
+  console.log(`Memory: ${(mem.usedBytes / GB).toFixed(2)} of ${(mem.totalBytes / GB).toFixed(2)} GB (${mem.usedPercent.toFixed(1)}%), compressed ${((mem.compressedBytes ?? 0) / GB).toFixed(2)} GB`);
   if (bat) {
-    console.log(`Battery: ${bat.percent}% (${bat.status}) | Health: ${bat.healthPercent?.toFixed(1)}% | Current: ${bat.currentCapacity}/${bat.maxCapacity} ${bat.capacityUnit} | Design: ${bat.designCapacity} ${bat.capacityUnit} | Cycles: ${bat.cycleCount}`);
+    console.log(`Battery: ${bat.percent}% (${bat.status}), health ${bat.healthPercent?.toFixed(1)}%, ${bat.currentCapacity}/${bat.maxCapacity} ${bat.capacityUnit}, design ${bat.designCapacity}, cycles ${bat.cycleCount}`);
   } else {
-    console.log('Battery: Desktop or Not Accessible');
+    console.log('Battery: none');
   }
-
-  console.log(`Storage: Monitored ${disks.length} volumes:`);
   for (const disk of disks) {
-    console.log(`  - ${disk.mountPath}: ${(disk.usedBytes / 1e9).toFixed(2)} GB used / ${(disk.totalBytes / 1e9).toFixed(2)} GB total (${disk.usedPercent.toFixed(1)}%)`);
+    console.log(`Disk ${disk.mountPath}: ${(disk.usedBytes / 1e9).toFixed(2)} of ${(disk.totalBytes / 1e9).toFixed(2)} GB (${disk.usedPercent.toFixed(1)}%)`);
   }
-
-  // Freq/Load is required on Darwin (system load) but optional on virtualized Linux (no cpufreq in cloud VMs)
-  const isFreqRequired = provider.platformName === 'darwin';
-  if (!cpu || (isFreqRequired && !freqOrLoad) || !mem || disks.length === 0) {
-    console.error('\nTEST FAILED: Critical telemetry providers failed!');
-    process.exit(1);
-  }
-
-  console.log('\nALL INTEGRATION CHECKS PASSED SUCCESSFULLY!');
-}
-
-run().catch((err) => {
-  console.error('Test crashed:', err);
-  process.exit(1);
+  provider.dispose?.();
 });
