@@ -100,7 +100,10 @@ test('refresh off the thread, close deferred while it reads', { skip }, async ()
   refreshed.refreshAsync(); // ignored: one in flight
   refreshed.close();
   assert.deepEqual(openUnderRoot(), [refreshed.file], 'kept open while the refresh reads it');
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Polled, not a fixed sleep: under load the libuv pool can take well over 50 ms to run the read.
+  for (const deadline = Date.now() + 2000; openUnderRoot().length > 0 && Date.now() < deadline; ) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
   assert.deepEqual(openUnderRoot(), [], 'closed once the refresh completed');
   assert.equal(refreshed.readInt(), 42, 'reads again after close');
   refreshed.close();
