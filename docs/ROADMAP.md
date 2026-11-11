@@ -14,7 +14,7 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 
 * **Decisions**: the reasons behind the architecture are recorded as ADRs in [`docs/adr/`](adr/README.md).
 
-### Status at a glance (2026-10-03)
+### Status at a glance (2026-11-11)
 
 | Phase | Platform | Status | Next step |
 | :--- | :--- | :--- | :--- |
@@ -24,7 +24,7 @@ MiraBar is designed as an ultra-lightweight, zero-overhead hardware telemetry mo
 | 1.2 – Per-section refresh & measured minimums (v1.2.0) | All platforms (measured on macOS) | Done, released in 1.2.0; verified on an M4 and on a Linux laptop | Per-platform minimums |
 | 1.3 – Name and namespace: MiraBar (v1.2.0) | All | Done, released in 1.2.0 | Marketplace publishing |
 | 2 – Linux modernization & parity (v1.3.0) | Linux | Done, released in 1.3.0; verified on a Linux laptop | Checks on battery (real discharge, battery `temp` file); VSIX on the desktop |
-| 2.1 – Codebase polish & Linux read latency (v1.3.1) | All (Linux for #40) | Planned (audits 2026-10-03), milestone [v1.3.1](https://github.com/fabogit/mira-bar-extension/milestone/7) | Fixes and refactors #42–#48 |
+| 2.1 – Codebase polish & Linux read latency (v1.3.1) | All (Linux for #40) | In progress on `develop` (not released): #40, #42–#48 and #50–#53 done; milestone [v1.3.1](https://github.com/fabogit/mira-bar-extension/milestone/7) | Audit fixes of 2026-11-11 (section 5 below), #60, then #54, #55, #49 and the documentation |
 | 3 – Windows (v1.4.0) | Windows | Not started | Blueprint (#7) |
 | 4 – Localization (v1.5.0) | All | Backlog | — |
 | Cross-platform backlog | All | Planned, unscheduled | Inactive window first (smallest change, also the base for sharing across windows) |
@@ -266,19 +266,20 @@ Phase 2 focuses on bringing the Linux implementation up to the v1.1.0 architectu
 
 ## 5b. Phase 2.1: Codebase Polish & Linux Read Latency (v1.3.1) [PLANNED]
 
-> Milestone: [**`v1.3.1 - Codebase Polish & Linux Read Latency`**](https://github.com/fabogit/mira-bar-extension/milestone/7) • **Status: Open** (Active Target)
+> Milestone: [**`v1.3.1 - Codebase Polish & Linux Read Latency`**](https://github.com/fabogit/mira-bar-extension/milestone/7) • **Status: Open** (Active Target; 12 issues closed, 8 open on 2026-11-11)
 
 The final polish of the 1.x codebase, built from three read-only audits of `develop` @ 87bc81f (source, tests and tooling, documentation; 2026-10-03). Issues carry file:line references to that commit. Work order: fixes and refactors, then #40 on top of the Linux refactor, then tests, CI and build, then the rename, documentation last.
 
 **1. Fixes and refactors**
 
-- [ ] [#42](https://github.com/fabogit/mira-bar-extension/issues/42) **Settings scope**: toggles, panel edits and reset write to the scope that sets the value (today always Global; a workspace value makes the panel snap back).
-- [ ] [#43](https://github.com/fabogit/mira-bar-extension/issues/43) **Settings validation**: every setting validated on read (invalid enums gave `undefined` / wrong units in the status bar); option lists and section labels defined once.
-- [ ] [#44](https://github.com/fabogit/mira-bar-extension/issues/44) **Small bugs**: battery "Condition: Normal" always shown, darwin first-read wait on every call, native loader paths outside the extension folder, panel message queue.
-- [ ] [#45](https://github.com/fabogit/mira-bar-extension/issues/45) **Linux refactor**: shared sysfs helpers, injectable roots in every provider, 60 s rescan when hwmon or the battery was missing at activation.
-- [ ] [#46](https://github.com/fabogit/mira-bar-extension/issues/46) **Provider contract**: unused fields, `platformName`, required `sampleTemp(maxAgeMs)`, log through the MiraBar channel, darwin constructor that cannot fail activation, injectable addon.
-- [ ] [#47](https://github.com/fabogit/mira-bar-extension/issues/47) **Renderers**: duplicated code, named limits, formatting edge cases.
-- [ ] [#48](https://github.com/fabogit/mira-bar-extension/issues/48) **Native addon**: unused `binding.gyp`, header shared with `hid_bench`.
+- [x] [#42](https://github.com/fabogit/mira-bar-extension/issues/42) **Settings scope**: toggles, panel edits and reset write to the scope that sets the value (today always Global; a workspace value makes the panel snap back).
+- [x] [#43](https://github.com/fabogit/mira-bar-extension/issues/43) **Settings validation**: every setting validated on read (invalid enums gave `undefined` / wrong units in the status bar); option lists and section labels defined once.
+- [x] [#44](https://github.com/fabogit/mira-bar-extension/issues/44) **Small bugs**: battery "Condition: Normal" always shown, darwin first-read wait on every call, native loader paths outside the extension folder, panel message queue.
+- [x] [#45](https://github.com/fabogit/mira-bar-extension/issues/45) **Linux refactor**: shared sysfs helpers, injectable roots in every provider, 60 s rescan when hwmon or the battery was missing at activation.
+- [x] [#46](https://github.com/fabogit/mira-bar-extension/issues/46) **Provider contract**: unused fields, `platformName`, required `sampleTemp(maxAgeMs)`, log through the MiraBar channel, darwin constructor that cannot fail activation, injectable addon.
+- [x] [#47](https://github.com/fabogit/mira-bar-extension/issues/47) **Renderers**: duplicated code, named limits, formatting edge cases.
+- [x] [#48](https://github.com/fabogit/mira-bar-extension/issues/48) **Native addon**: unused `binding.gyp`, header shared with `hid_bench`.
+- [ ] [#60](https://github.com/fabogit/mira-bar-extension/issues/60) **macOS battery time**: 1200 min reported in both verification runs; compare with `pmset -g batt` on battery, then fix or document.
 
 **2. Linux read latency**
 
@@ -286,10 +287,10 @@ The final polish of the 1.x codebase, built from three read-only audits of `deve
 
 **3. Tests, CI and build**
 
-- [ ] [#50](https://github.com/fabogit/mira-bar-extension/issues/50) `node:test`, one runner for the TypeScript tests, `pnpm test`, stricter `vscode` mock.
-- [ ] [#51](https://github.com/fabogit/mira-bar-extension/issues/51) Unit tests for `format`, `sections`, `config`, settings schema and panel.
-- [ ] [#52](https://github.com/fabogit/mira-bar-extension/issues/52) Linux providers against mocked sysfs (k10temp, cpufreq, memory, disk) and the darwin provider with a fake addon.
-- [ ] [#53](https://github.com/fabogit/mira-bar-extension/issues/53) Monitor tests with a fake clock instead of wall-clock sleeps.
+- [x] [#50](https://github.com/fabogit/mira-bar-extension/issues/50) `node:test`, one runner for the TypeScript tests, `pnpm test`, stricter `vscode` mock.
+- [x] [#51](https://github.com/fabogit/mira-bar-extension/issues/51) Unit tests for `format`, `sections`, `config`, settings schema and panel.
+- [x] [#52](https://github.com/fabogit/mira-bar-extension/issues/52) Linux providers against mocked sysfs (k10temp, cpufreq, memory, disk) and the darwin provider with a fake addon.
+- [x] [#53](https://github.com/fabogit/mira-bar-extension/issues/53) Monitor tests with a fake clock instead of wall-clock sleeps.
 - [ ] [#54](https://github.com/fabogit/mira-bar-extension/issues/54) CI on push and pull requests; release workflow without duplication; tag/version guard.
 - [ ] [#55](https://github.com/fabogit/mira-bar-extension/issues/55) Node >= 22, pinned pnpm, VSIX file allowlist, stricter tsconfig, Biome, F5 watch task.
 - [ ] [#49](https://github.com/fabogit/mira-bar-extension/issues/49) Rename leftovers (`ResourceMonitor`, `TooltipSection`, `CpuTempInfo`), after the other refactors.
@@ -300,6 +301,22 @@ The final polish of the 1.x codebase, built from three read-only audits of `deve
 - [ ] [#57](https://github.com/fabogit/mira-bar-extension/issues/57) ARCHITECTURE, ROADMAP and ADRs corrected (benchmarks table, stale facts, one budget definition).
 - [ ] [#58](https://github.com/fabogit/mira-bar-extension/issues/58) Linux plan and darwin audit archived in `docs/archive/`; measurements in one place.
 - [ ] [#59](https://github.com/fabogit/mira-bar-extension/issues/59) JSDoc pass, stale comments, setting descriptions, CHANGELOG.
+
+**5. Audit of 2026-11-11** (`develop` @ b0975b7: source read in full; unit and host tests, heap soak and `bench:linux` run on Linux; the native addon read, not run)
+
+Reproduced with a test:
+
+- [ ] [#61](https://github.com/fabogit/mira-bar-extension/issues/61) **Tooltip command links** (security): tooltips are trusted Markdown and a disk path is written into them as is; a path with a line break and a code fence adds its own `command:` link. Trust only the MiraBar commands and neutralise control characters and backticks.
+- [ ] [#62](https://github.com/fabogit/mira-bar-extension/issues/62) **Schedule on a monotonic clock**: deadlines use `Date.now()`; a wall clock set back one hour stops every section for one hour.
+- [ ] [#63](https://github.com/fabogit/mira-bar-extension/issues/63) **`SysfsAttribute` descriptor leak**: close, reopen and close while a refresh is in flight leaks one descriptor.
+- [ ] [#64](https://github.com/fabogit/mira-bar-extension/issues/64) **Linux rediscovery**: a CPU sensor whose reads start failing is never looked up again (and a reused hwmon number shows another device as the CPU); a battery added later is never counted.
+
+Found by reading the code, to confirm on the Mac:
+
+- [ ] [#65](https://github.com/fabogit/mira-bar-extension/issues/65) **Native addon hardening**: the 60 s thermal rescan limit is bypassed when die sensors are listed but return no valid reading; no exception boundary at the entry points and in the sampler thread.
+- [ ] [#66](https://github.com/fabogit/mira-bar-extension/issues/66) **macOS checks on the M4**: age of the temperature reading across sleep; *memory used* against Activity Monitor.
+
+Added to [#54](https://github.com/fabogit/mira-bar-extension/issues/54): actions pinned by commit SHA, Dependabot, and no published tag moved again (v1.2.0 and v1.3.0 were each built twice).
 
 Decisions (2026-10-03): Biome as linter and formatter; Node >= 22; rename in 1.3.1; the Linux plan and the darwin audit archived; automatic disk discovery dropped in favour of the disk picker [#41](https://github.com/fabogit/mira-bar-extension/issues/41) (v1.4.0).
 
@@ -354,6 +371,20 @@ Phase 4 externalizes and translates user-facing strings once the underlying tele
 ## 8. Cross-Platform Backlog (unscheduled) [PLANNED]
 
 Improvements independent of the platform phases; each one gets a milestone when scheduled.
+
+- [ ] [#67](https://github.com/fabogit/mira-bar-extension/issues/67) **Distribution** (the releases are VSIX files on GitHub only):
+  - Visual Studio Marketplace: publisher `fabogit`, token as a repository secret, `vsce publish --packagePath` per target from the release workflow.
+  - Open VSX (`ovsx publish`), the registry of VSCodium, Cursor, Antigravity and other forks.
+  - `SECURITY.md` and a note in the README on what the extension reads and that nothing leaves the machine.
+- [ ] [#68](https://github.com/fabogit/mira-bar-extension/issues/68) **More Linux targets and remote windows**:
+  - The Linux provider is plain TypeScript: package `linux-arm64` (Dev Containers on Apple Silicon, ARM laptops, Raspberry Pi), `linux-armhf` and `alpine-x64` / `alpine-arm64` from the same bundle; smoke test on an arm64 runner.
+  - Decide and document where the extension runs in Remote SSH, WSL and Dev Containers (`extensionKind`): today it follows the default and shows the remote machine, for which only `linux-x64` exists.
+  - Workspace Trust: declare `capabilities.untrustedWorkspaces` (the extension reads no workspace content; `mirabar.disk.drives` restricted in untrusted workspaces).
+- [ ] **CPU budget headroom on macOS**: the defaults use ~0.49% of the 0.5% budget and every window pays it again. Do the *fewer temperature sensors per pass* follow-up of Phase 1.2 and the *Inactive window* item below before the Windows phase.
+- [ ] **GPU utilisation** (from the comparison with sysmon-statusbar, 2026-09-30): Apple Silicon `AGXAccelerator` `PerformanceStatistics` read natively; Linux sysfs (`gpu_busy_percent`). To evaluate against the budget.
+- [ ] **Lower `engines.vscode`** if the APIs in use allow it, for forks that trail VS Code.
+- [ ] **P/E core mapping from the device tree** (`IODeviceTree:/cpus`, `cluster-type`) instead of assuming E-cores come first (audit 2026-09, §3).
+- [ ] **Open follow-ups without an issue**: macOS 11 deployment target, `bench:darwin` on an idle Mac, battery time on a real discharge and the battery `temp` file on Linux, the VSIX on the desktop.
 
 - [ ] **Accessibility**:
   - Every status bar item already has a `name` (*MiraBar: CPU usage*, *MiraBar Settings*: the label of the status bar context menu).
